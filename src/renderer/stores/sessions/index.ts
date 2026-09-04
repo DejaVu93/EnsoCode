@@ -12,6 +12,7 @@ import type {
   ProjectAuthorityProjection,
   ProjectedMessage,
   ThinkingLevel,
+  TurnDigest,
 } from '@shared/types/agent';
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
 import type { PairCreatedSession } from '@shared/types/pair';
@@ -104,6 +105,8 @@ export interface Conversation extends SessionProjection {
   projectId: string;
   /** 首条消息的截断，作为列表展示名 */
   title: string;
+  /** 用户手动改过名：此后一切自动标题总结（首条即时 / 每轮滚动）都跳过；随 partialize 持久化 */
+  titleLocked?: boolean;
   /** 是否已在 worker 侧 spawn（首条消息发出时才 spawn） */
   started: boolean;
   spawning: boolean;
@@ -377,14 +380,49 @@ export const useSessionsStore = create<SessionsState>()(
         // resume 与否由各调用点用触发时刻的快照判断（spawn 路径 !sessionFile、事件路径空标题）。
         // 这里不能再读 live sessionFile：parent-ready 常抢在 spawn IPC 返回之前落地，
         // 新会话此刻已带 sessionFile，按它判断会把桌面首条消息的总结整个误杀。
-        if (!get().conversations[conversationId]) return;
+        const conversation = get().conversations[conversationId];
+        if (!conversation || conversation.titleLocked) return;
 
         pendingTitleBaselines.set(conversationId, baselineTitle);
         void window.electronAPI.agent.summarizeTitle(
           conversationId,
-          cleanedText,
+          { kind: 'initial', text: cleanedText },
           sessionModel?.providerId && sessionModel?.modelId
             ? { providerId: sessionModel.providerId, modelId: sessionModel.modelId }
+            : undefined
+        );
+      }
+
+      /**
+       * 回合成功结束后的滚动标题刷新：当前标题 + worker 切出的本轮摘要送模型，
+       * 模型可原样返回当前标题（不改）。每个成功回合都触发，不收敛；在飞未回流时跳过。
+       * 冷会话/手机端会话没有正文也能触发——摘要来自 worker，不依赖 renderer 的 messages。
+       */
+      function tryRollingSummarizeTitle(conversationId: string, digest: TurnDigest | undefined): void {
+        if (!digest || !useSettingsStore.getState().titleSummaryEnabled) return;
+        if (!digest.userText.trim() && !digest.assistantText.trim()) return;
+        const conversation = get().conversations[conversationId];
+        if (
+          !conversation ||
+          conversation.parentId ||
+          conversation.coworkerName ||
+          conversation.titleLocked ||
+          !conversation.title.trim() ||
+          pendingTitleBaselines.has(conversationId)
+        ) {
+          return;
+        }
+        pendingTitleBaselines.set(conversationId, conversation.title);
+        void window.electronAPI.agent.summarizeTitle(
+          conversationId,
+          {
+            kind: 'rolling',
+            currentTitle: conversation.title,
+            userText: digest.userText,
+            assistantText: digest.assistantText,
+          },
+          conversation.lastProviderId && conversation.lastModelId
+            ? { providerId: conversation.lastProviderId, modelId: conversation.lastModelId }
             : undefined
         );
       }
@@ -1026,6 +1064,7 @@ export const useSessionsStore = create<SessionsState>()(
             return;
           }
           if (event.type !== 'turn-completed') return;
+          tryRollingSummarizeTitle(id, event.digest);
           flushQueue(id);
           continueGoal(id);
         }
@@ -1530,10 +1569,13 @@ export const useSessionsStore = create<SessionsState>()(
         renameConversation(id, title) {
           const next = title.trim().slice(0, 80);
           if (!next) return;
+          // 手动改名即永久锁定：在飞的自动总结作废，之后的回合也不再刷
+          pendingTitleBaselines.delete(id);
           set((state) => {
             const conversation = state.conversations[id];
-            if (!conversation || conversation.title === next) return state;
-            return patch(state, id, { title: next });
+            if (!conversation) return state;
+            if (conversation.title === next && conversation.titleLocked) return state;
+            return patch(state, id, { title: next, titleLocked: true });
           });
         },
 

@@ -1192,7 +1192,7 @@ describe('typed Agent child projection', () => {
       ).toBe('帮我写个贪吃蛇小游戏');
       expect(summarizeTitle).toHaveBeenCalledWith(
         freshPhoneSessionId,
-        '帮我写个贪吃蛇小游戏\n第二行内容',
+        { kind: 'initial', text: '帮我写个贪吃蛇小游戏\n第二行内容' },
         expect.objectContaining({ providerId: 'p', modelId: 'm' })
       );
 
@@ -1263,9 +1263,247 @@ describe('typed Agent child projection', () => {
       );
       expect(summarizeTitle).toHaveBeenCalledWith(
         hotSessionId,
-        '热会话标题测试\n详细内容',
+        { kind: 'initial', text: '热会话标题测试\n详细内容' },
         expect.objectContaining({ providerId: 'p', modelId: 'm' })
       );
+    });
+  });
+
+  describe('回合结束滚动刷新标题', () => {
+    const digest = { userText: '本轮用户请求', assistantText: '本轮 assistant 结论' };
+
+    /** 构造一个已 started、带标题与模型记忆的 root 会话，返回其 id */
+    function seedStartedRoot(id: string, overrides: Record<string, unknown> = {}) {
+      sessionsModule.useSessionsStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          [id]: {
+            ...state.conversations.parent,
+            id,
+            title: '初始标题',
+            started: true,
+            spawning: false,
+            status: 'running' as const,
+            generation: 'g1',
+            lastProviderId: 'provider-1',
+            lastModelId: 'model-1',
+            messages: [],
+            ...overrides,
+          },
+        },
+        order: [...state.order.filter((x) => x !== id), id],
+      }));
+    }
+
+    function turnCompleted(id: string, d: { userText: string; assistantText: string } = digest) {
+      onAgentEvent?.({
+        type: 'turn-completed',
+        identity: { sessionId: id, generation: 'g1' },
+        seq: 2,
+        turnId: 'turn-1',
+        digest: d,
+      });
+    }
+
+    // pendingTitleBaselines 是 store 闭包里的 Map，外层 beforeEach 的 setState 清不掉它。
+    // 上一条用例若触发了滚动总结却没回流 title-generated，在飞基准会泄漏到下一条用例，
+    // 让下一条的 turn-completed 被在飞去重误杀。这里对可能用到的会话 id 各回一个
+    // title-generated：handler 会无条件 delete 该 id 的基准，从而隔离各用例。
+    beforeEach(() => {
+      for (const id of ['parent', 'cold', 'child-1']) {
+        onAgentEvent?.({ type: 'title-generated', conversationId: id, title: '__reset__' });
+      }
+    });
+
+    it('已 started 的 root 会话收到 turn-completed{digest} → summarizeTitle 以 rolling 输入调用', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      turnCompleted('parent');
+
+      expect(summarizeTitle).toHaveBeenCalledWith(
+        'parent',
+        {
+          kind: 'rolling',
+          currentTitle: '初始标题',
+          userText: '本轮用户请求',
+          assistantText: '本轮 assistant 结论',
+        },
+        { providerId: 'provider-1', modelId: 'model-1' }
+      );
+    });
+
+    it('在飞未回流时第二个 turn-completed 不再调用；收到 title-generated 后再触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      turnCompleted('parent');
+      expect(summarizeTitle).toHaveBeenCalledTimes(1);
+
+      // 第二次 turn-completed：上一轮总结在飞，应跳过
+      turnCompleted('parent');
+      expect(summarizeTitle).toHaveBeenCalledTimes(1);
+
+      // title-generated 回流，清掉在飞基准
+      onAgentEvent?.({
+        type: 'title-generated',
+        conversationId: 'parent',
+        title: '新标题',
+      });
+      expect(sessionsModule.useSessionsStore.getState().conversations.parent.title).toBe('新标题');
+
+      // 再来一次 turn-completed 应再次触发
+      summarizeTitle.mockClear();
+      // 更新 currentTitle 基准为新标题
+      sessionsModule.useSessionsStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          parent: { ...state.conversations.parent, title: '新标题' },
+        },
+      }));
+      turnCompleted('parent');
+      expect(summarizeTitle).toHaveBeenCalledTimes(1);
+      expect(summarizeTitle).toHaveBeenCalledWith(
+        'parent',
+        expect.objectContaining({ kind: 'rolling', currentTitle: '新标题' }),
+        { providerId: 'provider-1', modelId: 'model-1' }
+      );
+    });
+
+    it('turn-failed 不触发滚动总结', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      onAgentEvent?.({
+        type: 'turn-failed',
+        identity: { sessionId: 'parent', generation: 'g1' },
+        seq: 2,
+        turnId: 'turn-1',
+        error: 'boom',
+      });
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('先设置 abortRequested=true 再 turn-completed 不触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent', { abortRequested: true });
+
+      turnCompleted('parent');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('titleSummaryEnabled=false 不触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: false });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      turnCompleted('parent');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('turn-completed 无 digest 不触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      onAgentEvent?.({
+        type: 'turn-completed',
+        identity: { sessionId: 'parent', generation: 'g1' },
+        seq: 2,
+        turnId: 'turn-1',
+      });
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('有 parentId 的 child 会话不触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('child-1', { parentId: 'parent' });
+
+      turnCompleted('child-1');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('冷会话（activeId 是别的会话、messages 为空）turn-completed{digest} 同样触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('cold', { messages: [] });
+      // 让冷会话不是当前查看的会话
+      sessionsModule.useSessionsStore.setState({ activeId: 'parent' });
+
+      turnCompleted('cold');
+      expect(summarizeTitle).toHaveBeenCalledWith(
+        'cold',
+        expect.objectContaining({ kind: 'rolling', currentTitle: '初始标题' }),
+        { providerId: 'provider-1', modelId: 'model-1' }
+      );
+    });
+
+    it('renameConversation 后 conversation.titleLocked === true', async () => {
+      seedStartedRoot('parent');
+      sessionsModule.useSessionsStore.getState().renameConversation('parent', '手动改名');
+      expect(sessionsModule.useSessionsStore.getState().conversations.parent.titleLocked).toBe(
+        true
+      );
+      expect(sessionsModule.useSessionsStore.getState().conversations.parent.title).toBe(
+        '手动改名'
+      );
+    });
+
+    it('锁定后 turn-completed{digest} 不触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+      sessionsModule.useSessionsStore.getState().renameConversation('parent', '手动改名');
+
+      turnCompleted('parent');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('锁定后 title-generated 迟到不覆盖标题', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      seedStartedRoot('parent');
+      // 先制造一个在飞基准（模拟锁定前刚发起的总结）
+      summarizeTitle.mockClear();
+      turnCompleted('parent');
+      expect(summarizeTitle).toHaveBeenCalledTimes(1);
+
+      // 用户手动改名（锁定）
+      sessionsModule.useSessionsStore.getState().renameConversation('parent', '手动改名');
+      expect(sessionsModule.useSessionsStore.getState().conversations.parent.title).toBe(
+        '手动改名'
+      );
+
+      // 迟到的 title-generated 不应覆盖手动改的标题
+      onAgentEvent?.({
+        type: 'title-generated',
+        conversationId: 'parent',
+        title: 'AI 想改的标题',
+      });
+      expect(sessionsModule.useSessionsStore.getState().conversations.parent.title).toBe(
+        '手动改名'
+      );
+    });
+
+    it('title-generated 的 title 与当前相同 → store state 引用不变', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      seedStartedRoot('parent');
+      // 制造在飞基准
+      turnCompleted('parent');
+
+      const before = sessionsModule.useSessionsStore.getState();
+      onAgentEvent?.({
+        type: 'title-generated',
+        conversationId: 'parent',
+        title: '初始标题',
+      });
+      const after = sessionsModule.useSessionsStore.getState();
+      // 模型选择不改 → 不写 state，引用应保持不变
+      expect(after).toBe(before);
     });
   });
 
@@ -1489,7 +1727,7 @@ describe('typed Agent child projection', () => {
     // 送给 summarizeTitle 的文本清洗掉内部标签和引导行
     expect(summarizeTitle).toHaveBeenCalledWith(
       id,
-      '但是你说的这个都是针对性修改了吧，通用性会受影响吗？',
+      { kind: 'initial', text: '但是你说的这个都是针对性修改了吧，通用性会受影响吗？' },
       { providerId: 'provider-1', modelId: 'model-1' }
     );
 
@@ -1535,7 +1773,7 @@ describe('typed Agent child projection', () => {
     );
     expect(summarizeTitle).toHaveBeenCalledWith(
       id,
-      '帮我看看这个竞态问题',
+      { kind: 'initial', text: '帮我看看这个竞态问题' },
       { providerId: 'provider-1', modelId: 'model-1' }
     );
   });
