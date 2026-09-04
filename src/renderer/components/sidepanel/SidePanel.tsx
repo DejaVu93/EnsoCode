@@ -493,6 +493,14 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
   }, []);
   const skipWidthAnim = resizing;
   const targetW = fullscreen ? workspaceW || width : open ? width : 0;
+  /**
+   * 内容层固定为目标宽度、左对齐，而不是 w-full 跟随 aside：
+   * dockview 的 resize 回调在 ResizeObserver 里又套了一层 rAF，至少滞后一帧；
+   * aside 展开态是透明的（给 Browser 挖孔），若内容跟着 aside 逐帧重排，
+   * 弹簧过冲/打开首帧时 aside 比内容宽出来的那一条就会露出没有面板遮罩的裸壁纸。
+   * 全屏 cover 态 aside 本身是实底，内容照常铺满。border-l 占 1px，内容按 content-box 扣掉。
+   */
+  const contentW = cover ? undefined : Math.max(0, width - (open ? 1 : 0));
   const activeId = conversation?.id;
   if (activeId && !mountedIds.includes(activeId)) {
     setMountedIds((ids) => (ids.includes(activeId) ? ids : [...ids, activeId]));
@@ -519,7 +527,23 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
           open && 'border-l'
         )}
       >
-        <div className={cn('flex h-full min-h-0 w-full flex-col', !open && 'hidden')}>
+        {open && !cover && contentW !== undefined ? (
+          // 过冲补条：只盖 [内容右边缘, aside 右边缘]，稳态宽度为 0，不会压到 Browser 挖孔
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-0 bg-background"
+            style={{ left: contentW }}
+          />
+        ) : null}
+        <div
+          className={cn(
+            'relative flex h-full min-h-0 flex-col',
+            cover && 'w-full',
+            // invisible 而非 hidden：关着时 dockview 也按目标宽度排好，打开首帧即满遮罩
+            !open && 'invisible'
+          )}
+          style={contentW !== undefined ? { width: contentW } : undefined}
+        >
           {visibleIds.length > 0 ? (
             <div className="relative min-h-0 flex-1">
               {visibleIds.map((id) => {
