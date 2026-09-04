@@ -37,6 +37,7 @@ import type {
   SpawnModelConfig,
   SubagentModelOption,
   ThinkingLevel,
+  TitleSummaryInput,
 } from '@shared/types/agent';
 import { parseAgentWorkerEvent } from '@shared/types/agent';
 import type { SubagentModelEntry } from '@shared/types/assets';
@@ -596,10 +597,10 @@ export function steerSession(
 /** 标题总结：一次性补全命令，不绑会话身份；结果经 title-generated 事件回流 */
 export function summarizeConversationTitle(
   conversationId: string,
-  text: string,
+  input: TitleSummaryInput,
   model: SpawnModelConfig
 ): { ok: boolean; error?: string } {
-  return sendAgentCommand({ type: 'summarize-title', conversationId, text, model });
+  return sendAgentCommand({ type: 'summarize-title', conversationId, input, model });
 }
 
 export function abortSession(identity: SessionIdentity): { ok: boolean; error?: string } {

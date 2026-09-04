@@ -71,6 +71,7 @@ import type {
   SelectProjectAuthorityRequest,
   SourceAuthorityProjection,
   ThinkingLevel,
+  TitleSummaryInput,
   UpdateConversationSelectionRequest,
 } from '@shared/types/agent';
 import { parseDispatchMainEvent } from '@shared/types/agent';
@@ -428,15 +429,15 @@ const electronAPI = {
     /** 已结束 child 的只读历史；只传 conversationId，路径由 Main 推导 */
     readChildHistory: (conversationId: string): Promise<ChildHistoryResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHILD_HISTORY_READ, { conversationId }),
-    /** 标题总结：只传 id + 首条消息文本（+会话模型作回退链末级），凭证由 Main 自读；结果经 title-generated 事件回流 */
+    /** 标题总结：只传 id + 输入（首条即时 / 每轮滚动，+会话模型作回退链末级），凭证由 Main 自读；结果经 title-generated 事件回流 */
     summarizeTitle: (
       conversationId: string,
-      text: string,
+      input: TitleSummaryInput,
       sessionModel?: { providerId: string; modelId: string }
     ): Promise<AgentActionResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_SUMMARIZE_TITLE, {
         conversationId,
-        text,
+        input,
         sessionModel,
       }),
     /** 已启动会话就地换模型（未启动的会话只需记忆，下次 spawn 生效） */

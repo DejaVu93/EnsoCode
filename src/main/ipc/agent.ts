@@ -19,6 +19,7 @@ import {
   APPROVAL_MODES,
   parseConversationAuthorityRequest,
   parseCreateConversationAuthorityRequest,
+  parseTitleSummaryInput,
   parseUpdateConversationSelectionRequest,
   THINKING_LEVELS,
 } from '@shared/types/agent';
@@ -534,15 +535,15 @@ export function registerAgentHandlers(): void {
     return await readChildHistory(conversationId);
   });
 
-  // 标题总结：渲染层只传 conversationId + 首条消息文本；模型与凭证由 Main 从设置自读（回退链：
+  // 标题总结：渲染层只传 conversationId + 输入（首条即时 / 每轮滚动）；模型与凭证由 Main 从设置自读（回退链：
   // 独立标题模型 → 全局默认）。失败路径全部静默：保留截断标题即兑底，不影响发消息。
   ipcMain.handle(
     IPC_CHANNELS.AGENT_SUMMARIZE_TITLE,
     async (_event, request: unknown): Promise<AgentActionResult> => {
       const record = asRecord(request);
       const conversationId = record?.conversationId;
-      const text = record?.text;
-      if (!isNonEmptyString(conversationId) || !isNonEmptyString(text)) {
+      const input = parseTitleSummaryInput(record?.input);
+      if (!isNonEmptyString(conversationId) || !input) {
         return { ok: false, error: 'invalid title summary request' };
       }
       // 会话模型是回退链末级：只收 id，凭证照样由 Main 补全；形状坏则当作未传
@@ -575,7 +576,7 @@ export function registerAgentHandlers(): void {
           credentialKeys
         );
         if (!resolved.ok || !resolved.selection) continue;
-        return summarizeConversationTitle(conversationId, text, resolved.selection.config);
+        return summarizeConversationTitle(conversationId, input, resolved.selection.config);
       }
       return { ok: false, error: 'no usable title model' };
     }
