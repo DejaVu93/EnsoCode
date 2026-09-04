@@ -374,8 +374,10 @@ export const useSessionsStore = create<SessionsState>()(
         ) {
           return;
         }
-        const conversation = get().conversations[conversationId];
-        if (!conversation || conversation.sessionFile) return;
+        // resume 与否由各调用点用触发时刻的快照判断（spawn 路径 !sessionFile、事件路径空标题）。
+        // 这里不能再读 live sessionFile：parent-ready 常抢在 spawn IPC 返回之前落地，
+        // 新会话此刻已带 sessionFile，按它判断会把桌面首条消息的总结整个误杀。
+        if (!get().conversations[conversationId]) return;
 
         pendingTitleBaselines.set(conversationId, baselineTitle);
         void window.electronAPI.agent.summarizeTitle(

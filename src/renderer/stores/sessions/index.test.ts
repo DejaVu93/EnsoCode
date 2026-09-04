@@ -1503,4 +1503,40 @@ describe('typed Agent child projection', () => {
       '配置层通用性评估'
     );
   });
+
+  it('parent-ready 抢在 spawn IPC 返回之前写入 sessionFile 时，首条消息的标题总结仍然发起', async () => {
+    settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+    summarizeTitle.mockClear();
+
+    const id = await sessionsModule.useSessionsStore.getState().newConversation('project');
+    expect(id).toBeTruthy();
+
+    // 真机时序：worker 的 parent-ready（带 sessionFile）在 spawn() promise resolve 之前就到达 renderer
+    const spawn = (window as unknown as { electronAPI: { agent: { spawn: ReturnType<typeof vi.fn> } } })
+      .electronAPI.agent.spawn;
+    spawn.mockImplementationOnce(async () => {
+      onAgentEvent?.({
+        type: 'parent-ready',
+        identity: { sessionId: id!, generation: 'g1' },
+        seq: 1,
+        sessionFile: '/tmp/fresh-session.jsonl',
+        model: { providerId: 'provider-1', modelId: 'model-1' },
+      });
+      return { ok: true };
+    });
+
+    await sessionsModule.useSessionsStore.getState().send(
+      '帮我看看这个竞态问题',
+      { providerId: 'provider-1', modelId: 'model-1', cwd: '/project' }
+    );
+
+    expect(sessionsModule.useSessionsStore.getState().conversations[id!].sessionFile).toBe(
+      '/tmp/fresh-session.jsonl'
+    );
+    expect(summarizeTitle).toHaveBeenCalledWith(
+      id,
+      '帮我看看这个竞态问题',
+      { providerId: 'provider-1', modelId: 'model-1' }
+    );
+  });
 });
