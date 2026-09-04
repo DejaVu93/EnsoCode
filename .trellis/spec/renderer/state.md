@@ -104,6 +104,23 @@ expect(store.getState().conversations.ended.messages).toHaveLength(before);
 [big-question/optimistic-echo-blocks-snapshot.md](../big-question/optimistic-echo-blocks-snapshot.md)）。
 同理，任何「本地是否已有数据、要不要去拉」的判断都要过滤 `optimistic` 条目。
 
+## 会话标题的自动总结守卫
+
+标题自动总结（首条即时 + 每轮 `turn-completed{digest}` 滚动）在 `sessions/index.ts` 里有两层守卫，缺一不可：
+
+- **在飞基准** `pendingTitleBaselines`（内存 Map）：发起时记下当时的标题，`title-generated` 回流时
+  标题已不等于基准就丢弃；同一会话同时只允许一个在飞（第二个回合到来时跳过，不排队）。
+- **手动锁** `Conversation.titleLocked`（随 `...conversation` 持久化）：`renameConversation` 置位并清基准，
+  之后所有自动路径都跳过。跨重启生效，靶向「用户改过名就永远别动」。
+
+resume 与否的判断**只能用调用点触发时刻的快照**（spawn 路径看 `!conversation.sessionFile`），
+不得在通用函数里读 live `sessionFile`：`parent-ready` 常抢在 `spawn()` IPC 返回前落地，新会话此刻
+已带 `sessionFile`，按它判断会把桌面首条总结整个误杀（commit `b829adc`）。
+
+本轮摘要（用户请求 + assistant 结论）由 worker 在 `agent_end` 切出并挂在 `turn-completed.digest` 上，
+renderer 只做门禁与发起——冷会话正文已被 `evictColdMessages` 清空、手机端会话可能没正文，
+renderer 侧的 `messages` 不可依赖。
+
 ## 持久化边界
 
 写入 `settings.json` 的内容由 persist 的 `partialize` 决定。因此：
