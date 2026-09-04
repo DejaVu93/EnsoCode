@@ -132,7 +132,14 @@ import {
   withAgentRead,
 } from './structuredYield';
 import { createSubagentTool, lastAssistantText } from './subagent';
-import { buildTitleUserText, extractTitle, TITLE_SYSTEM_PROMPT } from './titleSummary';
+import {
+  buildRollingTitleUserText,
+  buildTitleUserText,
+  buildTurnDigest,
+  extractTitle,
+  ROLLING_TITLE_SYSTEM_PROMPT,
+  TITLE_SYSTEM_PROMPT,
+} from './titleSummary';
 import { createTodoTool } from './todo';
 import { BrowserInvoker, createBrowserTools, withNavigateApproval } from './tools/browser';
 import { createEnsoAppTool, EnsoAppInvoker } from './tools/ensoApp';
@@ -189,6 +196,8 @@ interface ManagedSession {
   proofToolIds: string[];
   safeJournal?: EnsoSafeJournal;
   currentTurnId?: string;
+  /** 上一轮结束时 messages.length：本轮消息从这里开始，供 agent_end 切本轮摘要 */
+  turnStartIndex: number;
   promptedRequestIds: Set<string>;
   ensoApp?: EnsoAppInvoker;
   browser?: BrowserInvoker;
@@ -1677,6 +1686,7 @@ export class SessionSupervisor {
       status: 'idle',
       seq: 0,
       messages: [],
+      turnStartIndex: 0,
       customEntries,
       commands: collectSlashCommands(session),
       modelId,
@@ -1739,6 +1749,7 @@ export class SessionSupervisor {
       } else {
         managed.messages = tailProjected;
       }
+      managed.turnStartIndex = managed.messages.length;
     }
     this.emitStatus(managed);
     this.options.emit({
@@ -2413,11 +2424,15 @@ export class SessionSupervisor {
         this.emitStatus(managed);
         managed.contextUsage.setPendingSnapshot(undefined);
         this.emitSessionMeta(managed);
+        // 本轮摘要随 turn-completed 下发：renderer 冷会话没有正文，只能由 worker 切
+        const digest = buildTurnDigest(managed.messages, managed.turnStartIndex);
+        managed.turnStartIndex = managed.messages.length;
         this.options.emit({
           type: 'turn-completed',
           identity: managed.identity,
           seq: ++managed.seq,
           turnId,
+          ...(digest ? { digest } : {}),
         });
         if (managed.pendingCompact) {
           const queued = managed.pendingCompact;
@@ -2573,6 +2588,8 @@ export class SessionSupervisor {
     managed.currentTurnId = undefined;
     managed.contextUsage.setPendingSnapshot(undefined);
     managed.status = 'failed';
+    // 失败轮不总结，但下一轮的起点仍要往前推，否则失败轮的消息会混进下一轮摘要
+    managed.turnStartIndex = managed.messages.length;
     this.emitStatus(managed, error);
     this.options.emit({
       type: 'turn-failed',
@@ -2967,14 +2984,18 @@ export class SessionSupervisor {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TITLE_SUMMARY_TIMEOUT_MS);
     try {
+      const rolling = command.input.kind === 'rolling';
       const message = await runtime.completeSimple(
         model,
         {
-          systemPrompt: TITLE_SYSTEM_PROMPT,
+          systemPrompt: rolling ? ROLLING_TITLE_SYSTEM_PROMPT : TITLE_SYSTEM_PROMPT,
           messages: [
             {
               role: 'user',
-              content: buildTitleUserText(command.text),
+              content:
+                command.input.kind === 'rolling'
+                  ? buildRollingTitleUserText(command.input)
+                  : buildTitleUserText(command.input.text),
               timestamp: Date.now(),
             },
           ],
