@@ -17,6 +17,7 @@ import {
   parseSelectProjectAuthorityRequest,
   parseSessionSnapshot,
   parseSourceAuthorityProjection,
+  parseTitleSummaryInput,
   parseUpdateConversationSelectionRequest,
   shouldApplyDispatchMainEvent,
 } from './agent';
@@ -562,24 +563,128 @@ describe('removed project memory protocol', () => {
 });
 
 describe('标题总结命令与事件', () => {
-  const summarize = {
+  const summarizeInitial = {
     type: 'summarize-title',
     conversationId: 'conversation-1',
-    text: '帮我把登录页的 bug 修一下',
+    input: { kind: 'initial', text: '帮我把登录页的 bug 修一下' },
+    model,
+  };
+  const summarizeRolling = {
+    type: 'summarize-title',
+    conversationId: 'conversation-1',
+    input: {
+      kind: 'rolling',
+      currentTitle: '修复登录 bug',
+      userText: '这个修复有通用性吗',
+      assistantText: '只影响登录路径',
+    },
     model,
   };
 
-  it('summarize-title 命令完整往返；缺字段或空值拒绝', () => {
-    expect(parseAgentCommand(summarize)).toEqual(summarize);
-    expect(parseAgentCommand({ ...summarize, conversationId: '' })).toBeNull();
-    expect(parseAgentCommand({ ...summarize, text: '' })).toBeNull();
-    expect(parseAgentCommand({ ...summarize, model: undefined })).toBeNull();
-    expect(parseAgentCommand({ ...summarize, extra: 1 })).toBeNull();
+  it('summarize-title 命令 initial 输入完整往返；缺字段或空值拒绝', () => {
+    expect(parseAgentCommand(summarizeInitial)).toEqual(summarizeInitial);
+    expect(parseAgentCommand({ ...summarizeInitial, conversationId: '' })).toBeNull();
+    expect(
+      parseAgentCommand({ ...summarizeInitial, input: { kind: 'initial', text: '' } })
+    ).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, model: undefined })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, extra: 1 })).toBeNull();
+  });
+
+  it('summarize-title 命令 rolling 输入完整往返', () => {
+    expect(parseAgentCommand(summarizeRolling)).toEqual(summarizeRolling);
+  });
+
+  it('summarize-title 旧形状（顶层 text 字段而无 input）拒绝', () => {
+    const legacy = {
+      type: 'summarize-title',
+      conversationId: 'conversation-1',
+      text: '帮我把登录页的 bug 修一下',
+      model,
+    };
+    expect(parseAgentCommand(legacy)).toBeNull();
+  });
+
+  it('summarize-title rolling 缺 currentTitle 拒绝', () => {
+    expect(
+      parseAgentCommand({
+        ...summarizeRolling,
+        input: {
+          kind: 'rolling',
+          currentTitle: '',
+          userText: 'x',
+          assistantText: 'y',
+        },
+      })
+    ).toBeNull();
+  });
+
+  it('summarize-title rolling 的 userText 与 assistantText 都为空串拒绝', () => {
+    expect(
+      parseAgentCommand({
+        ...summarizeRolling,
+        input: { kind: 'rolling', currentTitle: 't', userText: '', assistantText: '' },
+      })
+    ).toBeNull();
+  });
+
+  it('summarize-title initial 的 text 为空拒绝', () => {
+    expect(
+      parseAgentCommand({ ...summarizeInitial, input: { kind: 'initial', text: '   ' } })
+    ).toBeNull();
   });
 
   it('summarize-title 的 model 缺 settingsProviderId 拒绝（与 spawn 同约束）', () => {
     const { settingsProviderId: _omitted, ...rest } = model;
-    expect(parseAgentCommand({ ...summarize, model: rest })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, model: rest })).toBeNull();
+  });
+
+  it('parseTitleSummaryInput 直接单测：initial / rolling 合法形状通过', () => {
+    expect(parseTitleSummaryInput({ kind: 'initial', text: 'hi' })).toEqual({
+      kind: 'initial',
+      text: 'hi',
+    });
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        userText: 'u',
+        assistantText: 'a',
+      })
+    ).toEqual({ kind: 'rolling', currentTitle: 't', userText: 'u', assistantText: 'a' });
+  });
+
+  it('parseTitleSummaryInput 直接单测：非法形状返回 null', () => {
+    expect(parseTitleSummaryInput(null)).toBeNull();
+    expect(parseTitleSummaryInput({})).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'initial' })).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'initial', text: '' })).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: '',
+        userText: 'u',
+        assistantText: 'a',
+      })
+    ).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        userText: '',
+        assistantText: '',
+      })
+    ).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        userText: 1,
+        assistantText: 'a',
+      })
+    ).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'other', text: 'x' })).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'initial', text: 'x', extra: 1 })).toBeNull();
   });
 
   it('title-generated 事件完整往返；脏输入不崩', () => {
@@ -604,6 +709,44 @@ describe('标题总结命令与事件', () => {
     });
     expect(parseAgentWorkerEvent({ ...event, undelivered: 'yes' })).toBeNull();
     expect(parseAgentWorkerEvent({ ...event, undelivered: false })).toBeNull();
+  });
+
+  it('turn-completed 带合法 digest 往返', () => {
+    const event = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+      digest: { userText: '本轮请求', assistantText: '本轮结论' },
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+  });
+
+  it('turn-completed digest 形状非法 → 整条事件返回 null', () => {
+    const base = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+    };
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { userText: 1, assistantText: 'a' } })
+    ).toBeNull();
+    expect(parseAgentWorkerEvent({ ...base, digest: { userText: 'u' } })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...base, digest: 'nope' })).toBeNull();
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a', extra: 1 } })
+    ).toBeNull();
+  });
+
+  it('turn-completed 无 digest 仍合法', () => {
+    const event = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
   });
 });
 
