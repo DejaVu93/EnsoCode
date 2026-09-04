@@ -1454,6 +1454,32 @@ describe('typed Agent child projection', () => {
       );
     });
 
+    it('titleLocked 随 partialize 持久化', async () => {
+      seedStartedRoot('parent');
+      sessionsModule.useSessionsStore.getState().renameConversation('parent', '手动改名');
+      const partialize = sessionsModule.useSessionsStore.persist.getOptions().partialize;
+      const persisted = partialize?.(sessionsModule.useSessionsStore.getState()) as {
+        conversations: Record<string, { title: string; titleLocked?: boolean }>;
+      };
+      expect(persisted.conversations.parent).toMatchObject({
+        title: '手动改名',
+        titleLocked: true,
+      });
+    });
+
+    it('锁定后首条即时总结（spawn 路径）也不触发', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      const id = await sessionsModule.useSessionsStore.getState().newConversation('project');
+      // 用户在发首条消息前就手动命名了这个会话
+      sessionsModule.useSessionsStore.getState().renameConversation(id!, '预先命名');
+      await sessionsModule.useSessionsStore
+        .getState()
+        .send('首条消息', { providerId: 'provider-1', modelId: 'model-1', cwd: '/project' });
+      expect(summarizeTitle).not.toHaveBeenCalled();
+      expect(sessionsModule.useSessionsStore.getState().conversations[id!].title).toBe('预先命名');
+    });
+
     it('锁定后 turn-completed{digest} 不触发', async () => {
       settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
       summarizeTitle.mockClear();
@@ -1750,8 +1776,9 @@ describe('typed Agent child projection', () => {
     expect(id).toBeTruthy();
 
     // 真机时序：worker 的 parent-ready（带 sessionFile）在 spawn() promise resolve 之前就到达 renderer
-    const spawn = (window as unknown as { electronAPI: { agent: { spawn: ReturnType<typeof vi.fn> } } })
-      .electronAPI.agent.spawn;
+    const spawn = (
+      window as unknown as { electronAPI: { agent: { spawn: ReturnType<typeof vi.fn> } } }
+    ).electronAPI.agent.spawn;
     spawn.mockImplementationOnce(async () => {
       onAgentEvent?.({
         type: 'parent-ready',
@@ -1763,10 +1790,13 @@ describe('typed Agent child projection', () => {
       return { ok: true };
     });
 
-    await sessionsModule.useSessionsStore.getState().send(
-      '帮我看看这个竞态问题',
-      { providerId: 'provider-1', modelId: 'model-1', cwd: '/project' }
-    );
+    await sessionsModule.useSessionsStore
+      .getState()
+      .send('帮我看看这个竞态问题', {
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        cwd: '/project',
+      });
 
     expect(sessionsModule.useSessionsStore.getState().conversations[id!].sessionFile).toBe(
       '/tmp/fresh-session.jsonl'

@@ -2480,6 +2480,8 @@ export class SessionSupervisor {
     const lastUser = [...managed.messages].reverse().find((message) => message.role === 'user');
     const text = lastUser?.content.find((part) => part.type === 'text')?.text;
     if (!text) return false;
+    // 重发同一请求：本轮摘要从重发点起算，避免失败的首次尝试重复计入
+    managed.turnStartIndex = managed.messages.length;
     void managed.session.prompt(text).catch((error) => {
       this.failTurn(managed, toErrorMessage(error));
     });
