@@ -1,5 +1,5 @@
-import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 describe('pi-cursor pnpm patch', () => {
@@ -13,11 +13,12 @@ describe('pi-cursor pnpm patch', () => {
     expect(bundle).toContain('__ensoCursorHandleExec');
   });
 
-  it('retries Connect not_found by rotating the Cursor conversation id', () => {
+  // 上游 1.4.31 同时发 model_details 与 requested_model，Cursor 以 not_found 拒掉整轮
+  // （上游 PR #24）。补丁只保留 requested_model。
+  it('drops the legacy modelDetails field from the Run request', () => {
     const require = createRequire(import.meta.url);
     const bundle = readFileSync(require.resolve('@rahularya01/pi-cursor'), 'utf8');
-    expect(bundle).toMatch(/\\bnot_found\\b/);
-    expect(bundle).toContain('kind==="conversation_not_found"');
-    expect(bundle).toContain('kind:"conversation_not_found"');
+    expect(bundle).not.toContain('modelDetails');
+    expect(bundle).toContain('requestedModel:L');
   });
 });
