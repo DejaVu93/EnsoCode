@@ -795,6 +795,7 @@ export const zhTranslations: Record<string, string> = {
   Other: '其他',
   Archive: '归档',
   Unarchive: '取消归档',
+  Active: '活跃中',
   Pinned: '已置顶',
   'Drop here to pin': '拖到此处置顶',
   Pin: '置顶',

@@ -19,6 +19,7 @@ import type { Project } from '@shared/types';
 import type { WorktreeStatus } from '@shared/types/worktree';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
+  Activity,
   Archive,
   ArchiveRestore,
   ChevronRight,
@@ -82,6 +83,7 @@ import { cn } from '@/lib/utils';
 import { useRemoteNodesStore } from '@/stores/remoteNodes';
 import { useSessionsStore } from '@/stores/sessions';
 import {
+  activeConversationIds,
   archivedConversationGroups,
   archivedConversationIds,
   pinnedConversationIds,
@@ -385,6 +387,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   const [listQuery, setListQuery] = useState('');
   const [modHeld, setModHeld] = useState(false);
 
+  const activeIds = activeConversationIds(order, conversations, archivedProjectIds);
   const pinnedIds = pinnedConversationIds(order, conversations, pinnedOrderIds, archivedProjectIds);
   const archivedIds = archivedConversationIds(order, conversations, archivedProjectIds);
   const archivedGroups = archivedConversationGroups(
@@ -413,10 +416,16 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   });
   const switchSlotsRef = useRef(switchSlots);
   switchSlotsRef.current = switchSlots;
-  const visiblePinnedIds = (searching ? pinnedIds.filter(convMatches) : pinnedIds).filter((id) => {
+  const inActiveGroup = (id: string) => {
     const projectId = conversations[id]?.projectId;
     return !projectId || slicedIdSet.has(projectId);
-  });
+  };
+  const visibleActiveIds = (searching ? activeIds.filter(convMatches) : activeIds).filter(
+    inActiveGroup
+  );
+  const visiblePinnedIds = (searching ? pinnedIds.filter(convMatches) : pinnedIds).filter(
+    inActiveGroup
+  );
   const visiblePinnedSet = new Set(visiblePinnedIds);
   const switchHintFor = (id: string, surface: 'pinned' | 'project') => {
     if (collapsed || !modHeld) return undefined;
@@ -725,6 +734,39 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
             >
               {t('Add a project to start')}
             </button>
+          )}
+          {visibleActiveIds.length > 0 && (
+            <div data-slot="active-section">
+              <div className="flex items-center gap-1 px-2 py-2">
+                <span className="h-5 w-5 shrink-0" />
+                <Activity className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="text-sm font-medium">{t('Active')}</span>
+              </div>
+              <div className="flex flex-col gap-y-0.5">
+                {visibleActiveIds.map((id) => (
+                  <ConversationRow
+                    key={id}
+                    id={id}
+                    conversation={conversations[id]}
+                    active={activeId === id}
+                    hasRunningChild={hasRunningChild(id)}
+                    locale={locale}
+                    nowTick={nowTick}
+                    hoverTitle={projects.find((p) => p.id === conversations[id].projectId)?.name}
+                    worktreeStatus={conversations[id].worktree ? worktreeStatuses[id] : undefined}
+                    isolated={Boolean(conversations[id].worktree)}
+                    onSelect={selectConversation}
+                    onTogglePin={togglePinConversation}
+                    onToggleArchive={(conversationId) => void handleToggleArchive(conversationId)}
+                    onCleanupWorktree={(conversationId) =>
+                      void handleCleanupWorktree(conversationId)
+                    }
+                    onMoveToWorktree={(conversationId) => void handleMoveToWorktree(conversationId)}
+                    onRemove={(conversationId) => void openRemoveConversation(conversationId)}
+                  />
+                ))}
+              </div>
+            </div>
           )}
           {/* 无置顶会话时,拖动会话中露出临时落点条 */}
           {pinnedIds.length === 0 && dragPayload?.type === 'chat' && !dragPayload.pinned && (
