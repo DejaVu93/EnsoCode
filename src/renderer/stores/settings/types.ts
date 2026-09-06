@@ -105,7 +105,7 @@ export interface SettingsState {
   /** 强制用 read/grep/edit/write/find 替代 cat/grep/sed -i 等 shell 读写；缺省关 */
   bashInterceptEnabled: boolean;
 
-  /** 父会话用 pi-smart-compact 做 compact 摘要；缺省关，新会话生效 */
+  /** 父会话用 Enso compact hook 做 compact 摘要；缺省关，新会话生效 */
   smartCompactEnabled: boolean;
   /** 智能压缩独立模型；null = 跟随当前会话模型 */
   smartCompactModel: DefaultModelRef | null;

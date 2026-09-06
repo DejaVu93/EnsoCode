@@ -62,7 +62,7 @@ export function SmartCompactPicker() {
           <h4 className="font-medium text-sm">{t('Verified smart compaction')}</h4>
           <p className="mt-0.5 text-muted-foreground text-xs">
             {t(
-              'Use a verified summary for long-session compact. Built into Enso — no extra install. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.'
+              'Use Enso verified summary for long-session compact. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.'
             )}
           </p>
         </div>
@@ -75,7 +75,7 @@ export function SmartCompactPicker() {
             <p className="text-muted-foreground text-xs">{t('Compaction mode')}</p>
             <p className="mt-0.5 text-muted-foreground/80 text-[11px]">
               {t(
-                'Auto switches Fast/Balanced by usage. Balanced keeps a larger target so /compact is less likely to fall back.'
+                'Mode changes summary budget and how much recent tail to keep. It does not decide whether compact runs.'
               )}
             </p>
           </div>
