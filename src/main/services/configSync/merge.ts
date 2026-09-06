@@ -288,6 +288,11 @@ function providerEntry(plan: PlannedEntry, mode: MergeMode): JsonRecord {
   return next;
 }
 
+function importedEnvConflicts(source: JsonRecord, existing: JsonRecord, omitted: ReadonlySet<string>): boolean {
+  if (omitted.has('env') || source.env === undefined) return false;
+  return !sameValue(existing.env, source.env);
+}
+
 function mcpEntry(plan: PlannedEntry): JsonRecord {
   const omitted = omissionSet(plan.source);
   const next: JsonRecord = {
@@ -299,7 +304,12 @@ function mcpEntry(plan: PlannedEntry): JsonRecord {
   mergeSensitiveField(next, plan.source, plan.existing, 'env', omitted);
   if (plan.existing) next.url = preserveUrlParts(next.url, plan.existing.url, omitted, 'url');
   delete next.omittedFields;
-  if (!plan.existing && omitted.size > 0) next.enabled = false;
+  if (plan.existing && importedEnvConflicts(plan.source, plan.existing, omitted)) {
+    next.env = clone(plan.existing.env);
+    next.enabled = false;
+  } else if (!plan.existing && omitted.size > 0) {
+    next.enabled = false;
+  }
   return next;
 }
 
@@ -486,6 +496,25 @@ function scalarSummary(
     }
   }
   return { category: 'settings', added, updated, skipped, ...(fields.length ? { fields } : {}) };
+}
+
+function mcpEnvConflictWarnings(
+  plan: CategoryPlan,
+  transformed: ReadonlyMap<string, JsonRecord>
+): string[] {
+  const names: string[] = [];
+  for (const entry of plan.entries) {
+    if (!entry.existing) continue;
+    const omitted = omissionSet(entry.source);
+    if (!importedEnvConflicts(entry.source, entry.existing, omitted)) continue;
+    const next = transformed.get(entry.destinationId);
+    const name = typeof next?.name === 'string' ? next.name : entry.destinationId;
+    names.push(name);
+  }
+  if (names.length === 0) return [];
+  return [
+    `Imported MCP env differed from the local server (${names.join(', ')}); local env was kept and those servers were disabled.`,
+  ];
 }
 
 function addWarnings(bundle: ConfigSyncBundle): string[] {
@@ -736,7 +765,10 @@ export function planImport(
   return {
     state,
     summary,
-    warnings: addWarnings(bundle),
+    warnings: [
+      ...addWarnings(bundle),
+      ...mcpEnvConflictWarnings(plans.mcpServers, mcpOutput.transformed),
+    ],
     skillIdMap: plans.skills.idMap,
     instructionIdMap: plans.instructions.idMap,
   };

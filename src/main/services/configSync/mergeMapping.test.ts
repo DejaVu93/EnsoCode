@@ -328,6 +328,58 @@ describe('config sync merge identity and reference mapping', () => {
     );
   });
 
+  it('包内 env 与已启用本机 MCP 不一致时保留本机 env、禁用并告警', () => {
+    const imported: ConfigSyncMcpServer = {
+      id: 'same',
+      name: 'MCP',
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js'],
+      env: { TOKEN: 'from-package' },
+      source: 'import',
+      enabled: true,
+    };
+    const result = planImport(
+      current({
+        mcpServers: [{ ...imported, env: { TOKEN: 'local-secret' }, source: undefined }],
+      }),
+      bundle({ mcpServers: [imported] }),
+      'merge'
+    );
+
+    expect(result.state.mcpServers).toContainEqual(
+      expect.objectContaining({ id: 'same', env: { TOKEN: 'local-secret' }, enabled: false })
+    );
+    expect(result.warnings).toEqual(
+      expect.arrayContaining([expect.stringMatching(/MCP[\s\S]*env|env[\s\S]*MCP/i)])
+    );
+  });
+
+  it('包内 env 与本机一致时不禁用也不告警', () => {
+    const imported: ConfigSyncMcpServer = {
+      id: 'same',
+      name: 'MCP',
+      transport: 'stdio',
+      command: 'node',
+      args: ['server.js'],
+      env: { TOKEN: 'shared' },
+      source: 'import',
+      enabled: true,
+    };
+    const result = planImport(
+      current({ mcpServers: [{ ...imported, source: undefined }] }),
+      bundle({ mcpServers: [imported] }),
+      'merge'
+    );
+
+    expect(result.state.mcpServers).toContainEqual(
+      expect.objectContaining({ id: 'same', env: { TOKEN: 'shared' }, enabled: true })
+    );
+    expect(result.warnings).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/env/i)])
+    );
+  });
+
   it('导入启用的全局指令时关闭本机原选择', () => {
     const result = planImport(
       current({ instructions: [{ id: 'local', name: 'Local', enabled: true }] }),
