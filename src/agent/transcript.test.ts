@@ -70,21 +70,19 @@ describe('transcriptMessages', () => {
     expect(result[3].content?.[0].text).toBe('kept-q');
   });
 
-  it('fromHook compaction 把 verified 标到对应 summary',
-    () => {
-      const entries: SessionEntry[] = [
-        msg('1', 'user', 'old', null),
-        compaction('2', '1', 'S', 10, undefined, true),
-        msg('3', 'user', 'new', '2'),
-      ];
-      const context = [{ role: 'compactionSummary', summary: 'S', tokensBefore: 10 }];
-      const result = transcriptMessages({ getBranch: () => entries }, context) as {
-        role: string;
-        fromHook?: boolean;
-      }[];
-      expect(result.find((m) => m.role === 'compactionSummary')?.fromHook).toBe(true);
-    }
-  );
+  it('fromHook compaction 把 verified 标到对应 summary', () => {
+    const entries: SessionEntry[] = [
+      msg('1', 'user', 'old', null),
+      compaction('2', '1', 'S', 10, undefined, true),
+      msg('3', 'user', 'new', '2'),
+    ];
+    const context = [{ role: 'compactionSummary', summary: 'S', tokensBefore: 10 }];
+    const result = transcriptMessages({ getBranch: () => entries }, context) as {
+      role: string;
+      fromHook?: boolean;
+    }[];
+    expect(result.find((m) => m.role === 'compactionSummary')?.fromHook).toBe(true);
+  });
 
   it('firstKeptEntryId 缺失（全部摘要）时补回 compaction 之前的全部历史', () => {
     const entries: SessionEntry[] = [

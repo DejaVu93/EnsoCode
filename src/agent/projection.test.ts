@@ -165,23 +165,21 @@ describe('projectMessage', () => {
     });
   });
 
-  it('compactionSummary：fromHook 投影为 verified',
-    () => {
-      expect(
-        projectMessage({
-          role: 'compactionSummary',
-          summary: 'v',
-          tokensBefore: 1,
-          fromHook: true,
-        })
-      ).toMatchObject({ verified: true });
-      expect(
-        projectMessage({
-          role: 'compactionSummary',
-          summary: 'n',
-          tokensBefore: 1,
-        })
-      ).not.toHaveProperty('verified');
-    }
-  );
+  it('compactionSummary：fromHook 投影为 verified', () => {
+    expect(
+      projectMessage({
+        role: 'compactionSummary',
+        summary: 'v',
+        tokensBefore: 1,
+        fromHook: true,
+      })
+    ).toMatchObject({ verified: true });
+    expect(
+      projectMessage({
+        role: 'compactionSummary',
+        summary: 'n',
+        tokensBefore: 1,
+      })
+    ).not.toHaveProperty('verified');
+  });
 });
