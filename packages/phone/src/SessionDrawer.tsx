@@ -124,10 +124,12 @@ export function SessionDrawer({
     if (!open) setConfirmUnpair(null);
   }, [open]);
 
-  // 相对时间每分钟自刷（与桌面一致，避免「3 分钟前」僵住）
+  // 相对时间每分钟自刷。抽屉关闭时停表；再打开必须先刷 now，否则会拿着冻结基准
+  // 把更新过的会话算成未来（「x 小时后」）。杀进程重挂看起来像「同步好了」。
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
     if (!open) return;
+    setNowTick(Date.now());
     const timer = setInterval(() => setNowTick(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, [open]);
