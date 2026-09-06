@@ -13,6 +13,7 @@ import type {
   ModelProvider,
   Preset,
   Project,
+  ProjectGroup,
   SkillEntry,
   SubagentModelEntry,
 } from '@shared/types';
@@ -204,6 +205,8 @@ export interface SettingsState {
 
   // Projects（本地目录引用，作为会话工作目录）
   projects: Project[];
+  /** 扁平项目组；缺省 []。项目用 groupId 挂靠 */
+  projectGroups: ProjectGroup[];
 
   /** 用量估算覆盖：精确 model id → 四项单价 $/M；缺省 {} */
   usageModelPricing: PricingTable;
@@ -321,8 +324,17 @@ export interface SettingsState {
   // Project actions
   /** Main authority创建project并返回canonical projection。 */
   /** remote 传入时创建 ssh 远程项目;创建被拒(含远端探测失败)时抛 Error(message 可直接展示) */
-  addProject: (path: string, remote?: { sshConnectionId: string }) => Promise<Project | null>;
+  addProject: (
+    path: string,
+    remote?: { sshConnectionId: string },
+    groupId?: string
+  ) => Promise<Project | null>;
   removeProject: (id: string) => Promise<boolean>;
+  createProjectGroup: (input: { name: string; emoji?: string; color?: string }) => ProjectGroup;
+  updateProjectGroup: (id: string, patch: { name?: string; emoji?: string; color?: string }) => void;
+  removeProjectGroup: (id: string) => void;
+  reorderProjectGroups: (activeId: string, overId: string) => void;
+  setProjectGroupId: (projectId: string, groupId: string | null) => void;
 
   /** 非法条目不写入，返回 false */
   setUsageModelPricing: (modelId: string, pricing: ModelPricing) => boolean;

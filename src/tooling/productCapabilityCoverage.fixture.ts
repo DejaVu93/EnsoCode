@@ -77,6 +77,7 @@ export const SETTINGS_DATA_COVERAGE = {
   onboarded: surfaces('onboarding.complete'),
   keybindings: surfaces('general.keybindings.list'),
   projects: surfaces('projects.list'),
+  projectGroups: surfaces('projects.list'),
   usageModelPricing: excluded(
     'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'
   ),
@@ -183,6 +184,11 @@ export const SETTINGS_ACTION_COVERAGE = {
   setKeybinding: surfaces('general.keybindings.set'),
   resetKeybinding: surfaces('general.keybindings.reset'),
   addProject: surfaces('projects.add'),
+  createProjectGroup: surfaces('projects.list'),
+  updateProjectGroup: surfaces('projects.list'),
+  removeProjectGroup: surfaces('projects.list'),
+  reorderProjectGroups: surfaces('projects.list'),
+  setProjectGroupId: surfaces('projects.list'),
   removeProject: surfaces('projects.remove'),
   setUsageModelPricing: excluded(
     'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'

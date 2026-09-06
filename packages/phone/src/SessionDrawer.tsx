@@ -1,5 +1,16 @@
-import { type CatalogEntry, type ProjectEntry, sshProjectLabel } from '@enso/pair';
+import {
+  type CatalogEntry,
+  type ProjectEntry,
+  type ProjectGroupEntry,
+  sshProjectLabel,
+} from '@enso/pair';
 import { orderPinned, orderProjectSessions, sortByActivity } from '@shared/pair/drawerOrder';
+import {
+  ALL_GROUP_ID,
+  filterProjectsByGroup,
+  sectionsForAllView,
+  UNGROUPED_GROUP_ID,
+} from '@shared/projectGroups';
 import {
   Archive,
   Bell,
@@ -53,6 +64,7 @@ const PUSH_ERROR_TEXT: Record<PushFailureReason, string> = {
 interface Props {
   open: boolean;
   projects: ProjectEntry[];
+  groups?: ProjectGroupEntry[];
   catalog: CatalogEntry[];
   /** 桌面置顶组的手动拖拽顺序；缺省（旧桌面）按活跃倒序 */
   pinnedOrder?: string[];
@@ -86,6 +98,7 @@ interface Props {
 export function SessionDrawer({
   open,
   projects,
+  groups = [],
   catalog,
   pinnedOrder = [],
   activeId,
@@ -115,6 +128,20 @@ export function SessionDrawer({
   /** 待确认解绑的 pairId；null = 无确认框 */
   const [confirmUnpair, setConfirmUnpair] = useState<string | null>(null);
   const [themePref, setThemePref] = useState<ThemePreference>(getThemePreference);
+  const [selectedGroupId, setSelectedGroupId] = useState(() => {
+    try {
+      return localStorage.getItem('enso-phone-selected-project-group') ?? ALL_GROUP_ID;
+    } catch {
+      return ALL_GROUP_ID;
+    }
+  });
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Record<string, boolean>>({});
+  const resolvedGroupId =
+    selectedGroupId === ALL_GROUP_ID ||
+    selectedGroupId === UNGROUPED_GROUP_ID ||
+    groups.some((group) => group.id === selectedGroupId)
+      ? selectedGroupId
+      : ALL_GROUP_ID;
 
   // 主题可能由桌面下发触发变化，订阅后同步按钮高亮
   useEffect(() => subscribeTheme(() => setThemePref(getThemePreference())), []);
@@ -137,14 +164,35 @@ export function SessionDrawer({
   // 与桌面侧栏同语义：归档不进项目组，只进底部栏目；置顶另起一栏且组内靠前；
   // 归档项目整组视为归档（会话自身标记不动，桌面恢复项目后原样回来）
   const archivedProjects = new Set(projects.filter((p) => p.archived).map((p) => p.id));
+  const archivedProjectIds = [...archivedProjects];
   const isArchived = (c: CatalogEntry) => c.archived || archivedProjects.has(c.projectId);
-  const activeProjects = projects.filter((p) => !p.archived);
+  const activeProjects = filterProjectsByGroup(
+    projects,
+    groups,
+    archivedProjectIds,
+    resolvedGroupId
+  );
+  const groupSections = sectionsForAllView(projects, groups, archivedProjectIds);
+  const slicedIdSet = new Set(activeProjects.map((project) => project.id));
   const topLevel = catalog.filter((c) => !c.parentId);
   const pinnedSessions = orderPinned(
-    topLevel.filter((c) => c.pinned && !isArchived(c)),
+    topLevel.filter(
+      (c) => c.pinned && !isArchived(c) && (!c.projectId || slicedIdSet.has(c.projectId))
+    ),
     pinnedOrder
   );
-  const archivedSessions = sortByActivity(topLevel.filter(isArchived));
+  const archivedSessions = sortByActivity(
+    topLevel.filter((c) => {
+      if (!isArchived(c)) return false;
+      if (resolvedGroupId === ALL_GROUP_ID) return true;
+      const project = projects.find((item) => item.id === c.projectId);
+      if (!project) return resolvedGroupId === UNGROUPED_GROUP_ID;
+      if (resolvedGroupId === UNGROUPED_GROUP_ID) {
+        return !project.groupId || !groups.some((item) => item.id === project.groupId);
+      }
+      return project.groupId === resolvedGroupId;
+    })
+  );
   const active = topLevel.filter((c) => !isArchived(c));
 
   // 没有项目归属的会话（项目已删等）单独归到「其他」
@@ -180,8 +228,37 @@ export function SessionDrawer({
             <X className="h-4 w-4" />
           </button>
         </div>
+        {groups.length > 0 && (
+          <div className="shrink-0 border-b px-3 py-2">
+            <select
+              className="h-8 w-full rounded-md border bg-background px-2 text-sm"
+              value={resolvedGroupId}
+              onChange={(event) => {
+                const next = event.target.value;
+                setSelectedGroupId(next);
+                try {
+                  localStorage.setItem('enso-phone-selected-project-group', next);
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              <option value={ALL_GROUP_ID}>全部</option>
+              {groups
+                .slice()
+                .sort((a, b) => a.order - b.order)
+                .map((group) => (
+                  <option key={group.id} value={group.id}>
+                    {group.emoji ? `${group.emoji} ` : ''}
+                    {group.name}
+                  </option>
+                ))}
+              <option value={UNGROUPED_GROUP_ID}>未分组</option>
+            </select>
+          </div>
+        )}
 
-        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+        <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
           {projects.length === 0 && (
             <p className="rounded-lg border border-dashed px-3 py-6 text-center text-muted-foreground text-sm">
               桌面端还没有项目
@@ -208,27 +285,82 @@ export function SessionDrawer({
             </div>
           )}
 
-          {activeProjects.map((project) => (
-            <ProjectGroup
-              key={project.id}
-              name={project.name}
-              badge={sshProjectLabel(project)}
-              sessions={orderProjectSessions(active.filter((c) => c.projectId === project.id))}
-              folded={foldedProjects[project.id] === true}
-              expanded={expandedProjects[project.id] === true}
-              activeId={activeId}
-              nowTick={nowTick}
-              canCreate={canCreate}
-              onToggleFold={() =>
-                setFoldedProjects((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
-              }
-              onToggleExpand={() =>
-                setExpandedProjects((prev) => ({ ...prev, [project.id]: !prev[project.id] }))
-              }
-              onSelect={onSelect}
-              onNew={() => onNewConversation(project.id)}
-            />
-          ))}
+          {(resolvedGroupId === ALL_GROUP_ID && groups.length > 0
+            ? groupSections.flatMap((section) => {
+                const folded = collapsedGroupIds[section.groupId] === true;
+                return [
+                  { kind: 'header' as const, section, folded },
+                  ...(folded
+                    ? []
+                    : section.projects.map((project) => ({ kind: 'project' as const, project }))),
+                ];
+              })
+            : activeProjects.map((project) => ({ kind: 'project' as const, project }))
+          ).map((item) =>
+            item.kind === 'header' ? (
+              <button
+                key={`hdr-${item.section.groupId}`}
+                type="button"
+                onClick={() =>
+                  setCollapsedGroupIds((prev) => ({
+                    ...prev,
+                    [item.section.groupId]: !prev[item.section.groupId],
+                  }))
+                }
+                className="flex h-7 w-full items-center gap-1 rounded-md px-2 text-left text-xs font-medium text-muted-foreground"
+              >
+                <ChevronRight
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
+                    !item.folded && 'rotate-90'
+                  )}
+                />
+                {item.section.group?.emoji && (
+                  <span className="shrink-0 text-sm">{item.section.group.emoji}</span>
+                )}
+                {item.section.group?.color && (
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: item.section.group.color }}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate">
+                  {item.section.group?.name ?? '未分组'}
+                </span>
+                <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                  {item.section.projects.length}
+                </span>
+              </button>
+            ) : (
+              <ProjectGroup
+                key={item.project.id}
+                name={item.project.name}
+                badge={sshProjectLabel(item.project)}
+                sessions={orderProjectSessions(
+                  active.filter((c) => c.projectId === item.project.id)
+                )}
+                folded={foldedProjects[item.project.id] === true}
+                expanded={expandedProjects[item.project.id] === true}
+                activeId={activeId}
+                nowTick={nowTick}
+                canCreate={canCreate}
+                onToggleFold={() =>
+                  setFoldedProjects((prev) => ({
+                    ...prev,
+                    [item.project.id]: !prev[item.project.id],
+                  }))
+                }
+                onToggleExpand={() =>
+                  setExpandedProjects((prev) => ({
+                    ...prev,
+                    [item.project.id]: !prev[item.project.id],
+                  }))
+                }
+                onSelect={onSelect}
+                onNew={() => onNewConversation(item.project.id)}
+              />
+            )
+          )}
 
           {orphans.length > 0 && (
             <ProjectGroup

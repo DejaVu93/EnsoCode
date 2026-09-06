@@ -97,6 +97,7 @@ function buildPayload(): PairCatalogPayload {
       ...toPairProjectEntry(project),
       ...(archivedProjects.has(project.id) ? { archived: true as const } : {}),
     })),
+    projectGroups: settings.projectGroups,
     providers,
     // 仅 main 侧用于 spawn 反查 cwd，不下发手机
     projectPaths: settings.projects.map((p) => ({ id: p.id, path: p.path })),
@@ -114,6 +115,7 @@ function catalogPushFingerprint(payload: PairCatalogPayload): string {
   return pairJsonFingerprint({
     catalog: catalogSyncFingerprint(payload.catalog, payload.pinnedOrder ?? []),
     projects: payload.projects,
+    projectGroups: payload.projectGroups,
     providers: payload.providers,
     projectPaths: payload.projectPaths,
     theme: payload.theme,
@@ -149,6 +151,7 @@ export function bindPairCatalogSync(): void {
   useSettingsStore.subscribe((state, prev) => {
     if (
       state.projects !== prev.projects ||
+      state.projectGroups !== prev.projectGroups ||
       state.providers !== prev.providers ||
       state.theme !== prev.theme ||
       state.terminalTheme !== prev.terminalTheme ||

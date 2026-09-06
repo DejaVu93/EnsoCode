@@ -1,3 +1,12 @@
+/** 扁平项目组（只挂项目，不挂会话） */
+export interface ProjectGroup {
+  id: string;
+  name: string;
+  emoji?: string;
+  color?: string;
+  order: number;
+}
+
 /** 项目：本地目录或 ssh 远程目录的引用，作为会话的工作目录 */
 export interface Project {
   id: string;
@@ -9,6 +18,8 @@ export interface Project {
   sshHost?: string;
   sshConnectionId?: string;
   sshConnectionName?: string;
+  /** 所属项目组；缺省或指向已删组 = 未分组 */
+  groupId?: string;
 }
 
 /** 从本地编辑器 / 编程应用读到的最近打开目录 */

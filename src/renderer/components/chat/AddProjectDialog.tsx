@@ -1,4 +1,4 @@
-import type { RecentProject } from '@shared/types';
+import type { ProjectGroup, RecentProject } from '@shared/types';
 import { Loader2 } from 'lucide-react';
 import * as React from 'react';
 import {
@@ -21,6 +21,13 @@ import {
 } from '@/components/ui/dialog';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tabs, TabsList, TabsTab } from '@/components/ui/tabs';
 import { useI18n } from '@/i18n';
 import { Z_INDEX } from '@/lib/z-index';
@@ -150,10 +157,23 @@ function RemoteDirBrowser({
 interface AddProjectDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onAdd: (request: { path: string; sshConnectionId?: string; sshHost?: string }) => void;
+  onAdd: (request: {
+    path: string;
+    sshConnectionId?: string;
+    sshHost?: string;
+    groupId?: string;
+  }) => void;
+  groups?: readonly ProjectGroup[];
+  defaultGroupId?: string;
 }
 
-export function AddProjectDialog({ open, onOpenChange, onAdd }: AddProjectDialogProps) {
+export function AddProjectDialog({
+  open,
+  onOpenChange,
+  onAdd,
+  groups = [],
+  defaultGroupId,
+}: AddProjectDialogProps) {
   const { t } = useI18n();
   const projects = useSettingsStore((state) => state.projects);
   const [mode, setMode] = React.useState<'local' | 'ssh'>('local');
@@ -163,8 +183,16 @@ export function AddProjectDialog({ open, onOpenChange, onAdd }: AddProjectDialog
   const [connections, setConnections] = React.useState<
     Awaited<ReturnType<typeof window.electronAPI.sshConnections.list>>
   >([]);
+  const [groupId, setGroupId] = React.useState<string | undefined>(defaultGroupId);
   const [browserOpen, setBrowserOpen] = React.useState(false);
   const [recent, setRecent] = React.useState<RecentProject[]>([]);
+  const groupItems = React.useMemo(
+    () => [
+      { value: '', label: t('Ungrouped') },
+      ...groups.map((group) => ({ value: group.id, label: group.name })),
+    ],
+    [groups, t]
+  );
 
   React.useEffect(() => {
     if (!open) return;
@@ -172,6 +200,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdd }: AddProjectDialog
     setPathValue('');
     setSshConnectionId('');
     setSshPath('');
+    setGroupId(defaultGroupId);
     setBrowserOpen(false);
     window.electronAPI.sshConnections
       .list()
@@ -181,7 +210,7 @@ export function AddProjectDialog({ open, onOpenChange, onAdd }: AddProjectDialog
       .getRecent()
       .then(setRecent)
       .catch(() => setRecent([]));
-  }, [open]);
+  }, [open, defaultGroupId]);
 
   const existing = React.useMemo(
     () => new Set(projects.map((project) => project.path)),
@@ -221,9 +250,10 @@ export function AddProjectDialog({ open, onOpenChange, onAdd }: AddProjectDialog
         path: sshPath.trim(),
         sshConnectionId,
         sshHost: connection?.name,
+        ...(groupId ? { groupId } : {}),
       });
     } else {
-      onAdd({ path: pathValue.trim() });
+      onAdd({ path: pathValue.trim(), ...(groupId ? { groupId } : {}) });
     }
     onOpenChange(false);
   };
@@ -345,6 +375,27 @@ export function AddProjectDialog({ open, onOpenChange, onAdd }: AddProjectDialog
                     </AutocompleteList>
                   </AutocompletePopup>
                 </Autocomplete>
+              </Field>
+            )}
+            {groups.length > 0 && (
+              <Field>
+                <FieldLabel>{t('Project group')}</FieldLabel>
+                <Select
+                  items={groupItems}
+                  value={groupId ?? ''}
+                  onValueChange={(value) => setGroupId(value || undefined)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup zIndex={Z_INDEX.DROPDOWN_IN_MODAL}>
+                    {groupItems.map((item) => (
+                      <SelectItem key={item.value || 'ungrouped'} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
               </Field>
             )}
           </DialogPanel>
