@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-09-04
+- **Total Sessions**: 16
+- **Last Active**: 2026-09-06
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~472 | Active |
+| `journal-1.md` | ~523 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-09-06 | Bash intercept switch (default off) | `c09ff4dc` | `enso/4e6016e3` |
 | 15 | 2026-09-04 | Cmd session switch and v0.1.19 | `159713a`, `a87e9ce`, `d505874`, `99db782`, `75f0ed5` | `dev` |
 | 14 | 2026-09-04 | Coworker protocol: wait/report, parent-waiting message_main_agent, tester agent type + writeScope | `b2054a5`, `db0beaa`, `871296d`, `e16c96d`, `90b5ccb`, `60cdd83`, `ebd3594`, `5b11c3f`, `25b59f7` | `enso/3085e88f` |
 | 13 | 2026-09-04 | Usage statistics dashboard (Settings → Usage) | `9766e4f` | `enso/3085e88f` |

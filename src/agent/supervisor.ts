@@ -699,6 +699,7 @@ export class SessionSupervisor {
           command.loadHarnessAssets,
           command.windowsLocalShell,
           command.exploreFoldEnabled,
+          command.bashInterceptEnabled,
           command.smartCompactEnabled,
           command.smartCompactSummaryModel,
           command.smartCompactMode
@@ -1079,6 +1080,7 @@ export class SessionSupervisor {
     loadHarnessAssets = false,
     windowsLocalShell?: WindowsLocalShell,
     exploreFoldEnabled = false,
+    bashInterceptEnabled = false,
     smartCompactEnabled = false,
     smartCompactSummaryModel?: SpawnModelConfig,
     smartCompactMode?: SmartCompactMode
@@ -1246,6 +1248,8 @@ export class SessionSupervisor {
           return { command: sshCommand, cwd: process.cwd() };
         }
       : undefined;
+    const maybeInterceptBash = (definition: Def): Def =>
+      bashInterceptEnabled ? withBashInterception(definition) : definition;
     const buildBaseTools = (
       toolGate: ApprovalGate,
       cp?: CheckpointManager,
@@ -1262,7 +1266,7 @@ export class SessionSupervisor {
           'command',
           guarded(
             withBackground(
-              withBashInterception(
+              maybeInterceptBash(
                 createSessionCommandTool({
                   cwd,
                   remote: Boolean(remoteOps),

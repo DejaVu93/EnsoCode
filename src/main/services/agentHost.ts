@@ -385,6 +385,7 @@ export function spawnSession(
   const loadHarnessAssets = state?.loadHarnessAssets === true;
   const windowsLocalShell = parseWindowsLocalShell(state?.windowsLocalShell);
   const exploreFoldEnabled = state?.exploreFoldEnabled === true;
+  const bashInterceptEnabled = state?.bashInterceptEnabled === true;
   const smartCompactEnabled = state?.smartCompactEnabled === true;
   const smartCompactRef = asModelRef(state?.smartCompactModel);
   const smartCompactSummary =
@@ -413,6 +414,7 @@ export function spawnSession(
     ...(loadHarnessAssets ? { loadHarnessAssets: true } : {}),
     ...(windowsLocalShell !== 'auto' ? { windowsLocalShell } : {}),
     ...(exploreFoldEnabled ? { exploreFoldEnabled: true } : {}),
+    ...(bashInterceptEnabled ? { bashInterceptEnabled: true } : {}),
     ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
     ...(smartCompactSummaryModel ? { smartCompactSummaryModel } : {}),
     ...(smartCompactMode ? { smartCompactMode } : {}),

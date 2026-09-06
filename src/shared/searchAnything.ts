@@ -160,6 +160,13 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
   { id: 'presets.root', category: 'presets', title: 'Presets' },
   { id: 'agents.root', category: 'agents', title: 'Agent types' },
   { id: 'tools.root', category: 'tools', title: 'Built-in tools' },
+  {
+    id: 'tools.bashInterceptEnabled',
+    category: 'tools',
+    title: 'Force read/find tools',
+    description:
+      'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.',
+  },
   { id: 'skills.root', category: 'skills', title: 'Skills' },
   { id: 'mcp.root', category: 'mcp', title: 'MCP Servers' },
   { id: 'instructions.root', category: 'instructions', title: 'Instruction Files' },
