@@ -526,7 +526,7 @@ function hostOf(url: unknown): string {
   try {
     return new URL(url).host;
   } catch {
-    return url;
+    return '';
   }
 }
 
@@ -804,11 +804,15 @@ export function planImport(
   const summary = [
     ...SUMMARY_CATEGORIES.map((category) => {
       const row = summaryFor(category, plans[category], outputs[category].transformed, mode);
-      if (category !== 'instructions' || !enabledInstruction) return row;
+      if (category !== 'instructions' || !enabledInstruction || mode !== 'merge') return row;
+      const matchedIds = new Set(
+        plans.instructions.entries.flatMap((entry) =>
+          typeof entry.existing?.id === 'string' ? [entry.existing.id] : []
+        )
+      );
       const disabledUnmatched = records(currentState.instructions).filter(
         (local) =>
-          local.enabled === true &&
-          !plans.instructions.entries.some((entry) => entry.existing === local)
+          local.enabled === true && typeof local.id === 'string' && !matchedIds.has(local.id)
       ).length;
       if (disabledUnmatched === 0) return row;
       return { ...row, updated: row.updated + disabledUnmatched };

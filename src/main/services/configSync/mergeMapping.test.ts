@@ -428,6 +428,26 @@ describe('config sync merge identity and reference mapping', () => {
     expect(disclosed).toBe(true);
   });
 
+  it('匹配且已启用的本机指令不因互斥计数而增加 updated', () => {
+    const instruction = {
+      id: 'same',
+      name: 'Same',
+      source: 'import',
+      sourcePath: '',
+      local: false,
+      bytes: 1,
+      enabled: true,
+    };
+    const result = planImport(
+      current({ instructions: [instruction] }),
+      bundle({ instructions: [instruction] }),
+      'merge'
+    );
+    const instructions = result.summary.find((entry) => entry.category === 'instructions');
+    expect(instructions?.updated ?? 0).toBe(0);
+    expect(instructions?.skipped ?? 0).toBe(1);
+  });
+
   it('同名但不同 endpoint 的 provider 不会静默覆盖本机配置', () => {
     expect(() =>
       planImport(
