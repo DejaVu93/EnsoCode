@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { Project } from './types/project';
 import {
   ALL_GROUP_ID,
-  UNGROUPED_GROUP_ID,
   filterProjectsByGroup,
-  sectionsForAllView,
   type ProjectGroup,
+  sectionsForAllView,
+  UNGROUPED_GROUP_ID,
 } from './projectGroups';
+import type { Project } from './types/project';
 
 type P = Project & { groupId?: string };
 const p = (id: string, groupId?: string): P => ({ id, name: id, path: `/${id}`, groupId });
@@ -40,19 +40,17 @@ describe('filterProjectsByGroup', () => {
       'a',
       'c',
     ]);
-    expect(filterProjectsByGroup(projects, groups, ['a'], 'work').map((x) => x.id)).toEqual([
-      'c',
-    ]);
+    expect(filterProjectsByGroup(projects, groups, ['a'], 'work').map((x) => x.id)).toEqual(['c']);
   });
 
   it('UNGROUPED：无 groupId 或 groupId 不在目录的项目，排除归档', () => {
     const groups = [g('work', 1)];
     const projects = [p('a'), p('b', 'work'), p('c', 'ghost'), p('d')];
     expect(
-      filterProjectsByGroup(projects, groups, [], UNGROUPED_GROUP_ID).map((x) => x.id),
+      filterProjectsByGroup(projects, groups, [], UNGROUPED_GROUP_ID).map((x) => x.id)
     ).toEqual(['a', 'c', 'd']);
     expect(
-      filterProjectsByGroup(projects, groups, ['c'], UNGROUPED_GROUP_ID).map((x) => x.id),
+      filterProjectsByGroup(projects, groups, ['c'], UNGROUPED_GROUP_ID).map((x) => x.id)
     ).toEqual(['a', 'd']);
   });
 });
@@ -62,16 +60,11 @@ describe('sectionsForAllView', () => {
     const groups = [g('z', 2), g('a', 1), g('empty', 3)];
     const projects = [p('p1', 'a'), p('p2', 'z'), p('u1'), p('archived', 'a')];
     const sections = asSections(sectionsForAllView(projects, groups, ['archived']));
-    expect(sections.map((s) => s.groupId)).toEqual([
-      'a',
-      'z',
-      'empty',
-      UNGROUPED_GROUP_ID,
-    ]);
+    expect(sections.map((s) => s.groupId)).toEqual(['a', 'z', 'empty', UNGROUPED_GROUP_ID]);
     expect(sections.find((s) => s.groupId === 'a')!.projects.map((x) => x.id)).toEqual(['p1']);
     expect(sections.find((s) => s.groupId === 'empty')!.projects).toEqual([]);
     expect(
-      sections.find((s) => s.groupId === UNGROUPED_GROUP_ID)!.projects.map((x) => x.id),
+      sections.find((s) => s.groupId === UNGROUPED_GROUP_ID)!.projects.map((x) => x.id)
     ).toEqual(['u1']);
   });
 
@@ -88,7 +81,7 @@ describe('sectionsForAllView', () => {
     const projects = [p('x', 'ghost')];
     const sections = asSections(sectionsForAllView(projects, groups, []));
     expect(
-      sections.find((s) => s.groupId === UNGROUPED_GROUP_ID)!.projects.map((x) => x.id),
+      sections.find((s) => s.groupId === UNGROUPED_GROUP_ID)!.projects.map((x) => x.id)
     ).toEqual(['x']);
   });
 });

@@ -1058,10 +1058,7 @@ export function resolveAntigravityWireModelId(modelId: string, effort?: string |
   const routing = logical.effortRouting;
   if (routing) {
     // 认不出的档位（含 undefined）当 off
-    const start = Math.max(
-      0,
-      EFFORT_LADDER.findIndex((level) => level === effort)
-    );
+    const start = Math.max(0, EFFORT_LADDER.indexOf((effort ?? 'off') as AntigravityEffort));
     for (let index = start; index >= 0; index -= 1) {
       const wire = routing[EFFORT_LADDER[index]];
       if (wire) return wire;

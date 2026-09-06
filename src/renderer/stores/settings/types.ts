@@ -331,7 +331,10 @@ export interface SettingsState {
   ) => Promise<Project | null>;
   removeProject: (id: string) => Promise<boolean>;
   createProjectGroup: (input: { name: string; emoji?: string; color?: string }) => ProjectGroup;
-  updateProjectGroup: (id: string, patch: { name?: string; emoji?: string; color?: string }) => void;
+  updateProjectGroup: (
+    id: string,
+    patch: { name?: string; emoji?: string; color?: string }
+  ) => void;
   removeProjectGroup: (id: string) => void;
   reorderProjectGroups: (activeId: string, overId: string) => void;
   setProjectGroupId: (projectId: string, groupId: string | null) => void;
