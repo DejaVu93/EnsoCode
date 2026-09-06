@@ -42,6 +42,7 @@ export const SETTINGS_STATE_FIELDS = [
   'exploreFoldEnabled',
   'smartCompactEnabled',
   'smartCompactModel',
+  'smartCompactMode',
   'autoUpdate',
   'proxyMode',
   'customProxyUrl',

@@ -290,6 +290,28 @@ describe('parent/child commands', () => {
     expect(parseAgentCommand({ ...base, smartCompactSummaryModel: 'anthropic/x' })).toBeNull();
   });
 
+  it('spawn-parent 携 smartCompactMode:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'balanced' })).toEqual({
+      ...base,
+      smartCompactMode: 'balanced',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'fast' })).toEqual({
+      ...base,
+      smartCompactMode: 'fast',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'thorough' })).toEqual({
+      ...base,
+      smartCompactMode: 'thorough',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'auto' })).toEqual({
+      ...base,
+      smartCompactMode: 'auto',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'aggressive' })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactMode: true })).toBeNull();
+  });
+
   it('spawn-parent 携 windowsLocalShell:合法通过,脏值拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
     expect(parseAgentCommand({ ...base, windowsLocalShell: 'bash' })).toEqual({

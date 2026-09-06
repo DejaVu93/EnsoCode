@@ -106,6 +106,8 @@ export interface SettingsState {
   smartCompactEnabled: boolean;
   /** 智能压缩独立模型；null = 跟随当前会话模型 */
   smartCompactModel: DefaultModelRef | null;
+  /** 验证式压缩档位；缺省 auto */
+  smartCompactMode: import('@shared/smartCompactMode').SmartCompactMode;
 
   /** 是否自动检查并下载应用更新；缺省 true */
   autoUpdate: boolean;
@@ -218,6 +220,7 @@ export interface SettingsState {
   setExploreFoldEnabled: (value: boolean) => void;
   setSmartCompactEnabled: (value: boolean) => void;
   setSmartCompactModel: (value: DefaultModelRef | null) => void;
+  setSmartCompactMode: (value: import('@shared/smartCompactMode').SmartCompactMode) => void;
   setAutoUpdate: (value: boolean) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setCustomProxyUrl: (url: string) => void;

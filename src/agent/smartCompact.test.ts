@@ -3,26 +3,80 @@ import {
   ENSO_SMART_COMPACT_CONFIG,
   formatSmartCompactSummaryModel,
   mergeSmartCompactSettings,
-  resolveSmartCompactExtensionPath,
+  smartCompactInlineExtension,
+  usageForSmartCompactPlanning,
+  wrapSmartCompactFactory,
 } from './smartCompact';
 
-describe('resolveSmartCompactExtensionPath', () => {
-  it('解析到包入口时返回路径', () => {
-    expect(resolveSmartCompactExtensionPath(() => '/tmp/pi-smart-compact/dist/index.js')).toBe(
-      '/tmp/pi-smart-compact/dist/index.js'
+describe('smartCompactInlineExtension', () => {
+  it('挂默认工厂，开关开时由 loader 内嵌加载', () => {
+    expect(smartCompactInlineExtension.name).toBe('pi-smart-compact');
+    expect(smartCompactInlineExtension.hidden).toBe(true);
+    expect(typeof smartCompactInlineExtension.factory).toBe('function');
+  });
+
+  it('before_compact 时把 preparation.tokensBefore 补进 getContextUsage', () => {
+    let hook:
+      | ((
+          event: { preparation?: { tokensBefore?: number } },
+          ctx: {
+            getContextUsage: () => { tokens?: number | null } | undefined;
+            model?: { contextWindow?: number };
+          }
+        ) => { tokens?: number | null } | undefined)
+      | undefined;
+    wrapSmartCompactFactory((pi) => {
+      const on = pi.on as (name: string, fn: (...args: never[]) => unknown) => void;
+      on('session_before_compact', ((
+        _: unknown,
+        ctx: { getContextUsage: () => { tokens?: number | null } | undefined }
+      ) => ctx.getContextUsage()) as (...args: never[]) => unknown);
+    })({
+      on(name: string, fn: (...args: never[]) => unknown) {
+        if (name === 'session_before_compact') hook = fn as typeof hook;
+      },
+    } as never);
+    const event = { preparation: { tokensBefore: 91_490 } };
+    const model = { contextWindow: 200_000 };
+    expect(hook?.(event, { getContextUsage: () => undefined, model })?.tokens).toBe(91_490);
+    expect(hook?.(event, { getContextUsage: () => ({ tokens: null }), model })?.tokens).toBe(
+      91_490
     );
+    expect(hook?.(event, { getContextUsage: () => ({ tokens: 12 }), model })?.tokens).toBe(12);
+  });
+});
+
+describe('usageForSmartCompactPlanning', () => {
+  it('手动 compact 把固定开销封到窗口 25%', () => {
+    const usage = usageForSmartCompactPlanning({
+      reason: 'manual',
+      billedTokens: 194889,
+      messageTokens: 58982,
+      contextWindow: 256000,
+    });
+    expect(usage.tokens).toBe(58982 + 64_000);
+    expect(usage.percent).toBeCloseTo((194889 / 256000) * 100);
   });
 
-  it('找不到包时返回 undefined', () => {
+  it('自动门槛仍用 billed tokens', () => {
     expect(
-      resolveSmartCompactExtensionPath(() => {
-        throw new Error('Cannot find module');
-      })
-    ).toBeUndefined();
+      usageForSmartCompactPlanning({
+        reason: 'threshold',
+        billedTokens: 194889,
+        messageTokens: 58982,
+        contextWindow: 256000,
+      }).tokens
+    ).toBe(194889);
   });
 
-  it('默认解析器能找到 Enso 内置依赖', () => {
-    expect(resolveSmartCompactExtensionPath()).toMatch(/pi-smart-compact/);
+  it('没有消息估算时回退 billed', () => {
+    expect(
+      usageForSmartCompactPlanning({
+        reason: 'manual',
+        billedTokens: 91490,
+        contextWindow: 200000,
+      }).tokens
+    ).toBe(91490);
   });
 });
 
@@ -68,6 +122,7 @@ describe('mergeSmartCompactSettings', () => {
       extra: 1,
       ...ENSO_SMART_COMPACT_CONFIG,
     });
+    expect((merged.smartCompact as { minContextPercent: number }).minContextPercent).toBe(0);
   });
 
   it('根不是对象时仍写出最小 smartCompact', () => {
@@ -95,5 +150,18 @@ describe('mergeSmartCompactSettings', () => {
       ...ENSO_SMART_COMPACT_CONFIG,
     });
     expect((cleared.smartCompact as Record<string, unknown>).summaryModel).toBeUndefined();
+  });
+
+  it('路由携 mode 时覆盖默认 auto，无 mode 仍用安全默认', () => {
+    const withMode = mergeSmartCompactSettings(
+      { smartCompact: { extra: 1 } },
+      { summaryModel: null, mode: 'balanced' }
+    );
+    expect((withMode.smartCompact as { mode: string }).mode).toBe('balanced');
+    const fallback = mergeSmartCompactSettings(
+      { smartCompact: { extra: 1 } },
+      { summaryModel: null }
+    );
+    expect((fallback.smartCompact as { mode: string }).mode).toBe('auto');
   });
 });

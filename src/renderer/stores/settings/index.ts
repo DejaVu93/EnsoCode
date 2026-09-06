@@ -3,6 +3,7 @@ import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
 import { applyIncomingProviders } from '@shared/providerIdentity';
 import { normalizeProxyMode, type ProxyMode } from '@shared/proxy';
+import { parseSmartCompactMode } from '@shared/smartCompactMode';
 import {
   DEFAULT_STATUS_LINE_SEGMENTS,
   normalizeStatusLineSegments,
@@ -109,6 +110,7 @@ const initialState = {
   exploreFoldEnabled: false,
   smartCompactEnabled: false,
   smartCompactModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  smartCompactMode: 'auto' as import('@shared/smartCompactMode').SmartCompactMode,
   autoUpdate: true,
   proxyMode: 'system' as ProxyMode,
   customProxyUrl: '',
@@ -221,6 +223,10 @@ export const useSettingsStore = create<SettingsState>()(
       setExploreFoldEnabled: (exploreFoldEnabled) => set({ exploreFoldEnabled }),
       setSmartCompactEnabled: (smartCompactEnabled) => set({ smartCompactEnabled }),
       setSmartCompactModel: (smartCompactModel) => set({ smartCompactModel }),
+      setSmartCompactMode: (smartCompactMode) =>
+        set({
+          smartCompactMode: parseSmartCompactMode(smartCompactMode) ?? 'auto',
+        }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setProxyMode: (proxyMode) => set({ proxyMode: normalizeProxyMode(proxyMode) }),
       setCustomProxyUrl: (customProxyUrl) => set({ customProxyUrl }),
@@ -626,6 +632,10 @@ export const useSettingsStore = create<SettingsState>()(
         const windowsLocalShell = parseWindowsLocalShell(s.windowsLocalShell);
         if (windowsLocalShell !== s.windowsLocalShell) {
           useSettingsStore.setState({ windowsLocalShell });
+        }
+        const smartCompactMode = parseSmartCompactMode(s.smartCompactMode) ?? 'auto';
+        if (smartCompactMode !== s.smartCompactMode) {
+          useSettingsStore.setState({ smartCompactMode });
         }
         const segments = normalizeStatusLineSegments(s.statusLineSegments);
         if (

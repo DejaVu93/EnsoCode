@@ -132,6 +132,13 @@ export const zhTranslations: Record<string, string> = {
   'Verified smart compaction': '验证式智能压缩',
   'Use a verified summary for long-session compact. Built into Enso — no extra install. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.':
     '长会话 compact 时先用可验证摘要；已内置，无需另装。失败回退默认压缩。可能更慢、更费 token。下一个会话生效。',
+  'Compaction mode': '压缩档位',
+  'Auto (by usage)': '自动（按占用）',
+  Fast: '快速',
+  Balanced: '均衡',
+  Thorough: '详尽',
+  'Auto switches Fast/Balanced by usage. Balanced keeps a larger target so /compact is less likely to fall back.':
+    '自动按占用在快速/均衡之间切换。均衡目标更大，/compact 更不容易退回原生。',
   'Follows the session model': '跟随当前会话模型',
   'Follow session model': '改跟会话模型',
   'Selected model is unavailable — falls back to the session model.':

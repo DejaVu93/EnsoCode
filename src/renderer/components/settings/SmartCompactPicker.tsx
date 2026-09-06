@@ -1,8 +1,16 @@
 import type { DefaultModelRef } from '@shared/defaultModel';
+import { SMART_COMPACT_MODES, type SmartCompactMode } from '@shared/smartCompactMode';
 import type { ModelProvider } from '@shared/types';
 import { useMemo } from 'react';
 import { ModelPicker } from '@/components/chat/ModelPicker';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
 import {
@@ -17,7 +25,14 @@ function selectionLabel(selection: DefaultModelRef, providers: readonly ModelPro
   return `${provider?.name ?? selection.providerId} / ${model?.label ?? selection.modelId}`;
 }
 
-/** 验证式智能压缩：开关 + 独立摘要模型（null = 跟随当前会话模型）。 */
+const MODE_LABEL: Record<SmartCompactMode, string> = {
+  auto: 'Auto (by usage)',
+  fast: 'Fast',
+  balanced: 'Balanced',
+  thorough: 'Thorough',
+};
+
+/** 验证式智能压缩：开关 + 档位 + 独立摘要模型（null = 跟随当前会话模型）。 */
 export function SmartCompactPicker() {
   const { t } = useI18n();
   const providers = useSettingsStore((state) => state.providers);
@@ -25,6 +40,8 @@ export function SmartCompactPicker() {
   const setEnabled = useSettingsStore((state) => state.setSmartCompactEnabled);
   const model = useSettingsStore((state) => state.smartCompactModel);
   const setModel = useSettingsStore((state) => state.setSmartCompactModel);
+  const mode = useSettingsStore((state) => state.smartCompactMode);
+  const setMode = useSettingsStore((state) => state.setSmartCompactMode);
   const snapshot = useOauthCredentialStore((state) => state.snapshot);
   const candidates = useMemo(
     () => usableProvidersForOauthSnapshot(providers, snapshot),
@@ -51,6 +68,37 @@ export function SmartCompactPicker() {
         </div>
         <Switch checked={enabled} onCheckedChange={setEnabled} />
       </div>
+
+      {enabled && (
+        <div className="flex items-center justify-between gap-4" data-smart-compact-mode={mode}>
+          <div className="min-w-0">
+            <p className="text-muted-foreground text-xs">{t('Compaction mode')}</p>
+            <p className="mt-0.5 text-muted-foreground/80 text-[11px]">
+              {t(
+                'Auto switches Fast/Balanced by usage. Balanced keeps a larger target so /compact is less likely to fall back.'
+              )}
+            </p>
+          </div>
+          <Select
+            items={Object.fromEntries(
+              SMART_COMPACT_MODES.map((value) => [value, t(MODE_LABEL[value])])
+            )}
+            value={mode}
+            onValueChange={(value) => setMode(value as SmartCompactMode)}
+          >
+            <SelectTrigger className="w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              {SMART_COMPACT_MODES.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {t(MODE_LABEL[value])}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
+      )}
 
       {enabled && (
         <div className="flex items-center justify-between gap-4">
