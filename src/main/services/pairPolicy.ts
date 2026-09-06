@@ -220,7 +220,8 @@ function sessionIdOf(value: {
   return value.identity?.sessionId ?? value.sessionId;
 }
 
-/** 从尾部往前取，直到条数或字节预算耗尽；至少保 1 条（单条超预算也发，交给中继裁决） */
+/** 从尾部往前取，直到条数或字节预算耗尽；至少保 1 条（单条超预算也发，交给中继裁决）
+ * 必须按 UTF-8 字节而非字符数计：中文 3 字节/字符，按字符数会低估 3 倍撑爆中继帧上限 */
 function takeTail(
   messages: unknown[],
   endIndex: number
@@ -228,7 +229,7 @@ function takeTail(
   let bytes = 0;
   let start = endIndex;
   while (start > 0 && endIndex - start < SNAPSHOT_TAIL_MESSAGES) {
-    const size = JSON.stringify(messages[start - 1]).length;
+    const size = Buffer.byteLength(JSON.stringify(messages[start - 1]), 'utf8');
     if (bytes + size > SNAPSHOT_BYTE_BUDGET && start < endIndex) break;
     bytes += size;
     start--;
