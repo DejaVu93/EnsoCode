@@ -433,7 +433,7 @@ describe('config sync merge identity and reference mapping', () => {
       id: 'same',
       name: 'Same',
       source: 'import',
-      sourcePath: '',
+      sourcePath: '' as const,
       local: false,
       bytes: 1,
       enabled: true,

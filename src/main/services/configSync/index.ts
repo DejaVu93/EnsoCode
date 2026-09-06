@@ -117,6 +117,7 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   onboarded: { mode: 'excluded', reason: 'device onboarding state' },
   keybindings: { mode: 'portable' },
   projects: { mode: 'excluded', reason: 'device-local paths and authority records' },
+  projectGroups: { mode: 'excluded', reason: 'device-local project grouping' },
   usageModelPricing: { mode: 'portable' },
 } as const satisfies Record<SettingsStateField, ConfigSyncFieldPolicy>;
 

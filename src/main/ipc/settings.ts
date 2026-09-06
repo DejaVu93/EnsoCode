@@ -88,6 +88,7 @@ export const SETTINGS_STATE_FIELDS = [
   'onboarded',
   'keybindings',
   'projects',
+  'projectGroups',
   'usageModelPricing',
 ] as const;
 
@@ -109,6 +110,7 @@ const CONFIG_SYNC_EXCLUDED_STATE_FIELDS = new Set<SettingsStateField>([
   'lastApprovalMode',
   'onboarded',
   'projects',
+  'projectGroups',
 ]);
 
 export const CONFIG_SYNC_COMMIT_FIELDS = SETTINGS_STATE_FIELDS.filter(
