@@ -475,7 +475,7 @@ export type AgentCommand =
       loadHarnessAssets?: boolean;
       /** 探后折叠工具 + context 折叠 */
       exploreFoldEnabled?: boolean;
-      /** 父会话加载 pi-smart-compact 作为 compact 摘要后端 */
+      /** 父会话加载 Enso compact hook 作为 compact 摘要后端 */
       smartCompactEnabled?: boolean;
       /** 独立摘要模型；缺省跟随当前会话模型 */
       smartCompactSummaryModel?: SpawnModelConfig;
@@ -684,7 +684,7 @@ export interface ProjectedMessage {
   subagentMeta?: { modelId?: string; outputTokens?: number; steps?: number };
   /** compactionSummary 消息：压缩前的上下文 token 数 */
   tokensBefore?: number;
-  /** 摘要来自扩展（pi-smart-compact），不是原生 summarizer */
+  /** 摘要来自 Enso compact hook，不是原生 summarizer */
   verified?: boolean;
 }
 

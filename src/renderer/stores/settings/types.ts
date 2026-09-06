@@ -102,7 +102,7 @@ export interface SettingsState {
   /** 探后折叠：模型可 explore_mark / explore_fold；缺省关 */
   exploreFoldEnabled: boolean;
 
-  /** 父会话用 pi-smart-compact 做 compact 摘要；缺省关，新会话生效 */
+  /** 父会话用 Enso compact hook 做 compact 摘要；缺省关，新会话生效 */
   smartCompactEnabled: boolean;
   /** 智能压缩独立模型；null = 跟随当前会话模型 */
   smartCompactModel: DefaultModelRef | null;

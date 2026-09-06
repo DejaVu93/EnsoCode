@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/testing.md", "reason": "检查是否先红后绿；有没有把 LLM/UI 硬测进 vitest"}
+{"file": ".trellis/spec/guides/pre-implementation-checklist.md", "reason": "范围是否滑到 graph/TUI；是否自己改 session 树"}
+{"file": ".trellis/spec/main/index.md", "reason": "不应新增主进程特权或 IPC"}
+{"file": ".trellis/spec/renderer/i18n.md", "reason": "中英文设置文案成对"}
+{"file": ".trellis/tasks/09-06-enso-compact-hook/research/compact-core-vs-eesv.md", "reason": "确认未再挂 pi-smart-compact 或 recall 工具"}

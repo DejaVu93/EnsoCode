@@ -115,12 +115,7 @@ import {
 } from './sessionEviction';
 import { branchSessionFromPersistedFile, resolveForkLeafId } from './sessionFork';
 import { createSessionCommandTool } from './sessionShell';
-import {
-  formatSmartCompactSummaryModel,
-  persistEnsoSmartCompactSettings,
-  providerKeyFor,
-  smartCompactInlineExtension,
-} from './smartCompact';
+import { providerKeyFor, smartCompactInlineExtension } from './smartCompact';
 import {
   createSshExecutor,
   resolveSshControlPath,
@@ -275,8 +270,10 @@ function createSessionResourceLoader(options: {
   /** 加载项目内 .claude/.codex/.cursor 的 skills 与规则文件；远程会话不适用（cwd 不在本机） */
   loadHarnessAssets?: boolean;
   exploreFold?: ReturnType<typeof createExploreFoldState>;
-  /** 仅父会话：加载 pi-smart-compact 作为 compact 摘要后端 */
+  /** 仅父会话：加载 Enso compact hook 作为 compact 摘要后端 */
   smartCompactEnabled?: boolean;
+  smartCompactSummaryModel?: SpawnModelConfig;
+  smartCompactMode?: SmartCompactMode;
 }): DefaultResourceLoader {
   const harness = options.loadHarnessAssets && !options.remoteAgentsFiles;
   const skillPaths = harness
@@ -306,7 +303,14 @@ function createSessionResourceLoader(options: {
                   } satisfies InlineExtension,
                 ]
               : []),
-            ...(options.smartCompactEnabled ? [smartCompactInlineExtension] : []),
+            ...(options.smartCompactEnabled
+              ? [
+                  smartCompactInlineExtension({
+                    summaryModel: options.smartCompactSummaryModel,
+                    mode: options.smartCompactMode,
+                  }),
+                ]
+              : []),
           ],
         }
       : {}),
@@ -1126,18 +1130,6 @@ export class SessionSupervisor {
     if (smartCompactSummaryModel) {
       await resolveBaseModelOrRefresh(runtime, smartCompactSummaryModel);
     }
-    if (smartCompactEnabled) {
-      try {
-        persistEnsoSmartCompactSettings(undefined, {
-          summaryModel: smartCompactSummaryModel
-            ? formatSmartCompactSummaryModel(smartCompactSummaryModel)
-            : null,
-          ...(smartCompactMode ? { mode: smartCompactMode } : {}),
-        });
-      } catch (error) {
-        console.warn('[smart-compact] failed to merge host settings', error);
-      }
-    }
     const resourceLoader = createSessionResourceLoader({
       cwd,
       agentDir: this.options.agentDir,
@@ -1147,7 +1139,13 @@ export class SessionSupervisor {
       remoteAgentsFiles,
       loadHarnessAssets,
       exploreFold,
-      ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
+      ...(smartCompactEnabled
+        ? {
+            smartCompactEnabled: true,
+            smartCompactSummaryModel,
+            smartCompactMode,
+          }
+        : {}),
     });
     const toolsStart = Date.now();
     const [, mcpTools] = await Promise.all([
