@@ -404,7 +404,10 @@ export async function commitImportForSender(
       entry.bundle.resources.skills,
       entry.bundle.resources.instructions
     );
-    const patch: Record<string, unknown> = { ...entry.plan.state };
+    const patch: Record<string, unknown> = {};
+    for (const field of SYNC_FIELDS) {
+      if (field in entry.plan.state) patch[field] = entry.plan.state[field];
+    }
     const skillPathByDestination = new Map<string, string>();
     for (const [sourceId, destinationId] of Object.entries(entry.plan.skillIdMap)) {
       const path = staged.skillPaths.get(sourceId);

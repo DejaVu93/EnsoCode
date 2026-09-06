@@ -62,4 +62,57 @@ describe('config sync settings transaction', () => {
     expect(result.error).toContain('changed');
     expect(send).not.toHaveBeenCalled();
   });
+
+  it('预览后无关 store（enso-conversations）变化不应阻断提交', () => {
+    const fingerprint = settings.settingsFingerprint(settings.readSettings());
+    const cached = settings.readSettings() as Record<string, unknown>;
+    const conversations = (cached['enso-conversations'] as { state: Record<string, unknown> }).state
+      .conversations as Record<string, unknown>;
+    conversations.addedAfterPreview = true;
+
+    const result = settings.commitSettingsTransaction(fingerprint, {
+      providers: [{ id: 'after-conversations' }],
+    });
+
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it('预览后 excluded 字段变化保留提交时刻的本机值', () => {
+    const fingerprint = settings.settingsFingerprint(settings.readSettings());
+    settings.patchSettingsState('projects', [{ id: 'local-latest' }]);
+    settings.patchSettingsState('customProxyUrl', 'http://local-latest:1080');
+
+    const result = settings.commitSettingsTransaction(fingerprint, {
+      providers: [{ id: 'excluded-check' }],
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    const state = JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8'))[
+      'enso-settings'
+    ].state;
+    expect(state.projects).toEqual([{ id: 'local-latest' }]);
+    expect(state.customProxyUrl).toBe('http://local-latest:1080');
+    expect(state.providers).toEqual([{ id: 'excluded-check' }]);
+  });
+
+  it('commit 只应用 SYNC_FIELDS，patch 中的 excluded 字段被忽略', () => {
+    settings.patchSettingsState('onboarded', true);
+    settings.patchSettingsState('proxyMode', 'system');
+    const fingerprint = settings.settingsFingerprint(settings.readSettings());
+
+    const result = settings.commitSettingsTransaction(fingerprint, {
+      providers: [{ id: 'whitelist' }],
+      onboarded: false,
+      proxyMode: 'custom',
+      customProxyUrl: 'http://imported:9',
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    const state = JSON.parse(readFileSync(path.join(userData, 'settings.json'), 'utf8'))[
+      'enso-settings'
+    ].state;
+    expect(state.onboarded).toBe(true);
+    expect(state.proxyMode).toBe('system');
+    expect(state.customProxyUrl).not.toBe('http://imported:9');
+  });
 });

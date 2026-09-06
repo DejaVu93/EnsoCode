@@ -93,6 +93,35 @@ export const SETTINGS_STATE_FIELDS = [
 
 export type SettingsStateField = (typeof SETTINGS_STATE_FIELDS)[number];
 
+/** Device-local keys that config-sync must never fingerprint or write back. */
+const CONFIG_SYNC_EXCLUDED_STATE_FIELDS = new Set<SettingsStateField>([
+  'windowsLocalShell',
+  'autoUpdate',
+  'proxyMode',
+  'customProxyUrl',
+  'backgroundImageEnabled',
+  'backgroundSourceType',
+  'backgroundImagePath',
+  'backgroundFolderPath',
+  'backgroundUrlPath',
+  'backgroundRandomEnabled',
+  'backgroundRefreshNonce',
+  'lastApprovalMode',
+  'onboarded',
+  'projects',
+]);
+
+export const CONFIG_SYNC_COMMIT_FIELDS = SETTINGS_STATE_FIELDS.filter(
+  (field) => !CONFIG_SYNC_EXCLUDED_STATE_FIELDS.has(field)
+);
+
+function settingsStateOf(settings: Record<string, unknown> | null): Record<string, unknown> {
+  const store = settings?.['enso-settings'];
+  if (!store || typeof store !== 'object') return {};
+  const state = (store as Record<string, unknown>).state;
+  return state && typeof state === 'object' ? (state as Record<string, unknown>) : {};
+}
+
 export interface SettingsPatchResult {
   ok: boolean;
   previous?: unknown;
@@ -250,9 +279,14 @@ function scheduleWrite(
   }
 }
 
-/** Fingerprint the complete cached settings snapshot used by import preview. */
+/** Fingerprint only portable settings fields used by import preview. */
 export function settingsFingerprint(settings: Record<string, unknown> | null): string {
-  return JSON.stringify(settings ?? null);
+  const state = settingsStateOf(settings);
+  const portable: Record<string, unknown> = {};
+  for (const field of CONFIG_SYNC_COMMIT_FIELDS) {
+    if (field in state) portable[field] = state[field];
+  }
+  return JSON.stringify(portable);
 }
 
 export interface SettingsTransactionResult {
@@ -301,13 +335,16 @@ export function commitSettingsTransaction(
       : {};
   const currentState =
     persisted.state && typeof persisted.state === 'object'
-      ? (persisted.state as Record<string, unknown>)
+      ? { ...(persisted.state as Record<string, unknown>) }
       : {};
+  for (const field of CONFIG_SYNC_COMMIT_FIELDS) {
+    if (field in statePatch) currentState[field] = statePatch[field];
+  }
   const next = {
     ...latest,
     'enso-settings': {
       ...persisted,
-      state: { ...currentState, ...statePatch },
+      state: currentState,
     },
   };
   if (!atomicWriteSettings(next)) {
