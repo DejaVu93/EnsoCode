@@ -12,7 +12,7 @@
   "assignee": "DejaVu93",
   "createdAt": "2026-09-06",
   "completedAt": null,
-  "branch": null,
+  "branch": "feat/config-sync-upstream-audit",
   "base_branch": "dev",
   "worktree_path": null,
   "commit": null,
