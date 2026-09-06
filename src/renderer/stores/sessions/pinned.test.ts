@@ -289,8 +289,9 @@ describe('activeConversationIds', () => {
   };
   const liveOrder = ['run', 'wait', 'fail', 'idle', 'spawn', 'childParent', 'archivedFail'];
 
-  it('只收蓝绿红活跃态,按最后活跃时间倒序', () => {
+  it('只收蓝绿红活跃态(含未读绿点),按最后活跃时间倒序', () => {
     expect(activeConversationIds(liveOrder, live)).toEqual([
+      'idle',
       'fail',
       'run',
       'wait',
@@ -301,6 +302,7 @@ describe('activeConversationIds', () => {
 
   it('归档会话与归档项目不进活跃栏', () => {
     expect(activeConversationIds(liveOrder, live, ['p2'])).toEqual([
+      'idle',
       'run',
       'wait',
       'spawn',
