@@ -156,6 +156,9 @@ let lastScan: { scanId: string; byId: Map<string, Cached> } | null = null;
 - 统一 15 秒超时（`AbortController` + `setTimeout`，`finally` 里清 timer）。
 - 错误统一转成可读字符串：`errorText()` 截断响应体到 300 字符，
   `toMessage()` 把 `AbortError` 翻译成 `Request timed out`。
+- 拉模型 / 连通性测试必须走 Chromium `net.fetch`，不要用 Node `fetch`。
+  部分网关（Cloudflare）会按 TLS 指纹把 undici 拦成 403 挑战页；聊天能通是因为
+  worker 装了系统代理，设置页主进程直连就会挂。发请求前先 `getProxyConfig().whenReady()`。
 
 **连通性测试会真实调用模型**（`max_tokens: 1` 的最小请求），会计费。
 没指定模型时退化为拉取模型列表，只验证鉴权和连通。改动这里要保持这个代价意识。

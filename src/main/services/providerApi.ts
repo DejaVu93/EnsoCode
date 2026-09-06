@@ -7,6 +7,7 @@ import type {
   ProviderApiConfig,
   TestProviderResult,
 } from '@shared/types';
+import { net } from 'electron';
 import { createSecretSet } from './secretRedactor';
 
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -23,7 +24,12 @@ async function request(url: string, init: RequestInit): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    // Node/undici TLS 指纹会被 Cloudflare 拦成 403 挑战页（done.5111online.uk 已踩过）；
+    // 聊天能通是因为 worker 装了系统代理。主进程拉模型必须走 Chromium net.fetch。
+    // 动态 import：避免 providerApi → proxyConfig → agentHost 把 worker 入口拖进无关测试。
+    const { getProxyConfig } = await import('./proxyConfig');
+    await getProxyConfig().whenReady();
+    return await net.fetch(url, { ...init, signal: controller.signal });
   } finally {
     clearTimeout(timer);
   }

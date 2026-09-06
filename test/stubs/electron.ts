@@ -25,6 +25,11 @@ export const safeStorage = {
 };
 
 export const shell = { openExternal: () => {} };
+/** 默认转给 global fetch，便于现有 vi.stubGlobal('fetch') 用例继续工作。 */
+export const net = {
+  fetch: ((input: RequestInfo | URL, init?: RequestInit) =>
+    globalThis.fetch(input, init)) as typeof fetch,
+};
 export class WebContentsView {}
 export const session = {
   fromPartition: () => ({}),
@@ -43,6 +48,7 @@ export default {
   BrowserWindow,
   safeStorage,
   shell,
+  net,
   WebContentsView,
   session,
   Menu,
