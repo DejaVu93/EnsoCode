@@ -1,4 +1,12 @@
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -114,5 +122,19 @@ describe('config sync settings transaction', () => {
     expect(state.onboarded).toBe(true);
     expect(state.proxyMode).toBe('system');
     expect(state.customProxyUrl).not.toBe('http://imported:9');
+  });
+
+  it('config-sync 备份只保留最近 5 份', () => {
+    for (let i = 0; i < 7; i += 1) {
+      const result = settings.commitSettingsTransaction(
+        settings.settingsFingerprint(settings.readSettings()),
+        { theme: i % 2 === 0 ? 'dark' : 'light' }
+      );
+      expect(result.ok).toBe(true);
+    }
+    const backups = readdirSync(userData).filter(
+      (file) => file.startsWith('settings.config-sync-backup-') && file.endsWith('.json')
+    );
+    expect(backups).toHaveLength(5);
   });
 });

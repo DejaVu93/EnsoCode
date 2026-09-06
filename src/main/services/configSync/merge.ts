@@ -521,6 +521,53 @@ function mcpEnvConflictWarnings(
   ];
 }
 
+function hostOf(url: unknown): string {
+  if (typeof url !== 'string' || !url) return '';
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+function previewDisclosureWarnings(
+  bundle: ConfigSyncBundle,
+  next: JsonRecord,
+  current: JsonRecord
+): string[] {
+  const warnings: string[] = [];
+  for (const provider of bundle.state.providers) {
+    const host = hostOf(provider.baseUrl);
+    warnings.push(
+      host
+        ? `Provider ${provider.name} (${provider.api} ${host})`
+        : `Provider ${provider.name} (${provider.api})`
+    );
+  }
+  for (const server of bundle.state.mcpServers) {
+    const target =
+      server.transport === 'stdio'
+        ? String(server.command ?? '')
+        : typeof server.url === 'string'
+          ? hostOf(server.url) || server.url
+          : '';
+    warnings.push(`MCP ${server.name} (${server.transport}${target ? ` ${target}` : ''})`);
+  }
+  for (const key of [
+    'defaultModel',
+    'titleSummaryModel',
+    'smartCompactModel',
+    'approvalReviewer',
+  ] as const) {
+    const before = current[key];
+    const after = next[key];
+    if (sameValue(before, after)) continue;
+    if (!isRecord(after) || typeof after.modelId !== 'string') continue;
+    warnings.push(`${key} now points to ${String(after.providerId)}/${after.modelId}`);
+  }
+  return warnings;
+}
+
 function addWarnings(bundle: ConfigSyncBundle): string[] {
   const warnings: string[] = [];
   const hasProviderOmissions = bundle.state.providers.some(
@@ -755,9 +802,17 @@ export function planImport(
     instructions: instructionOutput,
   };
   const summary = [
-    ...SUMMARY_CATEGORIES.map((category) =>
-      summaryFor(category, plans[category], outputs[category].transformed, mode)
-    ),
+    ...SUMMARY_CATEGORIES.map((category) => {
+      const row = summaryFor(category, plans[category], outputs[category].transformed, mode);
+      if (category !== 'instructions' || !enabledInstruction) return row;
+      const disabledUnmatched = records(currentState.instructions).filter(
+        (local) =>
+          local.enabled === true &&
+          !plans.instructions.entries.some((entry) => entry.existing === local)
+      ).length;
+      if (disabledUnmatched === 0) return row;
+      return { ...row, updated: row.updated + disabledUnmatched };
+    }),
     summaryFor(
       'subagentModels',
       subagentModelResult.plan,
@@ -772,6 +827,7 @@ export function planImport(
     warnings: [
       ...addWarnings(bundle),
       ...mcpEnvConflictWarnings(plans.mcpServers, mcpOutput.transformed),
+      ...previewDisclosureWarnings(bundle, state, currentState),
     ],
     skillIdMap: plans.skills.idMap,
     instructionIdMap: plans.instructions.idMap,

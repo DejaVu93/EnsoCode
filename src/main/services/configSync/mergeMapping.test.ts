@@ -375,9 +375,7 @@ describe('config sync merge identity and reference mapping', () => {
     expect(result.state.mcpServers).toContainEqual(
       expect.objectContaining({ id: 'same', env: { TOKEN: 'shared' }, enabled: true })
     );
-    expect(result.warnings).not.toEqual(
-      expect.arrayContaining([expect.stringMatching(/env/i)])
-    );
+    expect(result.warnings).not.toEqual(expect.arrayContaining([expect.stringMatching(/env/i)]));
   });
 
   it('导入启用的全局指令时关闭本机原选择', () => {
@@ -402,6 +400,32 @@ describe('config sync merge identity and reference mapping', () => {
       expect.objectContaining({ id: 'local', enabled: false }),
       expect.objectContaining({ id: 'remote', enabled: true }),
     ]);
+  });
+
+  it('关掉未匹配的本机指令时在摘要或警告中可见', () => {
+    const result = planImport(
+      current({ instructions: [{ id: 'local', name: 'Local', enabled: true }] }),
+      bundle({
+        instructions: [
+          {
+            id: 'remote',
+            name: 'Remote',
+            source: 'import',
+            sourcePath: '',
+            local: false,
+            bytes: 1,
+            enabled: true,
+          },
+        ],
+      }),
+      'merge'
+    );
+
+    const instructions = result.summary.find((entry) => entry.category === 'instructions');
+    const disclosed =
+      (instructions?.updated ?? 0) > 0 ||
+      result.warnings.some((warning) => /instruction/i.test(warning));
+    expect(disclosed).toBe(true);
   });
 
   it('同名但不同 endpoint 的 provider 不会静默覆盖本机配置', () => {

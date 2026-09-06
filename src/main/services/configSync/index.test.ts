@@ -10,8 +10,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { decodeBundle, encodeBundle } from './codec';
-import { CONFIG_SYNC_FIELD_POLICY } from './index';
+import { decodeBundle, encodeBundle, validateBundle } from './codec';
+import { CONFIG_SYNC_FIELD_POLICY, SYNC_FIELDS } from './index';
 import type { ConfigSyncBundle } from './types';
 
 const userData = mkdtempSync(join(tmpdir(), 'enso-config-service-'));
@@ -329,7 +329,14 @@ describe('config sync sender-bound import flow', () => {
     symlinkSync(good, linked);
     settings.patchSettingsState('skills', [
       { id: 'good2', name: 'Good2', description: '', path: good, source: 'local', enabled: true },
-      { id: 'linked', name: 'Linked', description: '', path: linked, source: 'local', enabled: true },
+      {
+        id: 'linked',
+        name: 'Linked',
+        description: '',
+        path: linked,
+        source: 'local',
+        enabled: true,
+      },
     ]);
 
     const exported = join(userData, 'tolerant-symlink.enso-config');
@@ -341,5 +348,115 @@ describe('config sync sender-bound import flow', () => {
     expect(decoded.state.skills.map((skill) => skill.id)).toEqual(['good2']);
     expect(decoded.resources.skills.map((resource) => resource.id)).toEqual(['good2']);
     settings.patchSettingsState('skills', []);
+  });
+
+  it('跳过的 skill 从 preset 引用中剔除且导出包可校验', async () => {
+    const good = join(userData, 'good-skill-3');
+    mkdirSync(good, { recursive: true });
+    writeFileSync(join(good, 'SKILL.md'), '# good skill 3');
+    settings.patchSettingsState('skills', [
+      { id: 'good3', name: 'Good3', description: '', path: good, source: 'local', enabled: true },
+      {
+        id: 'gone3',
+        name: 'Gone3',
+        description: '',
+        path: join(userData, 'missing-skill-3'),
+        source: 'local',
+        enabled: true,
+      },
+    ]);
+    settings.patchSettingsState('presets', [
+      { id: 'preset-1', name: 'Preset', skillIds: ['good3', 'gone3'], mcpServerIds: [] },
+    ]);
+
+    const exported = join(userData, 'pruned-skill-refs.enso-config');
+    await expect(
+      service.exportConfigToPath({ includeSecrets: true, password: 'correct horse' }, exported)
+    ).resolves.toMatchObject({ ok: true });
+
+    const decoded = validateBundle(await decodeBundle(readFileSync(exported), 'correct horse'));
+    expect(decoded.state.presets[0]?.skillIds).toEqual(['good3']);
+    settings.patchSettingsState('presets', []);
+    settings.patchSettingsState('skills', []);
+  });
+
+  it('planImport 失败不得报成密码错误', async () => {
+    settings.patchSettingsState('skills', []);
+    settings.patchSettingsState('mcpServers', []);
+    const shared = (id: string, name: string, baseUrl: string) => ({
+      id,
+      name,
+      api: 'openai-completions',
+      baseUrl,
+      enabled: true,
+      models: [{ id: 'model-1' }],
+    });
+    settings.patchSettingsState('providers', [
+      shared('local-a', 'Shared', 'https://a.example.test'),
+      shared('local-b', ' shared ', 'https://b.example.test'),
+    ]);
+
+    const file = join(userData, 'plan-failure.enso-config');
+    writeFileSync(
+      file,
+      await encodeBundle(
+        {
+          format: 'enso-config',
+          version: 1,
+          createdAt: '2025-09-05T00:00:00.000Z',
+          state: {
+            providers: [shared('remote', 'Shared', 'https://remote.example.test')],
+            skills: [],
+            mcpServers: [],
+            instructions: [],
+            presets: [],
+            agentTypes: [],
+            subagentModels: [],
+          },
+          resources: { skills: [], instructions: [] },
+          secretsIncluded: true,
+        } as ConfigSyncBundle,
+        'correct horse'
+      )
+    );
+
+    const opened = await service.openImportForSender(40, file);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const preview = await service.previewImportForSender(
+      40,
+      opened.token,
+      'correct horse',
+      'merge'
+    );
+    expect(preview.ok).toBe(false);
+    expect(preview).not.toMatchObject({
+      error: 'Incorrect password or damaged configuration package.',
+    });
+  });
+
+  it('四表锁步：SYNC_FIELDS / CONFIG_SYNC_COMMIT_FIELDS / STATE_KEYS / SCALAR_SETTING_KEYS', async () => {
+    const { CONFIG_SYNC_COMMIT_FIELDS } = await import('../../ipc/settings');
+    const listFrom = (file: string, name: string): string[] => {
+      const source = readFileSync(join(process.cwd(), file), 'utf8');
+      const body = source.split(`const ${name} = [`)[1]?.split(/\n\]/u)[0] ?? '';
+      return [...body.matchAll(/'([A-Za-z][A-Za-z0-9]*)'/gu)].map((match) => match[1]).sort();
+    };
+    const collections = [
+      'providers',
+      'skills',
+      'mcpServers',
+      'instructions',
+      'presets',
+      'agentTypes',
+      'subagentModels',
+    ];
+    const sync = [...SYNC_FIELDS].sort();
+
+    expect([...CONFIG_SYNC_COMMIT_FIELDS].sort()).toEqual(sync);
+    expect(listFrom('src/main/services/configSync/codec.ts', 'STATE_KEYS')).toEqual(sync);
+    expect(listFrom('src/main/services/configSync/merge.ts', 'SCALAR_SETTING_KEYS')).toEqual(
+      sync.filter((field) => !collections.includes(field))
+    );
   });
 });

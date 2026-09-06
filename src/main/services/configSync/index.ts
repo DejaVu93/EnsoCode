@@ -32,6 +32,7 @@ import {
 import { isValidId } from '../instructionStore';
 import { cleanupStagedResources, collectSkillResource, stageResources } from './assets';
 import {
+  ConfigSyncCodecError,
   decodeBundle,
   encodeBundle,
   isEncryptedBundle,
@@ -213,6 +214,26 @@ function collectBundle(secretsIncluded: boolean): ConfigSyncBundle {
     (item) =>
       item && typeof item === 'object' && keptSkillIds.has(String((item as { id?: unknown }).id))
   );
+  const pruneSkillIds = (value: unknown): unknown => {
+    if (!Array.isArray(value)) return value;
+    return value.filter((id) => typeof id === 'string' && keptSkillIds.has(id));
+  };
+  if (Array.isArray(state.presets)) {
+    state.presets = state.presets.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const preset = item as Record<string, unknown>;
+      if (!('skillIds' in preset)) return preset;
+      return { ...preset, skillIds: pruneSkillIds(preset.skillIds) };
+    });
+  }
+  if (Array.isArray(state.agentTypes)) {
+    state.agentTypes = state.agentTypes.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const agent = item as Record<string, unknown>;
+      if (!('skillIds' in agent)) return agent;
+      return { ...agent, skillIds: pruneSkillIds(agent.skillIds) };
+    });
+  }
   const portableInstructions = Array.isArray(state.instructions) ? state.instructions : [];
   const rawInstructions = Array.isArray(sourceState.instructions) ? sourceState.instructions : [];
   for (const value of rawInstructions) {
@@ -384,11 +405,14 @@ export async function previewImportForSender(
       warnings: plan.warnings,
       mode,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof ConfigSyncCodecError) {
+      return resultError('Incorrect password or damaged configuration package.');
+    }
     return resultError(
-      entry.encrypted
-        ? 'Incorrect password or damaged configuration package.'
-        : 'Invalid configuration package.'
+      error instanceof Error && error.message
+        ? error.message
+        : 'Unable to apply this configuration package.'
     );
   }
 }

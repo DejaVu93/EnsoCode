@@ -325,6 +325,12 @@ export function commitSettingsTransaction(
     if (existsSync(settingsPath)) copyFileSync(settingsPath, backupPath);
     else writeFileSync(backupPath, JSON.stringify(latest, null, 2), 'utf8');
     chmodSync(backupPath, 0o600);
+    const dir = app.getPath('userData');
+    const stale = readdirSync(dir)
+      .filter((file) => file.startsWith('settings.config-sync-backup-') && file.endsWith('.json'))
+      .sort()
+      .slice(0, -MAX_BACKUPS);
+    for (const file of stale) rmSync(join(dir, file), { force: true });
   } catch {
     return { ok: false, error: 'Unable to create settings backup.' };
   }
