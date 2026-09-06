@@ -15,6 +15,13 @@ import type {
   AssetOccupancyRow,
   CollectedAsset,
   CollectedProvider,
+  ConfigSyncCommitOptions,
+  ConfigSyncCommitResult,
+  ConfigSyncExportOptions,
+  ConfigSyncExportResult,
+  ConfigSyncOpenResult,
+  ConfigSyncPreviewOptions,
+  ConfigSyncPreviewResult,
   FilesAbsResult,
   FilesFetchRemoteImageResult,
   FilesListResult,
@@ -123,6 +130,19 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SETTINGS_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SETTINGS_CHANGED, listener);
     },
+  },
+
+  configSync: {
+    exportConfig: (options: ConfigSyncExportOptions): Promise<ConfigSyncExportResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_EXPORT, options),
+    openImport: (): Promise<ConfigSyncOpenResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_OPEN_IMPORT),
+    previewImport: (options: ConfigSyncPreviewOptions): Promise<ConfigSyncPreviewResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_PREVIEW_IMPORT, options),
+    commitImport: (options: ConfigSyncCommitOptions): Promise<ConfigSyncCommitResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_COMMIT_IMPORT, options),
+    cancelImport: (token: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_CANCEL_IMPORT, token),
   },
 
   usage: {
