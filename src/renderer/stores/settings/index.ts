@@ -108,6 +108,7 @@ const initialState = {
   loadHarnessAssets: false,
   windowsLocalShell: 'auto' as const,
   exploreFoldEnabled: false,
+  bashInterceptEnabled: false,
   smartCompactEnabled: false,
   smartCompactModel: null as import('@shared/defaultModel').DefaultModelRef | null,
   smartCompactMode: 'auto' as import('@shared/smartCompactMode').SmartCompactMode,
@@ -221,6 +222,7 @@ export const useSettingsStore = create<SettingsState>()(
       setWindowsLocalShell: (windowsLocalShell) =>
         set({ windowsLocalShell: parseWindowsLocalShell(windowsLocalShell) }),
       setExploreFoldEnabled: (exploreFoldEnabled) => set({ exploreFoldEnabled }),
+      setBashInterceptEnabled: (bashInterceptEnabled) => set({ bashInterceptEnabled }),
       setSmartCompactEnabled: (smartCompactEnabled) => set({ smartCompactEnabled }),
       setSmartCompactModel: (smartCompactModel) => set({ smartCompactModel }),
       setSmartCompactMode: (smartCompactMode) =>

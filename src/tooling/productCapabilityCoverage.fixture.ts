@@ -38,6 +38,9 @@ export const SETTINGS_DATA_COVERAGE = {
   exploreFoldEnabled: excluded(
     'Explore-fold is a desktop session preference, not an Enso capability.'
   ),
+  bashInterceptEnabled: excluded(
+    'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
   smartCompactEnabled: excluded(
     'Verified smart compaction is a desktop session preference, not an Enso capability.'
   ),
@@ -110,6 +113,9 @@ export const SETTINGS_ACTION_COVERAGE = {
   setWindowsLocalShell: surfaces('general.windows-local-shell'),
   setExploreFoldEnabled: excluded(
     'Explore-fold is a desktop session preference, not an Enso capability.'
+  ),
+  setBashInterceptEnabled: excluded(
+    'Bash intercept is a desktop session preference, not an Enso capability.'
   ),
   setSmartCompactEnabled: excluded(
     'Verified smart compaction is a desktop session preference, not an Enso capability.'

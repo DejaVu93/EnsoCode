@@ -928,6 +928,9 @@ export const zhTranslations: Record<string, string> = {
   'Explore fold': '探后折叠',
   'Let the agent mark exploratory reads and keep only a short report in later model context. Timeline stays intact.':
     '让模型在探仓库前打点，探完只把报告留在后续模型上下文里；时间线仍完整。',
+  'Force read/find tools': '强制走 read/find 工具',
+  'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.':
+    '拦截 shell 里的 cat/head/grep/sed -i，要求改用专用文件工具。默认关。下次开会话生效。',
   'Load project harness assets': '加载项目内其它工具目录',
   'Also load skills from .claude/.codex/.cursor and rule files (.cursorrules, .cursor/rules, .claude/rules) in the project':
     '同时加载项目内 .claude/.codex/.cursor 下的 skills，以及规则文件（.cursorrules、.cursor/rules、.claude/rules）',

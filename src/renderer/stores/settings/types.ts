@@ -102,6 +102,9 @@ export interface SettingsState {
   /** 探后折叠：模型可 explore_mark / explore_fold；缺省关 */
   exploreFoldEnabled: boolean;
 
+  /** 强制用 read/grep/edit/write/find 替代 cat/grep/sed -i 等 shell 读写；缺省关 */
+  bashInterceptEnabled: boolean;
+
   /** 父会话用 pi-smart-compact 做 compact 摘要；缺省关，新会话生效 */
   smartCompactEnabled: boolean;
   /** 智能压缩独立模型；null = 跟随当前会话模型 */
@@ -218,6 +221,7 @@ export interface SettingsState {
   setLoadHarnessAssets: (value: boolean) => void;
   setWindowsLocalShell: (value: WindowsLocalShell) => void;
   setExploreFoldEnabled: (value: boolean) => void;
+  setBashInterceptEnabled: (value: boolean) => void;
   setSmartCompactEnabled: (value: boolean) => void;
   setSmartCompactModel: (value: DefaultModelRef | null) => void;
   setSmartCompactMode: (value: import('@shared/smartCompactMode').SmartCompactMode) => void;
