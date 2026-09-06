@@ -36,6 +36,38 @@ describe('sessionSwitchSlotIds', () => {
     ).toEqual([]);
   });
 
+  it('活跃中栏目优先于 Pinned 与项目列表', () => {
+    const conversations = {
+      pin: conv('p1', 1, 30, { pinned: true }),
+      run: conv('p1', 2, 25),
+      a: conv('p1', 3, 20),
+      b: conv('p2', 4, 10),
+    };
+    expect(
+      sessionSwitchSlotIds({
+        order: ['pin', 'run', 'a', 'b'],
+        conversations,
+        projectIds: ['p1', 'p2'],
+        leadingIds: ['run'],
+      })
+    ).toEqual(['run', 'pin', 'a', 'b']);
+  });
+
+  it('活跃中已出现的会话不在后面重复占槽', () => {
+    const conversations = {
+      pin: conv('p1', 1, 40, { pinned: true }),
+      other: conv('p1', 2, 10),
+    };
+    expect(
+      sessionSwitchSlotIds({
+        order: ['pin', 'other'],
+        conversations,
+        projectIds: ['p1'],
+        leadingIds: ['pin'],
+      })
+    ).toEqual(['pin', 'other']);
+  });
+
   it('Pinned 可见行在前，再接已展开项目的可见行', () => {
     const conversations = {
       pin: conv('p1', 1, 30, { pinned: true }),

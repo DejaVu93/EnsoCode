@@ -399,6 +399,13 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   const searching = listQuery.trim().length > 0;
   const convMatches = (id: string) =>
     matchesQuery(listQuery, [conversations[id]?.title || t('New conversation')]);
+  const inActiveGroup = (id: string) => {
+    const projectId = conversations[id]?.projectId;
+    return !projectId || slicedIdSet.has(projectId);
+  };
+  const visibleActiveIds = (searching ? activeIds.filter(convMatches) : activeIds).filter(
+    inActiveGroup
+  );
   const switchSlots = sessionSwitchSlotIds({
     order,
     conversations,
@@ -413,26 +420,25 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
       const project = orderedProjects.find((item) => item.id === projectId);
       return Boolean(project && matchesQuery(listQuery, [project.name, project.path]));
     },
+    leadingIds: visibleActiveIds,
   });
   const switchSlotsRef = useRef(switchSlots);
   switchSlotsRef.current = switchSlots;
-  const inActiveGroup = (id: string) => {
-    const projectId = conversations[id]?.projectId;
-    return !projectId || slicedIdSet.has(projectId);
-  };
-  const visibleActiveIds = (searching ? activeIds.filter(convMatches) : activeIds).filter(
-    inActiveGroup
-  );
   const visiblePinnedIds = (searching ? pinnedIds.filter(convMatches) : pinnedIds).filter(
     inActiveGroup
   );
   const visiblePinnedSet = new Set(visiblePinnedIds);
-  const switchHintFor = (id: string, surface: 'pinned' | 'project') => {
+  const visibleActiveSet = new Set(visibleActiveIds);
+  const switchHintFor = (id: string, surface: 'active' | 'pinned' | 'project') => {
     if (collapsed || !modHeld) return undefined;
     const index = switchSlots.indexOf(id);
     if (index < 0) return undefined;
-    const pinnedVisible = visiblePinnedSet.has(id);
-    if (pinnedVisible !== (surface === 'pinned')) return undefined;
+    const owner: 'active' | 'pinned' | 'project' = visibleActiveSet.has(id)
+      ? 'active'
+      : visiblePinnedSet.has(id)
+        ? 'pinned'
+        : 'project';
+    if (owner !== surface) return undefined;
     return formatBinding(`mod+${index + 1}`);
   };
   // 搜索时:归档项目名命中则整组保留(与活动项目一致),否则只留命中的会话
@@ -750,6 +756,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                     conversation={conversations[id]}
                     active={activeId === id}
                     hasRunningChild={hasRunningChild(id)}
+                    switchHint={switchHintFor(id, 'active')}
                     locale={locale}
                     nowTick={nowTick}
                     hoverTitle={projects.find((p) => p.id === conversations[id].projectId)?.name}
