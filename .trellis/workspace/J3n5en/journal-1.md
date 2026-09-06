@@ -488,3 +488,36 @@ worker 只消费 token 并自动 refresh、状态经独立 IPC 通道（不污�
 - 授权前无条件 `clearTokens`，用户中途取消就把原本可用的凭据弄没 → 失败路径回滚。
 
 遗留：真实 Notion 端到端授权未验证（需要用户账号）；授权只对新建会话生效（工具集 spawn 时定格）。
+
+
+## Session 16: Bash intercept switch (default off)
+
+**Date**: 2026-09-06
+**Task**: Bash intercept switch (default off)
+**Branch**: `enso/4e6016e3`
+
+### Summary
+
+设置页增加 bash 拦截开关，默认关；新会话生效。任务已归档。
+
+### Main Changes
+
+- opt-in bashInterceptEnabled：settings → spawn-parent → supervisor maybeInterceptBash
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c09ff4dc` | (see git log) |
+
+### Testing
+
+- [OK] typecheck + 相关 vitest 108 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无
