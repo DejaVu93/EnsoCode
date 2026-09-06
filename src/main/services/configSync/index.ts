@@ -196,14 +196,23 @@ function collectBundle(secretsIncluded: boolean): ConfigSyncBundle {
   const skills = [] as ConfigSyncBundle['resources']['skills'];
   const instructions = [] as ConfigSyncBundle['resources']['instructions'];
   const rawSkills = Array.isArray(sourceState.skills) ? sourceState.skills : [];
+  const portableSkills = Array.isArray(state.skills) ? state.skills : [];
+  const keptSkillIds = new Set<string>();
   for (const value of rawSkills) {
-    if (!value || typeof value !== 'object') throw new Error('Skill source is unavailable');
+    if (!value || typeof value !== 'object') continue;
     const skill = value as Record<string, unknown>;
-    if (typeof skill.id !== 'string' || typeof skill.path !== 'string' || !skill.path) {
-      throw new Error('Skill source is unavailable');
+    if (typeof skill.id !== 'string' || typeof skill.path !== 'string' || !skill.path) continue;
+    try {
+      skills.push(collectSkillResource(skill.id, skill.path));
+      keptSkillIds.add(skill.id);
+    } catch {
+      // Skip unreadable, missing, or symlink skills so the rest of the package still exports.
     }
-    skills.push(collectSkillResource(skill.id, skill.path));
   }
+  state.skills = portableSkills.filter(
+    (item) =>
+      item && typeof item === 'object' && keptSkillIds.has(String((item as { id?: unknown }).id))
+  );
   const portableInstructions = Array.isArray(state.instructions) ? state.instructions : [];
   const rawInstructions = Array.isArray(sourceState.instructions) ? sourceState.instructions : [];
   for (const value of rawInstructions) {

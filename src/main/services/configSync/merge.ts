@@ -288,7 +288,11 @@ function providerEntry(plan: PlannedEntry, mode: MergeMode): JsonRecord {
   return next;
 }
 
-function importedEnvConflicts(source: JsonRecord, existing: JsonRecord, omitted: ReadonlySet<string>): boolean {
+function importedEnvConflicts(
+  source: JsonRecord,
+  existing: JsonRecord,
+  omitted: ReadonlySet<string>
+): boolean {
   if (omitted.has('env') || source.env === undefined) return false;
   return !sameValue(existing.env, source.env);
 }

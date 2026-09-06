@@ -293,4 +293,53 @@ describe('config sync sender-bound import flow', () => {
     expect(decoded.state.mcpServers[0]?.args).toContain('argument-secret');
     expect(decoded.state.mcpServers[0]?.env).toEqual({ TOKEN: 'environment-secret' });
   });
+
+  it('禁用或路径缺失的 skill 不阻断整包导出', async () => {
+    const good = join(userData, 'good-skill');
+    mkdirSync(good, { recursive: true });
+    writeFileSync(join(good, 'SKILL.md'), '# good skill');
+    settings.patchSettingsState('skills', [
+      { id: 'good', name: 'Good', description: '', path: good, source: 'local', enabled: true },
+      {
+        id: 'gone',
+        name: 'Gone',
+        description: '',
+        path: join(userData, 'missing-skill'),
+        source: 'local',
+        enabled: false,
+      },
+    ]);
+
+    const exported = join(userData, 'tolerant-missing.enso-config');
+    await expect(
+      service.exportConfigToPath({ includeSecrets: true, password: 'correct horse' }, exported)
+    ).resolves.toMatchObject({ ok: true });
+
+    const decoded = await decodeBundle(readFileSync(exported), 'correct horse');
+    expect(decoded.state.skills.map((skill) => skill.id)).toEqual(['good']);
+    expect(decoded.resources.skills.map((resource) => resource.id)).toEqual(['good']);
+    expect(decoded.state.providers.length).toBeGreaterThan(0);
+  });
+
+  it('symlink skill 被跳过，其余配置正常导出', async () => {
+    const good = join(userData, 'good-skill-2');
+    mkdirSync(good, { recursive: true });
+    writeFileSync(join(good, 'SKILL.md'), '# good skill 2');
+    const linked = join(userData, 'linked-skill');
+    symlinkSync(good, linked);
+    settings.patchSettingsState('skills', [
+      { id: 'good2', name: 'Good2', description: '', path: good, source: 'local', enabled: true },
+      { id: 'linked', name: 'Linked', description: '', path: linked, source: 'local', enabled: true },
+    ]);
+
+    const exported = join(userData, 'tolerant-symlink.enso-config');
+    await expect(
+      service.exportConfigToPath({ includeSecrets: true, password: 'correct horse' }, exported)
+    ).resolves.toMatchObject({ ok: true });
+
+    const decoded = await decodeBundle(readFileSync(exported), 'correct horse');
+    expect(decoded.state.skills.map((skill) => skill.id)).toEqual(['good2']);
+    expect(decoded.resources.skills.map((resource) => resource.id)).toEqual(['good2']);
+    settings.patchSettingsState('skills', []);
+  });
 });
