@@ -6,10 +6,16 @@
 
 export const COMPOSER_DROP_ID = 'composer-drop';
 export const PINNED_DROP_ID = 'pinned-drop';
+export const UNGROUPED_GROUP_DROP_ID = 'project-group:__ungrouped__';
 const PROJECT_PREFIX = 'project:';
+const PROJECT_GROUP_PREFIX = 'project-group:';
+const SELECTOR_GROUP_PREFIX = 'selector-group:';
 const PINNED_CHAT_PREFIX = 'pinned-chat:';
 
 export const projectDragId = (projectId: string): string => `${PROJECT_PREFIX}${projectId}`;
+export const projectGroupDragId = (groupId: string): string => `${PROJECT_GROUP_PREFIX}${groupId}`;
+export const selectorGroupDropId = (groupId: string): string =>
+  `${SELECTOR_GROUP_PREFIX}${groupId}`;
 export const chatDragId = (conversationId: string): string => `chat:${conversationId}`;
 /** 置顶栏行用独立 id:同一会话同时出现在置顶栏与项目组,dnd-kit 不允许重复 id */
 export const pinnedChatDragId = (conversationId: string): string =>
@@ -17,6 +23,7 @@ export const pinnedChatDragId = (conversationId: string): string =>
 
 export type DragPayload =
   | { type: 'project'; projectId: string; path: string; name: string }
+  | { type: 'project-group'; groupId: string }
   | {
       type: 'chat';
       conversationId: string;
@@ -29,9 +36,20 @@ export type DragPayload =
 export type DropAction =
   | { kind: 'reorder-projects'; activeId: string; overId: string }
   | { kind: 'reorder-pinned'; activeId: string; overId: string }
+  | { kind: 'reorder-groups'; activeId: string; overId: string }
+  | {
+      kind: 'move-project-to-group';
+      projectId: string;
+      groupId: string | null;
+      beforeProjectId?: string;
+    }
   | { kind: 'insert-file-mention'; path: string; label: string }
   | { kind: 'insert-chat-mention'; conversationId: string; label: string; sessionFile: string }
   | { kind: 'pin-conversation'; conversationId: string };
+
+export interface RouteDropContext {
+  projectGroupId?: (projectId: string) => string | undefined;
+}
 
 /** 与 useMentionSearch.toChatMentionCandidates 相同的标题归一:取首行,空回落 */
 function chatLabel(title: string): string {
@@ -42,20 +60,65 @@ function chatLabel(title: string): string {
  * 把拖拽结果翻译成动作;所有不成立的组合返回 null(no-op)。
  * currentConversationId:当前打开的会话,拖入自身输入框不插引用。
  */
+function parseGroupDrop(overId: string): string | null | undefined {
+  if (overId === UNGROUPED_GROUP_DROP_ID || overId === `${SELECTOR_GROUP_PREFIX}__ungrouped__`) {
+    return null;
+  }
+  if (overId.startsWith(PROJECT_GROUP_PREFIX)) {
+    const id = overId.slice(PROJECT_GROUP_PREFIX.length);
+    return id === '__all__' ? undefined : id;
+  }
+  if (overId.startsWith(SELECTOR_GROUP_PREFIX)) {
+    const id = overId.slice(SELECTOR_GROUP_PREFIX.length);
+    return id === '__all__' ? undefined : id;
+  }
+  return undefined;
+}
+
 export function routeDrop(
   active: DragPayload,
   overId: string | null,
-  currentConversationId: string | undefined
+  currentConversationId: string | undefined,
+  ctx?: RouteDropContext
 ): DropAction | null {
   if (!overId) return null;
+
+  if (active.type === 'project-group') {
+    if (!overId.startsWith(PROJECT_GROUP_PREFIX) || overId === UNGROUPED_GROUP_DROP_ID) {
+      return null;
+    }
+    const targetId = overId.slice(PROJECT_GROUP_PREFIX.length);
+    if (!targetId || targetId === active.groupId) return null;
+    return { kind: 'reorder-groups', activeId: active.groupId, overId: targetId };
+  }
 
   if (active.type === 'project') {
     if (overId === COMPOSER_DROP_ID) {
       return { kind: 'insert-file-mention', path: active.path, label: active.name };
     }
+    const groupTarget = parseGroupDrop(overId);
+    if (groupTarget !== undefined) {
+      const current = ctx?.projectGroupId?.(active.projectId) ?? null;
+      if (current === groupTarget) return null;
+      return {
+        kind: 'move-project-to-group',
+        projectId: active.projectId,
+        groupId: groupTarget,
+      };
+    }
     if (overId.startsWith(PROJECT_PREFIX)) {
       const targetId = overId.slice(PROJECT_PREFIX.length);
       if (targetId === active.projectId) return null;
+      const from = ctx?.projectGroupId?.(active.projectId) ?? null;
+      const to = ctx?.projectGroupId?.(targetId) ?? null;
+      if (ctx?.projectGroupId && from !== to) {
+        return {
+          kind: 'move-project-to-group',
+          projectId: active.projectId,
+          groupId: to,
+          beforeProjectId: targetId,
+        };
+      }
       return { kind: 'reorder-projects', activeId: active.projectId, overId: targetId };
     }
     return null;

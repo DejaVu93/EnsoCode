@@ -33,11 +33,24 @@ describe('normalizeEditArguments', () => {
     });
   });
 
-  it('截断 JSON 字符串原样留下，不假装成功', () => {
+  it('截断 JSON 字符串不假装成功，改报明确错误避免 TypeBox 误诊 edits.0', () => {
     const truncated = '[{"oldText": "foo"';
-    expect(normalizeEditArguments({ path: 'f.ts', edits: truncated })).toEqual({
+    expect(() => normalizeEditArguments({ path: 'f.ts', edits: truncated })).toThrow(
+      /edits must be an array of \{oldText, newText\} objects/
+    );
+  });
+
+  it('折叠成 edits: [json 数组字符串] 时拉平为对象数组', () => {
+    expect(normalizeEditArguments({ path: 'f.ts', edits: [JSON.stringify([block])] })).toEqual({
       path: 'f.ts',
-      edits: truncated,
+      edits: [block],
+    });
+  });
+
+  it('数组装对象 {"0": {oldText,newText}} 转成数组', () => {
+    expect(normalizeEditArguments({ path: 'f.ts', edits: { 0: block } })).toEqual({
+      path: 'f.ts',
+      edits: [block],
     });
   });
 

@@ -154,6 +154,7 @@ const initialState = {
   onboarded: false,
   keybindings: {} as Record<string, string>,
   projects: [] as import('@shared/types').Project[],
+  projectGroups: [] as import('@shared/types').ProjectGroup[],
   usageModelPricing: {} as import('@shared/usage/pricing').PricingTable,
 };
 interface DefaultModelRevalidationState {
@@ -541,7 +542,7 @@ export const useSettingsStore = create<SettingsState>()(
         }),
 
       // Project execution authority is created/removed only through the dedicated Main registry.
-      addProject: async (path, remote) => {
+      addProject: async (path, remote, groupId) => {
         const projection = await window.electronAPI.sourceAuthority.read();
         const existing = projection.projects.find((project) => {
           if (project.state !== 'active' || project.canonicalPath !== path) return false;
@@ -569,6 +570,7 @@ export const useSettingsStore = create<SettingsState>()(
             result.value.canonicalPath.split('/').filter(Boolean).pop() ??
             result.value.canonicalPath,
           path: result.value.canonicalPath,
+          ...(groupId ? { groupId } : {}),
           ...(result.value.kind === 'ssh'
             ? {
                 kind: 'ssh' as const,
@@ -578,10 +580,102 @@ export const useSettingsStore = create<SettingsState>()(
               }
             : {}),
         };
+        set((state) => {
+          const previous = state.projects.find((candidate) => candidate.id === project.id);
+          const nextProject = {
+            ...project,
+            ...(project.groupId
+              ? { groupId: project.groupId }
+              : previous?.groupId
+                ? { groupId: previous.groupId }
+                : {}),
+          };
+          return {
+            projects: [
+              ...state.projects.filter((candidate) => candidate.id !== project.id),
+              nextProject,
+            ],
+          };
+        });
+        return get().projects.find((candidate) => candidate.id === project.id) ?? project;
+      },
+
+      createProjectGroup: (input) => {
+        const name = input.name.trim();
+        const group = {
+          id: crypto.randomUUID(),
+          name: name || 'Untitled',
+          order: Math.max(-1, ...get().projectGroups.map((item) => item.order)) + 1,
+          ...(input.emoji ? { emoji: input.emoji } : {}),
+          ...(input.color ? { color: input.color } : {}),
+        };
+        set((state) => ({ projectGroups: [...state.projectGroups, group] }));
+        return group;
+      },
+      updateProjectGroup: (id, patch) => {
         set((state) => ({
-          projects: [...state.projects.filter((candidate) => candidate.id !== project.id), project],
+          projectGroups: state.projectGroups.map((group) => {
+            if (group.id !== id) return group;
+            return {
+              ...group,
+              ...(patch.name !== undefined ? { name: patch.name.trim() || group.name } : {}),
+              ...(patch.emoji !== undefined
+                ? patch.emoji
+                  ? { emoji: patch.emoji }
+                  : { emoji: undefined }
+                : {}),
+              ...(patch.color !== undefined
+                ? patch.color
+                  ? { color: patch.color }
+                  : { color: undefined }
+                : {}),
+            };
+          }),
         }));
-        return project;
+      },
+      removeProjectGroup: (id) => {
+        set((state) => ({
+          projectGroups: state.projectGroups.filter((group) => group.id !== id),
+          projects: state.projects.map((project) => {
+            if (project.groupId !== id) return project;
+            const { groupId: _removed, ...rest } = project;
+            return rest;
+          }),
+        }));
+      },
+      reorderProjectGroups: (activeId, overId) => {
+        if (activeId === overId) return;
+        set((state) => {
+          const ids = state.projectGroups
+            .slice()
+            .sort((a, b) => a.order - b.order)
+            .map((group) => group.id);
+          const from = ids.indexOf(activeId);
+          const to = ids.indexOf(overId);
+          if (from < 0 || to < 0) return state;
+          const next = [...ids];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          const order = new Map(next.map((id, index) => [id, index]));
+          return {
+            projectGroups: state.projectGroups.map((group) => ({
+              ...group,
+              order: order.get(group.id) ?? group.order,
+            })),
+          };
+        });
+      },
+      setProjectGroupId: (projectId, groupId) => {
+        set((state) => ({
+          projects: state.projects.map((project) => {
+            if (project.id !== projectId) return project;
+            if (!groupId) {
+              const { groupId: _removed, ...rest } = project;
+              return rest;
+            }
+            return { ...project, groupId };
+          }),
+        }));
       },
 
       removeProject: async (id) => {
@@ -667,21 +761,28 @@ export const useSettingsStore = create<SettingsState>()(
 );
 
 function applyProjectAuthorityProjection(projection: SourceAuthorityProjection): void {
+  const previousById = new Map(
+    useSettingsStore.getState().projects.map((project) => [project.id, project])
+  );
   const next = projection.projects
     .filter((project) => project.state === 'active')
-    .map((project) => ({
-      id: project.projectId,
-      name: project.canonicalPath.split('/').filter(Boolean).pop() ?? project.canonicalPath,
-      path: project.canonicalPath,
-      ...(project.kind === 'ssh'
-        ? {
-            kind: 'ssh' as const,
-            sshHost: project.sshHost,
-            sshConnectionId: project.sshConnectionId,
-            sshConnectionName: project.sshConnectionName,
-          }
-        : {}),
-    }));
+    .map((project) => {
+      const previous = previousById.get(project.projectId);
+      return {
+        id: project.projectId,
+        name: project.canonicalPath.split('/').filter(Boolean).pop() ?? project.canonicalPath,
+        path: project.canonicalPath,
+        ...(previous?.groupId ? { groupId: previous.groupId } : {}),
+        ...(project.kind === 'ssh'
+          ? {
+              kind: 'ssh' as const,
+              sshHost: project.sshHost,
+              sshConnectionId: project.sshConnectionId,
+              sshConnectionName: project.sshConnectionName,
+            }
+          : {}),
+      };
+    });
   // 投影未变时必须不写 state：persist 的每次 setState 都会落盘并广播 SETTINGS_CHANGED，
   // 而收到广播的窗口 rehydrate 后又会重投影。无条件写会让两个窗口互相广播成死循环
   // （单窗口不复现，因为广播 exclude-sender）。
@@ -703,7 +804,8 @@ function sameProjectProjection(
       project.kind === candidate.kind &&
       project.sshHost === candidate.sshHost &&
       project.sshConnectionId === candidate.sshConnectionId &&
-      project.sshConnectionName === candidate.sshConnectionName
+      project.sshConnectionName === candidate.sshConnectionName &&
+      project.groupId === candidate.groupId
     );
   });
 }

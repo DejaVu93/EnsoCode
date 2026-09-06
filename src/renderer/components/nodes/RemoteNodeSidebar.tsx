@@ -1,5 +1,11 @@
-import type { CatalogEntry, ProjectEntry } from '@enso/pair';
+import type { CatalogEntry, ProjectEntry, ProjectGroupEntry } from '@enso/pair';
 import { orderPinned, orderProjectSessions, sortByActivity } from '@shared/pair/drawerOrder';
+import {
+  ALL_GROUP_ID,
+  filterProjectsByGroup,
+  sectionsForAllView,
+  UNGROUPED_GROUP_ID,
+} from '@shared/projectGroups';
 import type { RemoteNodeStatus } from '@shared/types/nodes';
 import { Archive, ChevronDown, ChevronRight, Pin, Search, SquarePen } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -15,6 +21,7 @@ interface RemoteNodeSidebarProps {
   catalog: CatalogEntry[];
   pinnedOrder: string[];
   projects: ProjectEntry[];
+  groups?: ProjectGroupEntry[];
   activeId: string | null;
   canCreate: boolean;
   onSelect: (id: string) => void;
@@ -34,12 +41,14 @@ export function RemoteNodeSidebar({
   catalog,
   pinnedOrder,
   projects,
+  groups = [],
   activeId,
   canCreate,
   onSelect,
   onNewConversation,
 }: RemoteNodeSidebarProps) {
   const { t, locale } = useI18n();
+  const [selectedGroupId, setSelectedGroupId] = useState(ALL_GROUP_ID);
   const [query, setQuery] = useState('');
   const [folded, setFolded] = useState<Record<string, boolean>>({});
   const [archivedOpen, setArchivedOpen] = useState(false);
@@ -49,16 +58,33 @@ export function RemoteNodeSidebar({
     return () => clearInterval(timer);
   }, []);
 
+  const resolvedGroupId =
+    selectedGroupId === ALL_GROUP_ID ||
+    selectedGroupId === UNGROUPED_GROUP_ID ||
+    groups.some((group) => group.id === selectedGroupId)
+      ? selectedGroupId
+      : ALL_GROUP_ID;
+  const archivedIds = projects.filter((project) => project.archived).map((project) => project.id);
+  const slicedProjects = filterProjectsByGroup(projects, groups, archivedIds, resolvedGroupId);
+  const slicedIdSet = new Set(slicedProjects.map((project) => project.id));
   const q = query.trim().toLowerCase();
   const topLevel = useMemo(
     () => catalog.filter((c) => !c.parentId && (!q || c.title.toLowerCase().includes(q))),
     [catalog, q]
   );
   const pinned = orderPinned(
-    topLevel.filter((c) => c.pinned && !c.archived),
+    topLevel.filter(
+      (c) => c.pinned && !c.archived && (!c.projectId || slicedIdSet.has(c.projectId))
+    ),
     pinnedOrder
   );
-  const archived = sortByActivity(topLevel.filter((c) => c.archived));
+  const archived = sortByActivity(
+    topLevel.filter((c) => {
+      if (!c.archived) return false;
+      if (resolvedGroupId === ALL_GROUP_ID) return true;
+      return Boolean(c.projectId && slicedIdSet.has(c.projectId));
+    })
+  );
   const active = topLevel.filter((c) => !c.archived);
   const known = new Set(projects.map((p) => p.id));
   const orphans = orderProjectSessions(active.filter((c) => !known.has(c.projectId)));
@@ -121,8 +147,28 @@ export function RemoteNodeSidebar({
           />
         </div>
       </div>
+      {groups.length > 0 && (
+        <div className="shrink-0 border-b px-2 py-2">
+          <select
+            className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+            value={resolvedGroupId}
+            onChange={(event) => setSelectedGroupId(event.target.value)}
+          >
+            <option value={ALL_GROUP_ID}>{t('All')}</option>
+            {groups
+              .slice()
+              .sort((a, b) => a.order - b.order)
+              .map((group) => (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                </option>
+              ))}
+            <option value={UNGROUPED_GROUP_ID}>{t('Ungrouped')}</option>
+          </select>
+        </div>
+      )}
 
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
         {!node.hostOnline && catalog.length === 0 && (
           <p className="rounded-lg border border-dashed px-3 py-6 text-center text-muted-foreground text-sm">
             {node.connected ? t('Remote desktop is offline') : t('Connecting…')}
@@ -146,7 +192,56 @@ export function RemoteNodeSidebar({
           </div>
         )}
 
-        {projects.map((project) => {
+        {(resolvedGroupId === ALL_GROUP_ID && groups.length > 0
+          ? sectionsForAllView(projects, groups, archivedIds).flatMap((section) => {
+              const foldedSection = folded[`g:${section.groupId}`] === true;
+              return [
+                { kind: 'header' as const, section, foldedSection },
+                ...(foldedSection
+                  ? []
+                  : section.projects.map((project) => ({ kind: 'project' as const, project }))),
+              ];
+            })
+          : slicedProjects.map((project) => ({ kind: 'project' as const, project }))
+        ).map((item) => {
+          if (item.kind === 'header') {
+            return (
+              <button
+                key={`hdr-${item.section.groupId}`}
+                type="button"
+                onClick={() =>
+                  setFolded((prev) => ({
+                    ...prev,
+                    [`g:${item.section.groupId}`]: !prev[`g:${item.section.groupId}`],
+                  }))
+                }
+                className="flex h-7 w-full items-center gap-1 rounded-md px-2 text-left text-xs font-medium text-muted-foreground"
+              >
+                <ChevronRight
+                  className={cn(
+                    'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
+                    !item.foldedSection && 'rotate-90'
+                  )}
+                />
+                {item.section.group?.emoji && (
+                  <span className="shrink-0 text-sm">{item.section.group.emoji}</span>
+                )}
+                {item.section.group?.color && (
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full"
+                    style={{ backgroundColor: item.section.group.color }}
+                  />
+                )}
+                <span className="min-w-0 flex-1 truncate">
+                  {item.section.group?.name ?? t('Ungrouped')}
+                </span>
+                <span className="shrink-0 text-[10px] text-muted-foreground/70">
+                  {item.section.projects.length}
+                </span>
+              </button>
+            );
+          }
+          const { project } = item;
           const sessions = orderProjectSessions(
             active.filter((c) => c.projectId === project.id && !c.pinned)
           );

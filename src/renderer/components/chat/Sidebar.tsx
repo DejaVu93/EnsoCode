@@ -9,6 +9,12 @@ import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-
 import { CSS } from '@dnd-kit/utilities';
 import { ENSO_AGENT_TYPE_KEY } from '@shared/builtinAgents';
 import { conversationDotTone, conversationHasRunningChild } from '@shared/conversationDotTone';
+import {
+  ALL_GROUP_ID,
+  filterProjectsByGroup,
+  sectionsForAllView,
+  UNGROUPED_GROUP_ID,
+} from '@shared/projectGroups';
 import type { Project } from '@shared/types';
 import type { WorktreeStatus } from '@shared/types/worktree';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -23,6 +29,7 @@ import {
   GitBranch,
   GitBranchPlus,
   HardDriveDownload,
+  Layers,
   Loader2,
   MessageSquarePlus,
   PanelLeft,
@@ -49,8 +56,12 @@ import {
   PINNED_DROP_ID,
   pinnedChatDragId,
   projectDragId,
+  projectGroupDragId,
   routeDrop,
+  UNGROUPED_GROUP_DROP_ID,
 } from '@/components/chat/dragDrop';
+import { GroupEditorDialog } from '@/components/chat/GroupEditorDialog';
+import { GroupSelector } from '@/components/chat/GroupSelector';
 import { ImportSessionDialog } from '@/components/chat/ImportSessionDialog';
 import { NodeSwitcher } from '@/components/nodes/NodeSwitcher';
 import {
@@ -107,6 +118,12 @@ interface SidebarProps {
 export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: SidebarProps) {
   const { t, locale } = useI18n();
   const projects = useSettingsStore((state) => state.projects);
+  const projectGroups = useSettingsStore((state) => state.projectGroups);
+  const createProjectGroup = useSettingsStore((state) => state.createProjectGroup);
+  const updateProjectGroup = useSettingsStore((state) => state.updateProjectGroup);
+  const removeProjectGroup = useSettingsStore((state) => state.removeProjectGroup);
+  const reorderProjectGroups = useSettingsStore((state) => state.reorderProjectGroups);
+  const setProjectGroupId = useSettingsStore((state) => state.setProjectGroupId);
   const keybindings = useSettingsStore((state) => state.keybindings);
   const searchShortcut = formatBinding(effectiveKeybindings(keybindings)['search-workspace']);
   const addProject = useSettingsStore((state) => state.addProject);
@@ -161,10 +178,48 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     setArchivedProjectIds(next);
     writeSidebarOrder(ARCHIVED_PROJECTS_KEY, next);
   };
-  const activeProjects = orderedProjects.filter(
-    (project) => !archivedProjectIds.includes(project.id)
+  const [selectedGroupId, setSelectedGroupId] = useState(() => {
+    try {
+      return localStorage.getItem('enso-selected-project-group') ?? ALL_GROUP_ID;
+    } catch {
+      return ALL_GROUP_ID;
+    }
+  });
+  const [collapsedGroupIds, setCollapsedGroupIds] = useState<Record<string, boolean>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('enso-collapsed-project-groups') ?? '{}');
+    } catch {
+      return {};
+    }
+  });
+  const selectGroup = (id: string) => {
+    setSelectedGroupId(id);
+    localStorage.setItem('enso-selected-project-group', id);
+  };
+  const toggleGroupSection = (id: string) => {
+    setCollapsedGroupIds((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      localStorage.setItem('enso-collapsed-project-groups', JSON.stringify(next));
+      return next;
+    });
+  };
+  const resolvedGroupId =
+    selectedGroupId === ALL_GROUP_ID ||
+    selectedGroupId === UNGROUPED_GROUP_ID ||
+    projectGroups.some((group) => group.id === selectedGroupId)
+      ? selectedGroupId
+      : ALL_GROUP_ID;
+
+  const slicedProjects = filterProjectsByGroup(
+    orderedProjects,
+    projectGroups,
+    archivedProjectIds,
+    resolvedGroupId
   );
+  const groupSections = sectionsForAllView(orderedProjects, projectGroups, archivedProjectIds);
+  const activeProjects = slicedProjects;
   const activeProjectIds = activeProjects.map((project) => project.id);
+  const slicedIdSet = new Set(activeProjectIds);
 
   // 置顶组的手动顺序(组内拖拽重排;未收录的新置顶按活跃时间追加)
   const [pinnedOrderIds, setPinnedOrderIds] = useState<string[]>(() =>
@@ -180,9 +235,29 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
       const payload = event.active.data.current as DragPayload | undefined;
       if (!payload) return;
       const overId = event.over ? String(event.over.id) : null;
-      const action = routeDrop(payload, overId, activeId ?? undefined);
+      const action = routeDrop(payload, overId, activeId ?? undefined, {
+        projectGroupId: (projectId) =>
+          projects.find((project) => project.id === projectId)?.groupId,
+      });
       if (!action) return;
       switch (action.kind) {
+        case 'move-project-to-group': {
+          setProjectGroupId(action.projectId, action.groupId);
+          if (action.beforeProjectId) {
+            const next = moveProject(
+              projects,
+              projectOrderIds,
+              action.projectId,
+              action.beforeProjectId
+            );
+            setProjectOrderIds(next);
+            writeSidebarOrder(PROJECT_ORDER_KEY, next);
+          }
+          break;
+        }
+        case 'reorder-groups':
+          reorderProjectGroups(action.activeId, action.overId);
+          break;
         case 'reorder-projects': {
           const next = moveProject(projects, projectOrderIds, action.activeId, action.overId);
           setProjectOrderIds(next);
@@ -223,6 +298,9 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     },
   });
 
+  const [groupEditor, setGroupEditor] = useState<
+    { mode: 'create' } | { mode: 'edit'; id: string } | null
+  >(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingProject, setPendingProject] = useState<{
     name: string;
@@ -233,6 +311,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     path: string;
     sshConnectionId?: string;
     sshHost?: string;
+    groupId?: string;
   }) => {
     const knownIds = new Set(projects.map((project) => project.id));
     if (request.sshConnectionId) {
@@ -242,9 +321,14 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
         sshHost: request.sshHost,
       });
     }
+    const defaultGroupId =
+      resolvedGroupId !== ALL_GROUP_ID && resolvedGroupId !== UNGROUPED_GROUP_ID
+        ? resolvedGroupId
+        : undefined;
     void addProject(
       request.path,
-      request.sshConnectionId ? { sshConnectionId: request.sshConnectionId } : undefined
+      request.sshConnectionId ? { sshConnectionId: request.sshConnectionId } : undefined,
+      request.groupId ?? defaultGroupId
     )
       .then((project) => {
         if (!project) return;
@@ -329,7 +413,10 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   });
   const switchSlotsRef = useRef(switchSlots);
   switchSlotsRef.current = switchSlots;
-  const visiblePinnedIds = searching ? pinnedIds.filter(convMatches) : pinnedIds;
+  const visiblePinnedIds = (searching ? pinnedIds.filter(convMatches) : pinnedIds).filter((id) => {
+    const projectId = conversations[id]?.projectId;
+    return !projectId || slicedIdSet.has(projectId);
+  });
   const visiblePinnedSet = new Set(visiblePinnedIds);
   const switchHintFor = (id: string, surface: 'pinned' | 'project') => {
     if (collapsed || !modHeld) return undefined;
@@ -351,6 +438,16 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
         })
         .filter((group) => group.ids.length > 0)
     : archivedGroups;
+  const archivedInSlice = (group: (typeof archivedGroups)[number]) => {
+    if (resolvedGroupId === ALL_GROUP_ID) return true;
+    const project = projects.find((item) => item.id === group.projectId);
+    if (!project) return resolvedGroupId === UNGROUPED_GROUP_ID;
+    if (resolvedGroupId === UNGROUPED_GROUP_ID) {
+      return !project.groupId || !projectGroups.some((item) => item.id === project.groupId);
+    }
+    return project.groupId === resolvedGroupId;
+  };
+  const slicedArchivedGroups = visibleArchivedGroups.filter(archivedInSlice);
   // 底部「已归档」栏目的折叠态(缺省收起,重启回到收起)
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [archiveCleanupOpen, setArchiveCleanupOpen] = useState<string | null>(null);
@@ -361,6 +458,11 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     const timer = setInterval(() => setNowTick(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (resolvedGroupId === selectedGroupId) return;
+    setSelectedGroupId(ALL_GROUP_ID);
+    localStorage.setItem('enso-selected-project-group', ALL_GROUP_ID);
+  }, [resolvedGroupId, selectedGroupId]);
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const mod = IS_MAC ? e.metaKey : e.ctrlKey;
@@ -560,8 +662,48 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
             >
               <FolderPlus className="h-4 w-4" />
             </button>
+            <button
+              type="button"
+              onClick={() => setGroupEditor({ mode: 'create' })}
+              className={ICON_BUTTON_CLASS}
+              title={t('New group')}
+            >
+              <Layers className="h-4 w-4" />
+            </button>
           </div>
         </div>
+        {projectGroups.length > 0 && (
+          <GroupSelector
+            groups={projectGroups}
+            selectedId={resolvedGroupId}
+            counts={Object.fromEntries(
+              projectGroups.map((group) => [
+                group.id,
+                filterProjectsByGroup(orderedProjects, projectGroups, archivedProjectIds, group.id)
+                  .length,
+              ])
+            )}
+            totalCount={
+              filterProjectsByGroup(
+                orderedProjects,
+                projectGroups,
+                archivedProjectIds,
+                ALL_GROUP_ID
+              ).length
+            }
+            ungroupedCount={
+              filterProjectsByGroup(
+                orderedProjects,
+                projectGroups,
+                archivedProjectIds,
+                UNGROUPED_GROUP_ID
+              ).length
+            }
+            onSelect={selectGroup}
+            onAddGroup={() => setGroupEditor({ mode: 'create' })}
+            onEditGroup={(id) => setGroupEditor({ mode: 'edit', id })}
+          />
+        )}
         <div className="shrink-0 border-b px-2 py-2">
           <div className="relative">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 z-10 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -663,207 +805,303 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
             </div>
           )}
           <SortableContext
-            items={activeProjectIds.map((id) => projectDragId(id))}
+            items={[
+              ...(resolvedGroupId === ALL_GROUP_ID
+                ? groupSections.map((section) =>
+                    section.groupId === UNGROUPED_GROUP_ID
+                      ? UNGROUPED_GROUP_DROP_ID
+                      : projectGroupDragId(section.groupId)
+                  )
+                : []),
+              ...activeProjectIds.map((id) => projectDragId(id)),
+            ]}
             strategy={verticalListSortingStrategy}
           >
-            {activeProjects.map((project) => {
-              const projectConversations = projectConversationIds(order, conversations, project.id);
-              const projectHit = matchesQuery(listQuery, [project.name, project.path]);
-              const visibleConversations =
-                !searching || projectHit
-                  ? projectConversations
-                  : projectConversations.filter(convMatches);
-              if (searching && visibleConversations.length === 0) return null;
-              const folded = searching ? false : collapsedProjects[project.id] === true;
-              return (
-                <SortableProject key={project.id} project={project}>
-                  {(drag) => (
-                    <div ref={drag.setNodeRef} style={drag.style}>
-                      {/* 项目行：chevron 槽 + 仓库图标 + 名称 + 常驻操作（EnsoAI 尺寸）；整行可拖拽排序 */}
-                      <div
-                        className="group flex w-full items-center gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-accent/30"
-                        {...drag.handleProps}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => toggleProject(project.id)}
-                          className="flex min-w-0 flex-1 items-center gap-1 text-left"
-                          title={project.path}
-                        >
-                          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-                            <ChevronRight
-                              className={cn(
-                                'h-3.5 w-3.5 text-muted-foreground transition-transform duration-200',
-                                !folded && 'rotate-90'
-                              )}
-                            />
-                          </span>
-                          <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span
-                            className="min-w-0 flex-1 truncate text-sm font-medium"
-                            title={
-                              project.kind === 'ssh'
-                                ? `${project.sshHost}:${project.path}`
-                                : project.path
-                            }
-                          >
-                            {project.name}
-                            {project.kind === 'ssh' && (
-                              <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
-                                {project.sshConnectionName ?? project.sshHost}
-                              </span>
-                            )}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void newConversation(project.id)}
-                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          title={t('New conversation')}
-                        >
-                          <MessageSquarePlus className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setImportProject(project)}
-                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          title={t('Import session')}
-                        >
-                          <HardDriveDownload className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleArchiveProject(project.id)}
-                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                          title={t('Archive project')}
-                        >
-                          <Archive className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPendingRemove({
-                              kind: 'project',
-                              project,
-                              conversationIds: projectConversations,
-                            })
-                          }
-                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                          title={t('Remove project')}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                      <AnimatePresence initial={false}>
-                        {!folded && (
-                          <motion.div
-                            initial="initial"
-                            animate="animate"
-                            exit="exit"
-                            variants={heightVariants}
-                            transition={springStandard}
-                            className="overflow-hidden"
-                          >
-                            <div className="mt-0.5 flex flex-col gap-y-0.5">
-                              {(searching || expandedProjects[project.id]
-                                ? visibleConversations
-                                : visibleConversations.slice(0, COLLAPSED_SESSION_LIMIT)
-                              ).map((id) => (
-                                <motion.div key={id} layout="position" transition={springStandard}>
-                                  <DraggableChat id={id} conversation={conversations[id]}>
-                                    <ConversationRow
-                                      id={id}
-                                      conversation={conversations[id]}
-                                      active={activeId === id}
-                                      hasRunningChild={hasRunningChild(id)}
-                                      switchHint={switchHintFor(id, 'project')}
-                                      locale={locale}
-                                      nowTick={nowTick}
-                                      worktreeStatus={
-                                        conversations[id].worktree
-                                          ? worktreeStatuses[id]
-                                          : undefined
+            {(() => {
+              const projectNode = (project: Project) => {
+                const projectConversations = projectConversationIds(
+                  order,
+                  conversations,
+                  project.id
+                );
+                const projectHit = matchesQuery(listQuery, [project.name, project.path]);
+                const visibleConversations =
+                  !searching || projectHit
+                    ? projectConversations
+                    : projectConversations.filter(convMatches);
+                if (searching && visibleConversations.length === 0) return null;
+                const folded = searching ? false : collapsedProjects[project.id] === true;
+                return (
+                  <SortableProject key={project.id} project={project}>
+                    {(drag) => (
+                      <ContextMenu>
+                        <ContextMenuTrigger
+                          render={
+                            (
+                              <div ref={drag.setNodeRef} style={drag.style}>
+                                {/* 项目行：chevron 槽 + 仓库图标 + 名称 + 常驻操作（EnsoAI 尺寸）；整行可拖拽排序 */}
+                                <div
+                                  className="group flex w-full items-center gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-accent/30"
+                                  {...drag.handleProps}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleProject(project.id)}
+                                    className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                                    title={project.path}
+                                  >
+                                    <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+                                      <ChevronRight
+                                        className={cn(
+                                          'h-3.5 w-3.5 text-muted-foreground transition-transform duration-200',
+                                          !folded && 'rotate-90'
+                                        )}
+                                      />
+                                    </span>
+                                    <FolderGit2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                    <span
+                                      className="min-w-0 flex-1 truncate text-sm font-medium"
+                                      title={
+                                        project.kind === 'ssh'
+                                          ? `${project.sshHost}:${project.path}`
+                                          : project.path
                                       }
-                                      isolated={Boolean(conversations[id].worktree)}
-                                      onSelect={selectConversation}
-                                      onTogglePin={togglePinConversation}
-                                      onToggleArchive={(conversationId) =>
-                                        void handleToggleArchive(conversationId)
-                                      }
-                                      onCleanupWorktree={(conversationId) =>
-                                        void handleCleanupWorktree(conversationId)
-                                      }
-                                      onMoveToWorktree={(conversationId) =>
-                                        void handleMoveToWorktree(conversationId)
-                                      }
-                                      onRemove={(conversationId) =>
-                                        void openRemoveConversation(conversationId)
-                                      }
-                                    />
-                                  </DraggableChat>
-                                </motion.div>
-                              ))}
-                              {!searching &&
-                                projectConversations.length > COLLAPSED_SESSION_LIMIT && (
-                                  <ContextMenu>
-                                    <ContextMenuTrigger
-                                      render={
-                                        (
-                                          <button
-                                            type="button"
-                                            onClick={() =>
-                                              setExpandedProjects((prev) => ({
-                                                ...prev,
-                                                [project.id]: !prev[project.id],
-                                              }))
-                                            }
-                                            className="rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                                    >
+                                      {project.name}
+                                      {project.kind === 'ssh' && (
+                                        <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
+                                          {project.sshConnectionName ?? project.sshHost}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => void newConversation(project.id)}
+                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    title={t('New conversation')}
+                                  >
+                                    <MessageSquarePlus className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setImportProject(project)}
+                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    title={t('Import session')}
+                                  >
+                                    <HardDriveDownload className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleArchiveProject(project.id)}
+                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                    title={t('Archive project')}
+                                  >
+                                    <Archive className="h-3.5 w-3.5" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setPendingRemove({
+                                        kind: 'project',
+                                        project,
+                                        conversationIds: projectConversations,
+                                      })
+                                    }
+                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                                    title={t('Remove project')}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                </div>
+                                <AnimatePresence initial={false}>
+                                  {!folded && (
+                                    <motion.div
+                                      initial="initial"
+                                      animate="animate"
+                                      exit="exit"
+                                      variants={heightVariants}
+                                      transition={springStandard}
+                                      className="overflow-hidden"
+                                    >
+                                      <div className="mt-0.5 flex flex-col gap-y-0.5">
+                                        {(searching || expandedProjects[project.id]
+                                          ? visibleConversations
+                                          : visibleConversations.slice(0, COLLAPSED_SESSION_LIMIT)
+                                        ).map((id) => (
+                                          <motion.div
+                                            key={id}
+                                            layout="position"
+                                            transition={springStandard}
                                           >
-                                            {expandedProjects[project.id]
-                                              ? t('Collapse')
-                                              : t('Show {{n}} more', {
-                                                  n:
-                                                    projectConversations.length -
-                                                    COLLAPSED_SESSION_LIMIT,
-                                                })}
-                                          </button>
-                                        ) as React.ReactElement<Record<string, unknown>>
-                                      }
-                                    />
-                                    <ContextMenuPopup className="min-w-36">
-                                      <ContextMenuItem
-                                        onClick={() =>
-                                          void handleArchiveMany(
-                                            projectConversations.slice(COLLAPSED_SESSION_LIMIT)
-                                          )
-                                        }
-                                      >
-                                        <Archive />
-                                        {t('Archive {{n}} conversations', {
-                                          n: projectConversations.length - COLLAPSED_SESSION_LIMIT,
-                                        })}
-                                      </ContextMenuItem>
-                                    </ContextMenuPopup>
-                                  </ContextMenu>
-                                )}
-                              {visibleConversations.length === 0 && (
-                                <p className="py-1.5 pl-10 text-xs text-muted-foreground">
-                                  {t('No conversations yet')}
-                                </p>
-                              )}
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </div>
-                  )}
-                </SortableProject>
-              );
-            })}
+                                            <DraggableChat id={id} conversation={conversations[id]}>
+                                              <ConversationRow
+                                                id={id}
+                                                conversation={conversations[id]}
+                                                active={activeId === id}
+                                                hasRunningChild={hasRunningChild(id)}
+                                                switchHint={switchHintFor(id, 'project')}
+                                                locale={locale}
+                                                nowTick={nowTick}
+                                                worktreeStatus={
+                                                  conversations[id].worktree
+                                                    ? worktreeStatuses[id]
+                                                    : undefined
+                                                }
+                                                isolated={Boolean(conversations[id].worktree)}
+                                                onSelect={selectConversation}
+                                                onTogglePin={togglePinConversation}
+                                                onToggleArchive={(conversationId) =>
+                                                  void handleToggleArchive(conversationId)
+                                                }
+                                                onCleanupWorktree={(conversationId) =>
+                                                  void handleCleanupWorktree(conversationId)
+                                                }
+                                                onMoveToWorktree={(conversationId) =>
+                                                  void handleMoveToWorktree(conversationId)
+                                                }
+                                                onRemove={(conversationId) =>
+                                                  void openRemoveConversation(conversationId)
+                                                }
+                                              />
+                                            </DraggableChat>
+                                          </motion.div>
+                                        ))}
+                                        {!searching &&
+                                          projectConversations.length > COLLAPSED_SESSION_LIMIT && (
+                                            <ContextMenu>
+                                              <ContextMenuTrigger
+                                                render={
+                                                  (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() =>
+                                                        setExpandedProjects((prev) => ({
+                                                          ...prev,
+                                                          [project.id]: !prev[project.id],
+                                                        }))
+                                                      }
+                                                      className="rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                                                    >
+                                                      {expandedProjects[project.id]
+                                                        ? t('Collapse')
+                                                        : t('Show {{n}} more', {
+                                                            n:
+                                                              projectConversations.length -
+                                                              COLLAPSED_SESSION_LIMIT,
+                                                          })}
+                                                    </button>
+                                                  ) as React.ReactElement<Record<string, unknown>>
+                                                }
+                                              />
+                                              <ContextMenuPopup className="min-w-36">
+                                                <ContextMenuItem
+                                                  onClick={() =>
+                                                    void handleArchiveMany(
+                                                      projectConversations.slice(
+                                                        COLLAPSED_SESSION_LIMIT
+                                                      )
+                                                    )
+                                                  }
+                                                >
+                                                  <Archive />
+                                                  {t('Archive {{n}} conversations', {
+                                                    n:
+                                                      projectConversations.length -
+                                                      COLLAPSED_SESSION_LIMIT,
+                                                  })}
+                                                </ContextMenuItem>
+                                              </ContextMenuPopup>
+                                            </ContextMenu>
+                                          )}
+                                        {visibleConversations.length === 0 && (
+                                          <p className="py-1.5 pl-10 text-xs text-muted-foreground">
+                                            {t('No conversations yet')}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                            ) as React.ReactElement<Record<string, unknown>>
+                          }
+                        />
+                        <ContextMenuPopup className="min-w-36">
+                          <ContextMenuItem onClick={() => setProjectGroupId(project.id, null)}>
+                            {t('Move to ungrouped')}
+                          </ContextMenuItem>
+                          {projectGroups.map((group) => (
+                            <ContextMenuItem
+                              key={group.id}
+                              onClick={() => setProjectGroupId(project.id, group.id)}
+                            >
+                              {t('Move to {{name}}', { name: group.name })}
+                            </ContextMenuItem>
+                          ))}
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onClick={() => setGroupEditor({ mode: 'create' })}>
+                            {t('New group')}
+                          </ContextMenuItem>
+                        </ContextMenuPopup>
+                      </ContextMenu>
+                    )}
+                  </SortableProject>
+                );
+              };
+              if (resolvedGroupId === ALL_GROUP_ID && projectGroups.length > 0) {
+                return (
+                  <div className="space-y-2">
+                    {groupSections.map((section) => {
+                      const foldedSection = searching
+                        ? false
+                        : collapsedGroupIds[section.groupId] === true;
+                      return (
+                        <div key={section.groupId}>
+                          <ProjectGroupHeader
+                            groupId={section.groupId}
+                            name={section.group?.name ?? t('Ungrouped')}
+                            emoji={section.group?.emoji}
+                            color={section.group?.color}
+                            count={section.projects.length}
+                            folded={foldedSection}
+                            sortable={section.groupId !== UNGROUPED_GROUP_ID}
+                            onToggle={() => toggleGroupSection(section.groupId)}
+                            onEdit={
+                              section.group
+                                ? () => setGroupEditor({ mode: 'edit', id: section.groupId })
+                                : undefined
+                            }
+                          />
+                          <AnimatePresence initial={false}>
+                            {!foldedSection && (
+                              <motion.div
+                                key={`content-${section.groupId}`}
+                                initial="initial"
+                                animate="animate"
+                                exit="exit"
+                                variants={heightVariants}
+                                transition={springStandard}
+                                className="overflow-hidden"
+                              >
+                                <div className="space-y-1 pt-0.5">
+                                  {section.projects.map(projectNode)}
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }
+              return activeProjects.map(projectNode);
+            })()}
           </SortableContext>
         </div>
 
-        {(searching ? visibleArchivedGroups : archivedGroups).length > 0 && (
+        {slicedArchivedGroups.length > 0 && (
           <div data-slot="archived-section" className="shrink-0 border-t p-2">
             {/* 列表在折叠头上方：固定底部向上展开 */}
             <AnimatePresence initial={false}>
@@ -877,7 +1115,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                   className="overflow-hidden"
                 >
                   <div className="mb-0.5 flex max-h-72 flex-col gap-y-1.5 overflow-y-auto">
-                    {visibleArchivedGroups.map((group) => {
+                    {slicedArchivedGroups.map((group) => {
                       const projectName =
                         projects.find((project) => project.id === group.projectId)?.name ??
                         t('Other');
@@ -1042,7 +1280,48 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
         </div>
       </div>
 
-      <AddProjectDialog open={addOpen} onOpenChange={setAddOpen} onAdd={handleAddProject} />
+      <AddProjectDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onAdd={handleAddProject}
+        groups={projectGroups}
+        defaultGroupId={
+          resolvedGroupId !== ALL_GROUP_ID && resolvedGroupId !== UNGROUPED_GROUP_ID
+            ? resolvedGroupId
+            : undefined
+        }
+      />
+      <GroupEditorDialog
+        open={groupEditor !== null}
+        group={
+          groupEditor?.mode === 'edit'
+            ? (projectGroups.find((group) => group.id === groupEditor.id) ?? null)
+            : null
+        }
+        projects={orderedProjects.filter((project) => !archivedProjectIds.includes(project.id))}
+        onOpenChange={(open) => {
+          if (!open) setGroupEditor(null);
+        }}
+        onSave={(input) => {
+          if (groupEditor?.mode === 'edit') {
+            updateProjectGroup(groupEditor.id, input);
+            return;
+          }
+          const group = createProjectGroup(input);
+          for (const projectId of input.projectIds ?? []) {
+            setProjectGroupId(projectId, group.id);
+          }
+        }}
+        onDelete={
+          groupEditor?.mode === 'edit'
+            ? () => {
+                const id = groupEditor.id;
+                removeProjectGroup(id);
+                if (selectedGroupId === id) selectGroup(ALL_GROUP_ID);
+              }
+            : undefined
+        }
+      />
       <ImportSessionDialog project={importProject} onClose={() => setImportProject(null)} />
       <ConfirmDialog
         open={pendingWorktreeAction !== null}
@@ -1177,6 +1456,91 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
 }
 
 /** 项目块的 sortable 包装:render prop 把 ref/transform/监听器交给现有 JSX,不重排结构 */
+function ProjectGroupHeader({
+  groupId,
+  name,
+  emoji,
+  color,
+  count,
+  folded,
+  sortable,
+  onToggle,
+  onEdit,
+}: {
+  groupId: string;
+  name: string;
+  emoji?: string;
+  color?: string;
+  count: number;
+  folded: boolean;
+  sortable: boolean;
+  onToggle: () => void;
+  onEdit?: () => void;
+}) {
+  const dropId =
+    groupId === UNGROUPED_GROUP_ID ? UNGROUPED_GROUP_DROP_ID : projectGroupDragId(groupId);
+  const droppable = useDroppable({ id: dropId });
+  const sortableDrag = useSortable({
+    id: dropId,
+    data: { type: 'project-group', groupId } satisfies DragPayload,
+    disabled: !sortable,
+  });
+  const setRefs = (node: HTMLElement | null) => {
+    droppable.setNodeRef(node);
+    sortableDrag.setNodeRef(node);
+  };
+  return (
+    <div
+      ref={setRefs}
+      style={{
+        transform: CSS.Transform.toString(sortableDrag.transform),
+        transition: sortableDrag.transition,
+        opacity: sortableDrag.isDragging ? 0.4 : undefined,
+      }}
+      className={cn(
+        'group flex h-7 w-full select-none items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent/30 hover:text-foreground',
+        droppable.isOver && 'bg-accent/40 text-foreground',
+        sortable && 'cursor-grab'
+      )}
+      {...(sortable ? sortableDrag.listeners : {})}
+      {...(sortable ? sortableDrag.attributes : {})}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        onPointerDown={(event) => event.stopPropagation()}
+        className="flex min-w-0 flex-1 items-center gap-1"
+      >
+        <ChevronRight
+          className={cn(
+            'h-3.5 w-3.5 shrink-0 transition-transform duration-150',
+            !folded && 'rotate-90'
+          )}
+        />
+        {emoji && <span className="shrink-0 text-sm">{emoji}</span>}
+        {color && (
+          <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+        )}
+        <span className="min-w-0 flex-1 truncate text-left">{name}</span>
+        <span className="shrink-0 text-[10px] text-muted-foreground/70">{count}</span>
+      </button>
+      {onEdit && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+          className="shrink-0 rounded p-0.5 opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
 function SortableProject({
   project,
   children,

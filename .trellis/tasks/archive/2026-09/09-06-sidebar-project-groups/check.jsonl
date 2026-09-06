@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/renderer/index.md", "reason": "Check i18n, dialogs, store field completeness"}
+{"file": ".trellis/spec/renderer/state.md", "reason": "Verify settings field checklist not skipped"}
+{"file": ".trellis/spec/renderer/styling.md", "reason": "No hardcoded group colors on chrome"}
+{"file": ".trellis/spec/shared/index.md", "reason": "Types stayed in shared; renderer did not invent a parallel model"}
+{"file": ".trellis/spec/testing.md", "reason": "Logic changes have tests; TDD files not gutted to go green"}
+{"file": ".trellis/tasks/09-06-sidebar-project-groups/prd.md", "reason": "Acceptance criteria AC1–AC14"}
+{"file": ".trellis/tasks/09-06-sidebar-project-groups/design.md", "reason": "Pair frame and drag contracts"}

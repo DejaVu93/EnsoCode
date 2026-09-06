@@ -19,6 +19,8 @@ export const IPC_CHANNELS = {
   SETTINGS_DEEP_LINK: 'settings:deep-link',
   SETTINGS_DEEP_LINK_CONSUME: 'settings:deep-link-consume',
   WINDOW_POPUP_MENU: 'window:popup-menu',
+  APP_CLOSE_REQUEST: 'app:close-request',
+  APP_CLOSE_RESPONSE: 'app:close-response',
 
   // Local provider scan/import
   PROVIDERS_SCAN_LOCAL: 'providers:scan-local',

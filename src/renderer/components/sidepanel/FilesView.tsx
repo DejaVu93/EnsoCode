@@ -37,6 +37,7 @@ import {
   wasPathInvalidated,
 } from './filesViewRel';
 import { FileTreeMenu, isMarkdownRel } from './fileTreeMenu';
+import { idsToClose } from './tabCloseActions';
 
 const FILE_OPTIONS = {
   themeType: 'system',
@@ -209,7 +210,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
   );
 
   const [confirmClose, setConfirmClose] = useState<null | {
-    kind: 'one' | 'others' | 'all';
+    kind: 'one' | 'others' | 'right' | 'all';
     rel?: string;
   }>(null);
 
@@ -646,6 +647,9 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
                   <ContextMenu key={doc.rel}>
                     <ContextMenuTrigger render={tab as ReactElement<Record<string, unknown>>} />
                     <ContextMenuPopup className="min-w-40">
+                      <ContextMenuItem onClick={() => requestCloseFile(doc.rel)}>
+                        {t('Close')}
+                      </ContextMenuItem>
                       <ContextMenuItem
                         onClick={() => {
                           const docs = openDocsRef.current;
@@ -659,6 +663,35 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
                         }}
                       >
                         {t('Close others')}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => {
+                          const docs = openDocsRef.current;
+                          const targets = idsToClose(
+                            docs.map((item) => item.rel),
+                            doc.rel,
+                            'right'
+                          );
+                          const dirty = targets.some(
+                            (id) => docs.find((item) => item.rel === id)?.dirty
+                          );
+                          closeRels(
+                            (path) =>
+                              targets.includes(path) &&
+                              !docs.find((item) => item.rel === path)?.dirty
+                          );
+                          if (dirty) setConfirmClose({ kind: 'right', rel: doc.rel });
+                        }}
+                      >
+                        {t('Close tabs to the right')}
+                      </ContextMenuItem>
+                      <ContextMenuItem
+                        onClick={() => {
+                          const docs = openDocsRef.current;
+                          closeRels((path) => !docs.find((item) => item.rel === path)?.dirty);
+                        }}
+                      >
+                        {t('Close saved')}
                       </ContextMenuItem>
                       <ContextMenuItem
                         onClick={() => {
@@ -783,6 +816,16 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
           else if (confirmClose.kind === 'others' && confirmClose.rel) {
             const keep = confirmClose.rel;
             closeRels((path) => path !== keep);
+          } else if (confirmClose.kind === 'right' && confirmClose.rel) {
+            const keep = confirmClose.rel;
+            const targets = new Set(
+              idsToClose(
+                openDocsRef.current.map((item) => item.rel),
+                keep,
+                'right'
+              )
+            );
+            closeRels((path) => targets.has(path));
           } else closeRels(() => true);
           setConfirmClose(null);
         }}

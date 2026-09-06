@@ -4,7 +4,10 @@ import {
   type DragPayload,
   PINNED_DROP_ID,
   pinnedChatDragId,
+  projectGroupDragId,
   routeDrop,
+  selectorGroupDropId,
+  UNGROUPED_GROUP_DROP_ID,
 } from './dragDrop';
 
 const project: DragPayload = {
@@ -136,5 +139,82 @@ describe('routeDrop: 工作区文件', () => {
 describe('routeDrop: 无落点', () => {
   it('overId 为 null → 不动', () => {
     expect(routeDrop(chat, null, undefined)).toBeNull();
+  });
+});
+
+describe('routeDrop: 项目分组拖拽', () => {
+  const proj = (id: string): DragPayload => ({
+    type: 'project',
+    projectId: id,
+    path: `/${id}`,
+    name: id,
+  });
+  const groupDrag = (id: string): DragPayload => ({ type: 'project-group', groupId: id });
+
+  it('项目拖到另一组头 → move-project-to-group', () => {
+    const ctx = { projectGroupId: (id: string) => (id === 'p1' ? 'work' : undefined) };
+    expect(routeDrop(proj('p1'), projectGroupDragId('other'), undefined, ctx)).toEqual({
+      kind: 'move-project-to-group',
+      projectId: 'p1',
+      groupId: 'other',
+    });
+  });
+
+  it('项目拖到未分组头 → move groupId=null', () => {
+    const ctx = { projectGroupId: (id: string) => (id === 'p1' ? 'work' : undefined) };
+    expect(routeDrop(proj('p1'), UNGROUPED_GROUP_DROP_ID, undefined, ctx)).toEqual({
+      kind: 'move-project-to-group',
+      projectId: 'p1',
+      groupId: null,
+    });
+  });
+
+  it('项目已在该组、拖到自身组头（无 before）→ 不动', () => {
+    const ctx = { projectGroupId: (id: string) => (id === 'p1' ? 'work' : undefined) };
+    expect(routeDrop(proj('p1'), projectGroupDragId('work'), undefined, ctx)).toBeNull();
+  });
+
+  it('项目拖到不同组的项目行 → move + beforeProjectId', () => {
+    const ctx = { projectGroupId: (id: string) => (id === 'p1' ? 'work' : 'play') };
+    expect(routeDrop(proj('p1'), 'project:p2', undefined, ctx)).toEqual({
+      kind: 'move-project-to-group',
+      projectId: 'p1',
+      groupId: 'play',
+      beforeProjectId: 'p2',
+    });
+  });
+
+  it('项目拖到同组另一项目行 → 仍走 reorder-projects', () => {
+    const ctx = { projectGroupId: () => 'work' };
+    expect(routeDrop(proj('p1'), 'project:p2', undefined, ctx)).toEqual({
+      kind: 'reorder-projects',
+      activeId: 'p1',
+      overId: 'p2',
+    });
+  });
+
+  it('组头拖到另一组头 → reorder-groups', () => {
+    expect(routeDrop(groupDrag('work'), projectGroupDragId('play'), undefined)).toEqual({
+      kind: 'reorder-groups',
+      activeId: 'work',
+      overId: 'play',
+    });
+  });
+
+  it('组头拖到未分组头 → 不动', () => {
+    expect(routeDrop(groupDrag('work'), UNGROUPED_GROUP_DROP_ID, undefined)).toBeNull();
+  });
+
+  it('会话拖到组头 → 不动', () => {
+    expect(routeDrop(chat, projectGroupDragId('work'), undefined)).toBeNull();
+  });
+
+  it('项目拖到选择器菜单项 selector-group:work → move 到 work', () => {
+    const ctx = { projectGroupId: (id: string) => (id === 'p1' ? 'old' : undefined) };
+    expect(routeDrop(proj('p1'), selectorGroupDropId('work'), undefined, ctx)).toEqual({
+      kind: 'move-project-to-group',
+      projectId: 'p1',
+      groupId: 'work',
+    });
   });
 });

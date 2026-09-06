@@ -88,4 +88,15 @@ describe('project authority projection write guard', () => {
     expect(settingsModule.useSettingsStore.getState().projects).toHaveLength(2);
     expect(writeKey).toHaveBeenCalled();
   });
+
+  it('keeps groupId when source-authority projection refreshes the same project', () => {
+    settingsModule.useSettingsStore.setState({
+      projects: [{ id: 'p0', name: 'alpha', path: '/tmp/alpha', groupId: 'work' }],
+    });
+    writeKey.mockClear();
+    projectionListener?.(projection(['/tmp/alpha']));
+    expect(settingsModule.useSettingsStore.getState().projects).toEqual([
+      { id: 'p0', name: 'alpha', path: '/tmp/alpha', groupId: 'work' },
+    ]);
+  });
 });

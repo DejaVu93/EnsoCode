@@ -14,6 +14,7 @@ import { TitleBar } from '@/components/app/TitleBar';
 import { UpdateBanner } from '@/components/app/UpdateBanner';
 import { requestOpenChatFind } from '@/components/chat/ChatFindBar';
 import { ChatView } from '@/components/chat/ChatView';
+import { ConfirmDialog } from '@/components/chat/ConfirmDialog';
 import { requestFocusComposer } from '@/components/chat/composerMentionBridge';
 import { ResizeHandle } from '@/components/chat/ResizeHandle';
 import { Sidebar } from '@/components/chat/Sidebar';
@@ -52,6 +53,7 @@ export default function App() {
   useBackgroundImage();
   useGenerationStallTimeout();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [closeRequestId, setCloseRequestId] = useState<string | null>(null);
   useWindowsWindowChrome();
   const [width, setWidth] = useState(() => {
     const saved = Number(localStorage.getItem(WIDTH_KEY));
@@ -75,6 +77,13 @@ export default function App() {
     document.documentElement.classList.add('enso-main-shell');
     return () => document.documentElement.classList.remove('enso-main-shell');
   }, []);
+  useEffect(() => window.electronAPI.app.onCloseRequest(setCloseRequestId), []);
+  const respondClose = (confirmed: boolean) => {
+    const requestId = closeRequestId;
+    if (!requestId) return;
+    setCloseRequestId(null);
+    window.electronAPI.app.respondCloseRequest(requestId, { confirmed });
+  };
   // 右侧面板:手柄在面板左缘,向左拖加宽;拖拽中暂停宽度 spring 动画防抖动
   const [sideResizing, setSideResizing] = useState(false);
   const handleSideResize = useCallback((deltaX: number) => {
@@ -267,6 +276,16 @@ export default function App() {
       </div>
       {!onboarded && <Onboarding />}
       <WorkspaceSearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+      <ConfirmDialog
+        open={closeRequestId !== null}
+        onOpenChange={(open) => {
+          if (!open && closeRequestId) respondClose(false);
+        }}
+        title={t('Confirm exit')}
+        description={t('Are you sure you want to exit the app?')}
+        confirmLabel={t('Exit')}
+        onConfirm={() => respondClose(true)}
+      />
     </div>
   );
 }

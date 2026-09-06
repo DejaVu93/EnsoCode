@@ -45,6 +45,7 @@ export {
   PHONE_COMMAND_TYPES,
   type PhoneToHost,
   type ProjectEntry,
+  type ProjectGroupEntry,
   type ProviderEntry,
   type PushSubscriptionJson,
   type TerminalPalette,

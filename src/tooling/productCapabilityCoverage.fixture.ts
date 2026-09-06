@@ -77,6 +77,7 @@ export const SETTINGS_DATA_COVERAGE = {
   onboarded: surfaces('onboarding.complete'),
   keybindings: surfaces('general.keybindings.list'),
   projects: surfaces('projects.list'),
+  projectGroups: surfaces('projects.list'),
   usageModelPricing: excluded(
     'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'
   ),
@@ -183,6 +184,11 @@ export const SETTINGS_ACTION_COVERAGE = {
   setKeybinding: surfaces('general.keybindings.set'),
   resetKeybinding: surfaces('general.keybindings.reset'),
   addProject: surfaces('projects.add'),
+  createProjectGroup: surfaces('projects.list'),
+  updateProjectGroup: surfaces('projects.list'),
+  removeProjectGroup: surfaces('projects.list'),
+  reorderProjectGroups: surfaces('projects.list'),
+  setProjectGroupId: surfaces('projects.list'),
   removeProject: surfaces('projects.remove'),
   setUsageModelPricing: excluded(
     'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'
@@ -241,6 +247,8 @@ export const IPC_PRODUCT_COVERAGE = {
   SETTINGS_DEEP_LINK: excluded('Settings window deep-link transport.'),
   SETTINGS_DEEP_LINK_CONSUME: excluded('Settings window deep-link handshake.'),
   WINDOW_POPUP_MENU: excluded('Native application menu popup; renderer chrome only.'),
+  APP_CLOSE_REQUEST: excluded('Main-to-renderer quit confirm handshake.'),
+  APP_CLOSE_RESPONSE: excluded('Renderer-to-main quit confirm handshake.'),
   PROVIDERS_SCAN_LOCAL: surfaces('providers.import-local'),
   PROVIDERS_COLLECT_IMPORT: excluded('Second phase of the reviewed provider import flow.'),
   PROVIDERS_LIST_MODELS: surfaces('providers.fetch-models'),

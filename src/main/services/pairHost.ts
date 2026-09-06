@@ -13,6 +13,7 @@ import {
   openFrame,
   type PairedDevice,
   type ProjectEntry,
+  type ProjectGroupEntry,
   type ProviderEntry,
   pollHostPairing,
   revokePairing,
@@ -129,6 +130,7 @@ let onQueueAction: ((action: PairQueueAction) => void) | null = null;
 let catalog: CatalogEntry[] = [];
 let pinnedOrder: string[] = [];
 let projects: ProjectEntry[] = [];
+let projectGroups: ProjectGroupEntry[] = [];
 let providers: ProviderEntry[] = [];
 /** 桌面外观偏好，随目录下发给手机作为默认值 */
 let theme: HostAppearance = 'system';
@@ -703,7 +705,7 @@ async function sendMeta(conn: Connection): Promise<void> {
   const projectEntries = slimProjectsForPhone(projects);
   const next: PairMetaFingerprints = {
     catalog: catalogSyncFingerprint(catalogEntries, pinnedOrder),
-    projects: pairJsonFingerprint(projectEntries),
+    projects: pairJsonFingerprint({ projects: projectEntries, groups: projectGroups }),
     providers: pairJsonFingerprint(providers),
     appearance: pairJsonFingerprint(appearance),
     pushConfig: pairJsonFingerprint(vapidPublicKey),
@@ -714,7 +716,13 @@ async function sendMeta(conn: Connection): Promise<void> {
   if (changed.has('catalog')) {
     await send(conn, { type: 'catalog', entries: catalogEntries, pinnedOrder });
   }
-  if (changed.has('projects')) await send(conn, { type: 'projects', projects: projectEntries });
+  if (changed.has('projects')) {
+    await send(conn, {
+      type: 'projects',
+      projects: projectEntries,
+      ...(projectGroups.length > 0 ? { groups: projectGroups } : {}),
+    });
+  }
   if (changed.has('providers')) await send(conn, { type: 'providers', providers });
   if (changed.has('appearance')) await send(conn, appearance);
   if (changed.has('pushConfig')) await send(conn, { type: 'push-config', vapidPublicKey });
@@ -802,6 +810,7 @@ export function updatePairCatalog(payload: {
   catalog: CatalogEntry[];
   pinnedOrder?: string[];
   projects: ProjectEntry[];
+  projectGroups?: ProjectGroupEntry[];
   providers: ProviderEntry[];
   projectPaths: { id: string; path: string }[];
   theme: HostAppearance;
@@ -812,6 +821,7 @@ export function updatePairCatalog(payload: {
   catalog = payload.catalog;
   pinnedOrder = payload.pinnedOrder ?? [];
   projects = payload.projects;
+  projectGroups = payload.projectGroups ?? [];
   providers = payload.providers;
   theme = payload.theme;
   terminal = payload.terminal;

@@ -109,6 +109,17 @@ const electronAPI = {
     platform: process.platform,
   },
 
+  app: {
+    onCloseRequest: (callback: (requestId: string) => void): (() => void) => {
+      const listener = (_: unknown, requestId: string) => callback(requestId);
+      ipcRenderer.on(IPC_CHANNELS.APP_CLOSE_REQUEST, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_CLOSE_REQUEST, listener);
+    },
+    respondCloseRequest: (requestId: string, payload: { confirmed: boolean }): void => {
+      ipcRenderer.send(IPC_CHANNELS.APP_CLOSE_RESPONSE, requestId, payload);
+    },
+  },
+
   settings: {
     read: (): Promise<Record<string, unknown> | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_READ),

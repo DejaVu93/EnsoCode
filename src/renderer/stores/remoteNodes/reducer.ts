@@ -3,6 +3,7 @@ import type {
   HostToPhone,
   PhoneToHost,
   ProjectEntry,
+  ProjectGroupEntry,
   ProviderEntry,
 } from '@enso/pair';
 import {
@@ -31,6 +32,7 @@ export interface NodeView {
   catalog: CatalogEntry[];
   pinnedOrder: string[];
   projects: ProjectEntry[];
+  groups: ProjectGroupEntry[];
   providers: ProviderEntry[];
   sessions: Record<string, GuestSessionView>;
   /** 正在看的会话（null = 列表态） */
@@ -61,6 +63,7 @@ export function emptyNodeView(): NodeView {
     catalog: [],
     pinnedOrder: [],
     projects: [],
+    groups: [],
     providers: [],
     sessions: {},
     activeSessionId: null,
@@ -161,7 +164,10 @@ export function applyNodeMessage(view: NodeView, payload: unknown): NodeReduceRe
       };
     }
     case 'projects':
-      return { view: { ...view, projects: frame.projects }, effects: [] };
+      return {
+        view: { ...view, projects: frame.projects, groups: frame.groups ?? [] },
+        effects: [],
+      };
     case 'providers':
       return { view: { ...view, providers: frame.providers }, effects: [] };
     case 'agent-event':

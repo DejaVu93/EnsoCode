@@ -7,11 +7,13 @@ export function toPairProjectEntry(project: {
   kind?: 'local' | 'ssh';
   sshConnectionName?: string;
   sshHost?: string;
+  groupId?: string;
 }): ProjectEntry {
   return {
     id: project.id,
     name: project.name,
     path: project.path,
+    ...(project.groupId ? { groupId: project.groupId } : {}),
     ...(project.kind === 'ssh'
       ? {
           kind: 'ssh' as const,
