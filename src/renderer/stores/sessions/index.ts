@@ -52,10 +52,10 @@ import { createElectronPersistStorage, openPersistWriteGate } from '@/stores/set
 import { purgeConversationAuthority } from './authorityCleanup';
 import {
   evictColdMessages,
-  hasAuthoritativeMessages,
   isBulkyAgentEvent,
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
+  needsHistoryHydration,
   viewedConversationId,
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
@@ -614,7 +614,9 @@ export const useSessionsStore = create<SessionsState>()(
                   ...conversation,
                   ...next,
                   title,
-                  ...(keepBody ? {} : { messages: [], customEntries: [] }),
+                  ...(keepBody
+                    ? {}
+                    : { messages: [], customEntries: [], historyBaseIndex: undefined }),
                   ...(snapshot.child
                     ? {
                         parentId: snapshot.child.parentId,
@@ -945,7 +947,7 @@ export const useSessionsStore = create<SessionsState>()(
           if (
             event.type === 'message-upsert' &&
             conversation.started &&
-            upsertOutOfRange(conversation.messages, event.index)
+            upsertOutOfRange(conversation.messages, event.index, conversation.historyBaseIndex)
           ) {
             resyncSnapshot(id);
           }
@@ -2410,6 +2412,7 @@ export const useSessionsStore = create<SessionsState>()(
                 conversation.lastActiveAt ??
                 conversation.createdAt,
               messages: [],
+              historyBaseIndex: undefined,
               // 命令列表按会话重复且可能很大，由 worker snapshot / commands 事件恢复。
               commands: [],
               customEntries: [],
@@ -2489,13 +2492,7 @@ useSessionsStore.subscribe((state) => {
   window.electronAPI.agent.setViewedSession?.(viewed);
   if (viewed) lastViewedAt[viewed] = Date.now();
   const conversation = viewed ? state.conversations[viewed] : undefined;
-  if (
-    viewed &&
-    conversation &&
-    (conversation.started || conversation.sessionFile) &&
-    !hasAuthoritativeMessages(conversation.messages) &&
-    !conversation.spawning
-  ) {
+  if (viewed && conversation && needsHistoryHydration(conversation)) {
     void window.electronAPI.agent.requestSnapshot(viewed);
   }
   if (evictTimer) clearTimeout(evictTimer);
