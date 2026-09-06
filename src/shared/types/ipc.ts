@@ -5,6 +5,13 @@ export const IPC_CHANNELS = {
   SETTINGS_WRITE_KEY: 'settings:write-key',
   SETTINGS_CHANGED: 'settings:changed',
 
+  // Portable configuration sync
+  CONFIG_SYNC_EXPORT: 'config-sync:export',
+  CONFIG_SYNC_OPEN_IMPORT: 'config-sync:open-import',
+  CONFIG_SYNC_PREVIEW_IMPORT: 'config-sync:preview-import',
+  CONFIG_SYNC_COMMIT_IMPORT: 'config-sync:commit-import',
+  CONFIG_SYNC_CANCEL_IMPORT: 'config-sync:cancel-import',
+
   // Window controls
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',

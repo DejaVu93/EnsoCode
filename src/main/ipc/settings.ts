@@ -1,4 +1,6 @@
+import { randomUUID } from 'node:crypto';
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   readdirSync,
@@ -47,6 +49,24 @@ export const SETTINGS_STATE_FIELDS = [
   'autoUpdate',
   'proxyMode',
   'customProxyUrl',
+  'openChangesOnFileEdit',
+  'compactReadOnlyTools',
+  'generationStallTimeoutMin',
+  'backgroundImageEnabled',
+  'backgroundSourceType',
+  'backgroundImagePath',
+  'backgroundFolderPath',
+  'backgroundUrlPath',
+  'backgroundRandomEnabled',
+  'backgroundRandomInterval',
+  'backgroundOpacity',
+  'backgroundBlur',
+  'backgroundBrightness',
+  'backgroundSaturation',
+  'backgroundComposerOpacity',
+  'backgroundCodeOpacity',
+  'backgroundSizeMode',
+  'backgroundRefreshNonce',
   'providers',
   'defaultModel',
   'titleSummaryEnabled',
@@ -72,6 +92,35 @@ export const SETTINGS_STATE_FIELDS = [
 ] as const;
 
 export type SettingsStateField = (typeof SETTINGS_STATE_FIELDS)[number];
+
+/** Device-local keys that config-sync must never fingerprint or write back. */
+const CONFIG_SYNC_EXCLUDED_STATE_FIELDS = new Set<SettingsStateField>([
+  'windowsLocalShell',
+  'autoUpdate',
+  'proxyMode',
+  'customProxyUrl',
+  'backgroundImageEnabled',
+  'backgroundSourceType',
+  'backgroundImagePath',
+  'backgroundFolderPath',
+  'backgroundUrlPath',
+  'backgroundRandomEnabled',
+  'backgroundRefreshNonce',
+  'lastApprovalMode',
+  'onboarded',
+  'projects',
+]);
+
+export const CONFIG_SYNC_COMMIT_FIELDS = SETTINGS_STATE_FIELDS.filter(
+  (field) => !CONFIG_SYNC_EXCLUDED_STATE_FIELDS.has(field)
+);
+
+function settingsStateOf(settings: Record<string, unknown> | null): Record<string, unknown> {
+  const store = settings?.['enso-settings'];
+  if (!store || typeof store !== 'object') return {};
+  const state = (store as Record<string, unknown>).state;
+  return state && typeof state === 'object' ? (state as Record<string, unknown>) : {};
+}
 
 export interface SettingsPatchResult {
   ok: boolean;
@@ -120,8 +169,10 @@ export function flushSettings(): boolean {
   }
 
   if (isDirty && cachedSettings !== null) {
-    isDirty = false;
-    return atomicWriteSettings(cachedSettings);
+    const written = atomicWriteSettings(cachedSettings);
+    // Keep dirty state on failure so a later transaction/quit can retry the flush.
+    if (written) isDirty = false;
+    return written;
   }
   return true;
 }
@@ -197,8 +248,8 @@ function scheduleWrite(
     if (!maxWaitTimer) {
       maxWaitTimer = setTimeout(() => {
         if (cachedSettings !== null) {
-          isDirty = false;
-          atomicWriteSettings(cachedSettings);
+          const written = atomicWriteSettings(cachedSettings);
+          if (written) isDirty = false;
         }
         maxWaitTimer = null;
         pendingWrite = null;
@@ -211,8 +262,8 @@ function scheduleWrite(
         maxWaitTimer = null;
       }
       if (cachedSettings !== null) {
-        isDirty = false;
-        atomicWriteSettings(cachedSettings);
+        const written = atomicWriteSettings(cachedSettings);
+        if (written) isDirty = false;
       }
       pendingWrite = null;
     }, DEBOUNCE_MS);
@@ -226,6 +277,106 @@ function scheduleWrite(
   } catch {
     return false;
   }
+}
+
+/** Fingerprint only portable settings fields used by import preview. */
+export function settingsFingerprint(settings: Record<string, unknown> | null): string {
+  const state = settingsStateOf(settings);
+  const portable: Record<string, unknown> = {};
+  for (const field of CONFIG_SYNC_COMMIT_FIELDS) {
+    if (field in state) portable[field] = state[field];
+  }
+  return JSON.stringify(portable);
+}
+
+export interface SettingsTransactionResult {
+  ok: boolean;
+  backupPath?: string;
+  error?: string;
+}
+
+/**
+ * Apply a full sync allowlist patch as one durable settings transaction.
+ * There is deliberately no await in this critical section: callers must not
+ * observe a cache update or broadcast until the backup and atomic rename both
+ * succeed.
+ */
+export function commitSettingsTransaction(
+  expectedFingerprint: string,
+  statePatch: Record<string, unknown>
+): SettingsTransactionResult {
+  const current = readSettings() ?? {};
+  if (settingsFingerprint(current) !== expectedFingerprint) {
+    return { ok: false, error: 'Settings changed since preview; preview again.' };
+  }
+  if (!flushSettings()) {
+    return { ok: false, error: 'Unable to flush pending settings writes.' };
+  }
+
+  const latest = readSettings() ?? {};
+  const settingsPath = getSettingsPath();
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const backupPath = join(
+    app.getPath('userData'),
+    `settings.config-sync-backup-${stamp}-${randomUUID()}.json`
+  );
+  try {
+    // A complete pre-import snapshot is mandatory, including all unrelated stores.
+    if (existsSync(settingsPath)) copyFileSync(settingsPath, backupPath);
+    else writeFileSync(backupPath, JSON.stringify(latest, null, 2), 'utf8');
+    chmodSync(backupPath, 0o600);
+  } catch {
+    return { ok: false, error: 'Unable to create settings backup.' };
+  }
+  try {
+    const dir = app.getPath('userData');
+    const stale = readdirSync(dir)
+      .filter((file) => file.startsWith('settings.config-sync-backup-') && file.endsWith('.json'))
+      .sort()
+      .slice(0, -MAX_BACKUPS);
+    for (const file of stale) rmSync(join(dir, file), { force: true });
+  } catch {
+    // Rotation is best-effort; a leftover extra backup must not fail the import.
+  }
+
+  const persisted =
+    latest['enso-settings'] && typeof latest['enso-settings'] === 'object'
+      ? (latest['enso-settings'] as Record<string, unknown>)
+      : {};
+  const currentState =
+    persisted.state && typeof persisted.state === 'object'
+      ? { ...(persisted.state as Record<string, unknown>) }
+      : {};
+  for (const field of CONFIG_SYNC_COMMIT_FIELDS) {
+    if (field in statePatch) currentState[field] = statePatch[field];
+  }
+  const next = {
+    ...latest,
+    'enso-settings': {
+      ...persisted,
+      state: currentState,
+    },
+  };
+  if (!atomicWriteSettings(next)) {
+    return { ok: false, error: 'Unable to write settings.' };
+  }
+
+  cachedSettings = next;
+  isDirty = false;
+  try {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed()) continue;
+      sendToWindow(win, IPC_CHANNELS.SETTINGS_CHANGED);
+    }
+  } catch {
+    // Durable write already succeeded; a dead renderer must not fail the import.
+  }
+  void import('../services/agentHost')
+    .then(async ({ pushApprovalReviewer }) => {
+      pushApprovalReviewer(await readStoredOauthCredentialKeys());
+    })
+    .catch(() => {});
+  return { ok: true, backupPath };
 }
 
 /**

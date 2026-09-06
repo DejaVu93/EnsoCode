@@ -1077,6 +1077,112 @@ export const zhTranslations: Record<string, string> = {
   'Each connecting computer needs its own pairing code from the other desktop.':
     '每台要连入的电脑都需要对方桌面单独生成一个配对码。',
   Disconnect: '断开',
+  // 设置 → 配置迁移
+  'Configuration transfer': '配置迁移',
+  'Move models, presets, agent types, skills, MCP servers and instruction files between devices.':
+    '在设备之间迁移模型、预设、子代理类型、技能、MCP 服务和指令文件。',
+  'Portable Enso configuration': '可移植 Enso 配置',
+  'Export a package or preview one before importing it.': '导出配置包，或在导入前预览配置包。',
+  'Import configuration': '导入配置',
+  'Export configuration': '导出配置',
+  Export: '导出',
+  'OAuth login sessions are never transferred. Skill and instruction contents require an encrypted export.':
+    'OAuth 登录态不会迁移。技能和指令内容需要使用加密导出。',
+  'Create a portable .enso-config package for another device.':
+    '创建可在另一台设备使用的 .enso-config 配置包。',
+  'File contents can be private': '文件内容可能包含私密信息',
+  'Skill and instruction file contents may contain private data, so configurations containing them can only be exported with encryption.':
+    '技能和指令文件内容可能包含私密信息，因此包含这些文件的配置只能使用加密导出。',
+  'Include sensitive configuration': '包含敏感配置',
+  'Encrypt the entire package with a password. OAuth login sessions are still excluded.':
+    '使用密码加密整个配置包。OAuth 登录态仍不会包含在内。',
+  'API keys, provider account links, MCP arguments and environment values, plus credentials and private URL parts in MCP endpoints, will be omitted. Configurations containing skill or instruction files require encryption.':
+    'API Key、模型服务账号关联、MCP 参数和环境变量，以及 MCP 地址中的凭据和私密 URL 部分都会被省略。包含技能或指令文件的配置需要加密导出。',
+  'Encryption password': '加密密码',
+  'Confirm password': '确认密码',
+  'Use at least 8 characters. This password cannot be recovered.':
+    '请使用至少 8 个字符。此密码无法恢复。',
+  'Password must be at least 8 characters.': '密码至少需要 8 个字符。',
+  'Passwords do not match.': '两次输入的密码不一致。',
+  'Configuration exported': '配置已导出',
+  'Saved package:': '配置包已保存至：',
+  'Export cancelled.': '导出已取消。',
+  'Exporting…': '正在导出…',
+  'Could not export configuration.': '无法导出配置。',
+  'Encrypted configuration package': '加密配置包',
+  'Enter the export password to decrypt and preview this package.':
+    '请输入导出时设置的密码，以解密并预览此配置包。',
+  'Review {{fileName}} before changing this device.': '修改此设备前，请预览 {{fileName}}。',
+  'Import mode': '导入模式',
+  Merge: '合并',
+  'Add and update matching items while keeping items only on this device.':
+    '新增并更新匹配条目，同时保留此设备独有的条目。',
+  Replace: '替换',
+  'Replace transferred item categories, removing local-only items in them.':
+    '替换迁移的条目类别，并删除其中此设备独有的条目。',
+  'Preparing preview…': '正在准备预览…',
+  Category: '类别',
+  Added: '新增',
+  'Subagent Models': '子代理模型',
+  'Scalar settings': '标量设置',
+  'Portable settings changed:': '变更的可移植设置：',
+  Updated: '更新',
+  Skipped: '跳过',
+  Removed: '删除',
+  'Local-only configuration will be deleted': '此设备独有的配置将被删除',
+  'Items in transferred collections that exist only on this device will be removed. Removed counts are shown above. Included portable preferences are overwritten. A complete backup is created first.':
+    '迁移集合中仅存在于此设备的条目将被删除。上方会显示删除数量。包含的可移植偏好会被覆盖，并会先创建完整备份。',
+  'Only import packages you trust': '只导入你信任的配置包',
+  'An imported package can change portable preferences and configuration. Skills and MCP servers may also run commands later when you use them. Previewing does not execute them; continue only if you trust the package.':
+    '导入的配置包可以修改可移植偏好和配置。技能和 MCP 服务在之后使用时也可能运行命令。预览过程不会执行它们；请仅在信任配置包时继续。',
+  'Confirm configuration import': '确认导入配置',
+  'This package can change portable preferences and configuration. Continue only if you trust this package.':
+    '此配置包可以修改可移植偏好和配置。请仅在信任此配置包时继续。',
+  'It includes skills or MCP servers that may execute commands when you use them.':
+    '它包含在使用时可能执行命令的技能或 MCP 服务。',
+  'Replace mode removes local-only items from transferred collections and overwrites included portable preferences. A complete backup will be created first.':
+    '替换模式会删除迁移集合中此设备独有的条目，并覆盖包中包含的可移植偏好。替换前会先创建完整备份。',
+  'Do you want to continue with this import?': '要继续导入吗？',
+  'Confirm import': '确认导入',
+  'Sensitive provider or MCP values were omitted; existing local values were preserved when available.':
+    '敏感的模型服务或 MCP 配置值已省略；如本机已有对应值，则会保留。',
+  'OAuth login state is not included; sign in again after import.':
+    '配置包不包含 OAuth 登录态；导入后请重新登录。',
+  'Imported MCP servers may require external commands, packages, or paths.':
+    '导入的 MCP 服务可能依赖外部命令、软件包或本机路径。',
+  'Refresh preview': '刷新预览',
+  'Importing…': '正在导入…',
+  'Could not open configuration package.': '无法打开配置包。',
+  'Could not preview configuration package.': '无法预览配置包。',
+  'Could not import configuration.': '无法导入配置。',
+  'Invalid export options': '导出选项无效。',
+  'Invalid export request.': '导出请求无效。',
+  'Export password is too short.': '导出密码太短。',
+  'Configuration package is too large.': '配置包过大。',
+  'Unable to export configuration.': '无法导出配置。',
+  'Skill and instruction contents require an encrypted export.': '技能和指令内容需要使用加密导出。',
+  'Invalid import request.': '导入请求无效。',
+  'Invalid configuration package.': '配置包无效。',
+  'Unable to read configuration package.': '无法读取配置包。',
+  'Invalid import preview request.': '导入预览请求无效。',
+  'Import session expired.': '导入会话已过期。',
+  'Import password is required.': '请输入导入密码。',
+  'Invalid import commit request.': '导入提交请求无效。',
+  'Import must be previewed before commit.': '提交导入前必须先预览。',
+  'Unable to commit configuration.': '无法提交配置。',
+  'Settings changed since preview; preview again.': '预览后设置发生了变化，请重新预览。',
+  'Unable to flush pending settings writes.': '无法刷新待写入的设置。',
+  'Unable to create settings backup.': '无法创建设置备份。',
+  'Unable to write settings.': '无法写入设置。',
+  'Import cancelled.': '导入已取消。',
+  'Configuration imported': '配置已导入',
+  'This window has been refreshed with the imported settings.': '此窗口已刷新为导入后的设置。',
+  'Configuration was imported, but this window could not refresh automatically.':
+    '配置已导入，但此窗口无法自动刷新。',
+  'Reopen Settings to load the imported configuration in this window.':
+    '请重新打开设置，以在此窗口载入导入后的配置。',
+  'Import complete': '导入完成',
+  'Backup of previous settings:': '之前设置的备份位置：',
 };
 
 export function normalizeLocale(input?: string): Locale {

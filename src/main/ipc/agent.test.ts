@@ -329,59 +329,64 @@ describe('agent IPC Main identity boundary', () => {
     const read = (request: unknown) =>
       mocks.handlers.get(IPC_CHANNELS.AGENT_CHILD_HISTORY_READ)?.(event, request);
 
-    it('正常路径返回投影', () => {
+    it('正常路径返回投影', async () => {
       mocks.persistedConversation.mockReturnValue({
         sessionFile: '/tmp/agent/sessions/enso-parent__cw-1-gen.jsonl',
       });
-      expect(read({ conversationId: 'parent::cw-1' })).toEqual({
+      await expect(read({ conversationId: 'parent::cw-1' })).resolves.toEqual({
         ok: true,
         projection: { records: [], partial: false },
       });
     });
 
-    it('不是持久化会话时不读任何文件', () => {
+    it('不是持久化会话时不读任何文件', async () => {
       mocks.persistedConversation.mockReturnValue(null);
-      expect(read({ conversationId: 'unknown' })).toMatchObject({ ok: false, code: 'not-found' });
+      await expect(read({ conversationId: 'unknown' })).resolves.toMatchObject({
+        ok: false,
+        code: 'not-found',
+      });
       expect(mocks.restoreJournal).not.toHaveBeenCalled();
     });
 
-    it('路径逃出 sessions 目录一律拒绝（防穿越）', () => {
+    it('路径逃出 sessions 目录一律拒绝（防穿越）', async () => {
       mocks.persistedConversation.mockReturnValue({
         sessionFile: '/tmp/agent/sessions/../../../etc/passwd',
       });
-      expect(read({ conversationId: 'parent::cw-1' })).toMatchObject({
+      await expect(read({ conversationId: 'parent::cw-1' })).resolves.toMatchObject({
         ok: false,
         code: 'unavailable',
       });
       expect(mocks.restoreJournal).not.toHaveBeenCalled();
     });
 
-    it('非 enso- 前缀的文件不读（pi 普通 session 未经脱敏）', () => {
+    it('非 enso- 前缀的文件不读（pi 普通 session 未经脱敏）', async () => {
       mocks.persistedConversation.mockReturnValue({
         sessionFile: '/tmp/agent/sessions/2026-08-29T00-00-00-000Z_abc.jsonl',
       });
-      expect(read({ conversationId: 'parent::cw-1' })).toMatchObject({
+      await expect(read({ conversationId: 'parent::cw-1' })).resolves.toMatchObject({
         ok: false,
         code: 'unavailable',
       });
       expect(mocks.restoreJournal).not.toHaveBeenCalled();
     });
 
-    it('文件不存在时给 not-found，不抛错', () => {
+    it('文件不存在时给 not-found，不抛错', async () => {
       mocks.persistedConversation.mockReturnValue({
         sessionFile: '/tmp/agent/sessions/enso-gone.jsonl',
       });
       mocks.existsSync.mockReturnValue(false);
-      expect(read({ conversationId: 'parent::cw-1' })).toMatchObject({
+      await expect(read({ conversationId: 'parent::cw-1' })).resolves.toMatchObject({
         ok: false,
         code: 'not-found',
       });
     });
 
-    it('渲染层传路径不会被采信', () => {
+    it('渲染层传路径不会被采信', async () => {
       // 只认 conversationId；带上 sessionFile 也得走 Main 自己的持久化查询。
       mocks.persistedConversation.mockReturnValue(null);
-      expect(read({ conversationId: 'parent::cw-1', sessionFile: '/etc/passwd' })).toMatchObject({
+      await expect(
+        read({ conversationId: 'parent::cw-1', sessionFile: '/etc/passwd' })
+      ).resolves.toMatchObject({
         ok: false,
         code: 'not-found',
       });

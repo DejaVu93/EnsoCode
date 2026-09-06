@@ -1,5 +1,6 @@
 import { withVersionSegment } from '@shared/providerCatalog';
 import type { ModelApiKind } from '@shared/types';
+import { net } from 'electron';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   extractModelEntries,
@@ -8,6 +9,16 @@ import {
   testProvider,
   toMessage,
 } from './providerApi';
+
+const proxyMocks = vi.hoisted(() => ({
+  whenReady: vi.fn(async () => true),
+}));
+
+vi.mock('./proxyConfig', () => ({
+  getProxyConfig: () => ({ whenReady: proxyMocks.whenReady }),
+}));
+
+const originalNetFetch = net.fetch;
 
 describe('resolveBase', () => {
   const cfg = (baseUrl: string, api: ModelApiKind = 'openai-completions') => ({
@@ -293,5 +304,66 @@ describe('testProvider 探测请求', () => {
       'gpt-4o'
     );
     expect(requestBody(openai).max_tokens).not.toBe(1);
+  });
+});
+
+describe('拉模型走 Chromium 网络栈', () => {
+  afterEach(() => {
+    net.fetch = originalNetFetch;
+    proxyMocks.whenReady.mockReset();
+    proxyMocks.whenReady.mockImplementation(async () => true);
+    vi.unstubAllGlobals();
+  });
+
+  const config = {
+    api: 'openai-responses' as const,
+    apiKey: 'sk-test',
+    baseUrl: 'https://done.example.test/v1',
+  };
+
+  const jsonResponse = (body: unknown, init?: ResponseInit): Response =>
+    new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json' },
+      ...init,
+    });
+
+  it('Node fetch 被 Cloudflare 403 时仍能从 net.fetch 拿到模型列表', async () => {
+    // 真机：done.5111online.uk 对 Node/undici TLS 指纹回 Cloudflare 挑战页 403，
+    // 聊天能通是因为 worker 走了系统代理；设置页拉模型走主进程 Node fetch 就会挂。
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+      }))
+    );
+    net.fetch = vi.fn(async () => jsonResponse({ data: [{ id: 'gpt-5.6-luna' }] }));
+
+    await expect(listModels(config)).resolves.toEqual({
+      ok: true,
+      models: [{ id: 'gpt-5.6-luna' }],
+    });
+    expect(net.fetch).toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('代理解析完成前不发拉模型请求', async () => {
+    let resolveReady!: () => void;
+    proxyMocks.whenReady.mockReturnValue(
+      new Promise<boolean>((resolve) => {
+        resolveReady = () => resolve(true);
+      })
+    );
+    const fetchMock = vi.fn(async () => jsonResponse({ data: [] }));
+    net.fetch = fetchMock;
+
+    const pending = listModels(config);
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    resolveReady();
+    await expect(pending).resolves.toEqual({ ok: true, models: [] });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });
