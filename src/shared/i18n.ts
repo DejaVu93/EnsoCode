@@ -129,6 +129,13 @@ export const zhTranslations: Record<string, string> = {
     'Agent 改文件后自动打开右侧 Changes',
   'Open in side panel': '在侧栏打开',
   'Compact read-only tool calls': '精简只读工具调用',
+  'Verified smart compaction': '验证式智能压缩',
+  'Use a verified summary for long-session compact. Built into Enso — no extra install. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.':
+    '长会话 compact 时先用可验证摘要；已内置，无需另装。失败回退默认压缩。可能更慢、更费 token。下一个会话生效。',
+  'Follows the session model': '跟随当前会话模型',
+  'Follow session model': '改跟会话模型',
+  'Selected model is unavailable — falls back to the session model.':
+    '所选模型已不可用——将回退到当前会话模型。',
   'Show read/grep/find/ls as one-line rows and fold consecutive tool calls while the agent is still running':
     'read/grep/find/ls 显示为单行，agent 运行中也折叠连续的工具调用',
   'Stop if no output': '无输出则停止',
@@ -625,6 +632,7 @@ export const zhTranslations: Record<string, string> = {
   'By project': '按项目',
   'No usage in this period': '该周期内没有用量',
   'Top {{count}} of {{total}}': '共 {{total}} 项，显示前 {{count}} 项',
+  '{{total}} items': '共 {{total}} 项',
   '(no project)': '（无项目）',
   'No catalog price for: {{models}}. Their cost is not included.':
     '以下模型无目录单价：{{models}}，其费用未计入。',
@@ -725,6 +733,11 @@ export const zhTranslations: Record<string, string> = {
   '(no log available)': '(暂无日志)',
   'Context compacted': '上下文已压缩',
   'Context compacted ({{tokens}} tokens before)': '上下文已压缩（压缩前 {{tokens}} tokens）',
+  'Verified context compacted': '验证式压缩完成',
+  'Verified context compacted ({{tokens}} tokens before)':
+    '验证式压缩完成（压缩前 {{tokens}} tokens）',
+  'Verified summary from smart compaction. Messages above are no longer in the model context.':
+    '这次用了验证式摘要。此线之上的历史已不在模型上下文中。',
   'Messages above are no longer in the model context; only this summary is.':
     '以上消息已不在模型上下文中，模型只看到这份摘要。',
   'Latest compaction summary — expand to read what the model kept.':

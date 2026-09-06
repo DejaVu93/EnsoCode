@@ -15,6 +15,7 @@ import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
 import { GENERATION_STALL_TIMEOUT_MINUTES } from '@/stores/sessions/stallTimeout';
 import { useSettingsStore } from '@/stores/settings';
+import { SmartCompactPicker } from './SmartCompactPicker';
 
 export function GeneralSettings() {
   const { language, setLanguage } = useSettingsStore();
@@ -45,6 +46,7 @@ export function GeneralSettings() {
       </div>
 
       <SidePanelSection />
+      <SmartCompactPicker />
       <WindowsLocalShellSection />
       <ProxySection />
       <UpdateSection />

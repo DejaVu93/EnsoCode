@@ -474,6 +474,10 @@ export type AgentCommand =
       loadHarnessAssets?: boolean;
       /** 探后折叠工具 + context 折叠 */
       exploreFoldEnabled?: boolean;
+      /** 父会话加载 pi-smart-compact 作为 compact 摘要后端 */
+      smartCompactEnabled?: boolean;
+      /** 独立摘要模型；缺省跟随当前会话模型 */
+      smartCompactSummaryModel?: SpawnModelConfig;
       skillPaths?: string[];
       mcpServers?: McpServerSpawnConfig[];
       instruction?: { path: string; content: string };
@@ -677,6 +681,8 @@ export interface ProjectedMessage {
   subagentMeta?: { modelId?: string; outputTokens?: number; steps?: number };
   /** compactionSummary 消息：压缩前的上下文 token 数 */
   tokensBefore?: number;
+  /** 摘要来自扩展（pi-smart-compact），不是原生 summarizer */
+  verified?: boolean;
 }
 
 export interface SessionSnapshot {
@@ -1671,6 +1677,8 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           'loadLocalSkills',
           'loadHarnessAssets',
           'exploreFoldEnabled',
+          'smartCompactEnabled',
+          'smartCompactSummaryModel',
           'skillPaths',
           'mcpServers',
           'instruction',
@@ -1692,6 +1700,10 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
             value.windowsLocalShell as string
           )) ||
         (value.exploreFoldEnabled !== undefined && typeof value.exploreFoldEnabled !== 'boolean') ||
+        (value.smartCompactEnabled !== undefined &&
+          typeof value.smartCompactEnabled !== 'boolean') ||
+        (value.smartCompactSummaryModel !== undefined &&
+          parseSpawnModelConfig(value.smartCompactSummaryModel) === null) ||
         (value.remote !== undefined && parseAgentRemoteConfig(value.remote) === null) ||
         (value.subagentModels !== undefined &&
           (!Array.isArray(value.subagentModels) ||

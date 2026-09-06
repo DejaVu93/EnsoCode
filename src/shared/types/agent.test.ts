@@ -266,6 +266,30 @@ describe('parent/child commands', () => {
     ).toBeNull();
   });
 
+  it('spawn-parent 携 smartCompactEnabled:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: true })).toEqual({
+      ...base,
+      smartCompactEnabled: true,
+    });
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: false })).toEqual({
+      ...base,
+      smartCompactEnabled: false,
+    });
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: 'true' })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: 1 })).toBeNull();
+  });
+
+  it('spawn-parent 携 smartCompactSummaryModel:合法 spawn config 通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactSummaryModel: model })).toEqual({
+      ...base,
+      smartCompactSummaryModel: model,
+    });
+    expect(parseAgentCommand({ ...base, smartCompactSummaryModel: { modelId: 'gpt' } })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactSummaryModel: 'anthropic/x' })).toBeNull();
+  });
+
   it('spawn-parent 携 windowsLocalShell:合法通过,脏值拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
     expect(parseAgentCommand({ ...base, windowsLocalShell: 'bash' })).toEqual({

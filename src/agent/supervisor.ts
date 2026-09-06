@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -113,6 +113,12 @@ import {
 } from './sessionEviction';
 import { branchSessionFromPersistedFile, resolveForkLeafId } from './sessionFork';
 import { createSessionCommandTool } from './sessionShell';
+import {
+  formatSmartCompactSummaryModel,
+  persistEnsoSmartCompactSettings,
+  providerKeyFor,
+  resolveSmartCompactExtensionPath,
+} from './smartCompact';
 import {
   createSshExecutor,
   resolveSshControlPath,
@@ -267,6 +273,8 @@ function createSessionResourceLoader(options: {
   /** 加载项目内 .claude/.codex/.cursor 的 skills 与规则文件；远程会话不适用（cwd 不在本机） */
   loadHarnessAssets?: boolean;
   exploreFold?: ReturnType<typeof createExploreFoldState>;
+  /** 仅父会话：加载 pi-smart-compact 作为 compact 摘要后端 */
+  smartCompactEnabled?: boolean;
 }): DefaultResourceLoader {
   const harness = options.loadHarnessAssets && !options.remoteAgentsFiles;
   const skillPaths = harness
@@ -277,6 +285,12 @@ function createSessionResourceLoader(options: {
     agentDir: options.agentDir,
     noSkills: options.noSkills,
     ...(options.noExtensions ? { noExtensions: true } : {}),
+    ...(!options.noExtensions && options.smartCompactEnabled
+      ? (() => {
+          const extensionPath = resolveSmartCompactExtensionPath();
+          return extensionPath ? { additionalExtensionPaths: [extensionPath] } : {};
+        })()
+      : {}),
     ...(skillPaths.length > 0 ? { additionalSkillPaths: skillPaths } : {}),
     ...(options.exploreFold
       ? {
@@ -679,7 +693,9 @@ export class SessionSupervisor {
           command.remote,
           command.loadHarnessAssets,
           command.windowsLocalShell,
-          command.exploreFoldEnabled
+          command.exploreFoldEnabled,
+          command.smartCompactEnabled,
+          command.smartCompactSummaryModel
         );
         return;
       case 'spawn-child':
@@ -1056,7 +1072,9 @@ export class SessionSupervisor {
     remote?: AgentRemoteConfig,
     loadHarnessAssets = false,
     windowsLocalShell?: WindowsLocalShell,
-    exploreFoldEnabled = false
+    exploreFoldEnabled = false,
+    smartCompactEnabled = false,
+    smartCompactSummaryModel?: SpawnModelConfig
   ): Promise<void> {
     const sessionId = identity.sessionId;
     const toolEnabled = (id: string) => !disabledTools.includes(id);
@@ -1102,6 +1120,21 @@ export class SessionSupervisor {
           .catch(() => [] as Array<{ path: string; content: string }>)
       : undefined;
     const exploreFold = exploreFoldEnabled ? createExploreFoldState() : undefined;
+    if (smartCompactSummaryModel) {
+      await resolveBaseModelOrRefresh(runtime, smartCompactSummaryModel);
+    }
+    if (smartCompactEnabled) {
+      try {
+        persistEnsoSmartCompactSettings(
+          undefined,
+          smartCompactSummaryModel
+            ? { summaryModel: formatSmartCompactSummaryModel(smartCompactSummaryModel) }
+            : { summaryModel: null }
+        );
+      } catch (error) {
+        console.warn('[smart-compact] failed to merge host settings', error);
+      }
+    }
     const resourceLoader = createSessionResourceLoader({
       cwd,
       agentDir: this.options.agentDir,
@@ -1111,6 +1144,7 @@ export class SessionSupervisor {
       remoteAgentsFiles,
       loadHarnessAssets,
       exploreFold,
+      ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
     });
     const toolsStart = Date.now();
     const [, mcpTools] = await Promise.all([
@@ -3009,13 +3043,6 @@ const slugify = (value: string): string =>
 
 const toErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-/** provider 注册 id：掺 apiKey 指纹——同一中转 baseUrl 下多个 provider 条目(不同 key)
- *  不能共用注册槽,否则后 spawn 会话覆盖 apiKey 导致请求串账号 */
-function providerKeyFor(model: { api: string; baseUrl: string; apiKey: string }): string {
-  const keyFp = createHash('sha256').update(model.apiKey).digest('hex').slice(0, 8);
-  return `enso-${model.api}-${model.baseUrl}-${keyFp}`;
-}
 
 /**
  * worker 的 ModelRuntime 按进程常驻，订阅清单只在首次建 runtime 时联网拉一次。之后用户

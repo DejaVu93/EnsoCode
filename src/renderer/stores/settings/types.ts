@@ -102,6 +102,11 @@ export interface SettingsState {
   /** 探后折叠：模型可 explore_mark / explore_fold；缺省关 */
   exploreFoldEnabled: boolean;
 
+  /** 父会话用 pi-smart-compact 做 compact 摘要；缺省关，新会话生效 */
+  smartCompactEnabled: boolean;
+  /** 智能压缩独立模型；null = 跟随当前会话模型 */
+  smartCompactModel: DefaultModelRef | null;
+
   /** 是否自动检查并下载应用更新；缺省 true */
   autoUpdate: boolean;
 
@@ -211,6 +216,8 @@ export interface SettingsState {
   setLoadHarnessAssets: (value: boolean) => void;
   setWindowsLocalShell: (value: WindowsLocalShell) => void;
   setExploreFoldEnabled: (value: boolean) => void;
+  setSmartCompactEnabled: (value: boolean) => void;
+  setSmartCompactModel: (value: DefaultModelRef | null) => void;
   setAutoUpdate: (value: boolean) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setCustomProxyUrl: (url: string) => void;
