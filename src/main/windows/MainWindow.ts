@@ -1,5 +1,6 @@
 import type { BrowserWindow } from 'electron';
-import { createAppWindow, getWindowWebContents } from './createAppWindow';
+import { attachAppCloseConfirm } from '../services/appCloseConfirm';
+import { createAppWindow, getWindowWebContents, sendToWindow } from './createAppWindow';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -13,6 +14,14 @@ export function createMainWindow(): BrowserWindow {
     stateFile: 'window-state.json',
     pinWorkbenchView: true,
   });
+
+  attachAppCloseConfirm(
+    mainWindow,
+    (channel, ...args) => {
+      if (mainWindow && !mainWindow.isDestroyed()) sendToWindow(mainWindow, channel, ...args);
+    },
+    () => getWindowWebContents(mainWindow as BrowserWindow)
+  );
 
   mainWindow.on('closed', () => {
     mainWindow = null;

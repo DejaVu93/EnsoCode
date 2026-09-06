@@ -247,6 +247,8 @@ export const IPC_PRODUCT_COVERAGE = {
   SETTINGS_DEEP_LINK: excluded('Settings window deep-link transport.'),
   SETTINGS_DEEP_LINK_CONSUME: excluded('Settings window deep-link handshake.'),
   WINDOW_POPUP_MENU: excluded('Native application menu popup; renderer chrome only.'),
+  APP_CLOSE_REQUEST: excluded('Main-to-renderer quit confirm handshake.'),
+  APP_CLOSE_RESPONSE: excluded('Renderer-to-main quit confirm handshake.'),
   PROVIDERS_SCAN_LOCAL: surfaces('providers.import-local'),
   PROVIDERS_COLLECT_IMPORT: excluded('Second phase of the reviewed provider import flow.'),
   PROVIDERS_LIST_MODELS: surfaces('providers.fetch-models'),

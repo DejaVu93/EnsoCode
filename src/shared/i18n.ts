@@ -286,6 +286,9 @@ export const zhTranslations: Record<string, string> = {
   'Connected ({{ms}}ms)': '连接成功({{ms}}ms)',
   'Connection failed': '连接失败',
   Cancel: '取消',
+  'Confirm exit': '确认退出',
+  'Are you sure you want to exit the app?': '确定要退出应用吗？',
+  Exit: '退出',
   // Unified provider setup, default model, and Enso
   'Add a provider subscription or API Key, or import providers from local AI apps':
     '添加提供商订阅或 API Key，也可从本地 AI 应用导入模型服务',
