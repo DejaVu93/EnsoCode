@@ -330,6 +330,16 @@ describe('snapshot 裁剪（批事件，本身无 sessionId）', () => {
     expect(session.messages.length).toBeLessThanOrEqual(2);
     expect(session.baseIndex).toBe(10 - session.messages.length);
   });
+
+  it('字节预算按 UTF-8 计，中文不能按字符数低估', () => {
+    // 每条 100k 个汉字 = 300KB UTF-8；按字符数会误装 6 条（1.8MB）撑爆中继 1MB 上限
+    const zh = '中'.repeat(100_000);
+    const messages = Array.from({ length: 10 }, () => ({ text: zh }));
+    const out = narrowSnapshot({ type: 'snapshot', sessions: [{ sessionId: 'a', messages }] }, 'a');
+    const session = out?.sessions[0] as { messages: unknown[]; baseIndex?: number };
+    expect(session.messages.length).toBeLessThanOrEqual(2);
+    expect(session.baseIndex).toBe(10 - session.messages.length);
+  });
 });
 
 describe('history 分页切片', () => {

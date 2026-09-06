@@ -20,9 +20,11 @@ const harness = vi.hoisted(() => ({
   state: {
     smartCompactEnabled: true,
     smartCompactModel: null as { providerId: string; modelId: string } | null,
+    smartCompactMode: 'auto' as 'auto' | 'fast' | 'balanced' | 'thorough',
   },
   setSmartCompactEnabled: vi.fn(),
   setSmartCompactModel: vi.fn(),
+  setSmartCompactMode: vi.fn(),
   pickerProps: null as Record<string, unknown> | null,
 }));
 
@@ -38,8 +40,10 @@ vi.mock('@/stores/settings', () => ({
       providers,
       smartCompactEnabled: harness.state.smartCompactEnabled,
       smartCompactModel: harness.state.smartCompactModel,
+      smartCompactMode: harness.state.smartCompactMode,
       setSmartCompactEnabled: harness.setSmartCompactEnabled,
       setSmartCompactModel: harness.setSmartCompactModel,
+      setSmartCompactMode: harness.setSmartCompactMode,
     }),
 }));
 
@@ -103,5 +107,12 @@ describe('SmartCompactPicker', () => {
     const html = renderToStaticMarkup(createElement(SmartCompactPicker));
     expect(html).not.toContain('data-smart-compact-picker');
     expect(harness.pickerProps).toBeNull();
+  });
+
+  it('开启时展示档位选择', () => {
+    harness.state.smartCompactEnabled = true;
+    harness.state.smartCompactMode = 'balanced';
+    const html = renderToStaticMarkup(createElement(SmartCompactPicker));
+    expect(html).toContain('data-smart-compact-mode="balanced"');
   });
 });

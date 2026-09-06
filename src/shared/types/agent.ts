@@ -20,6 +20,7 @@ import {
 } from '../capabilities/types';
 import type { DefaultModelRef } from '../defaultModel';
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
+import { parseSmartCompactMode } from '../smartCompactMode';
 import { WINDOWS_LOCAL_SHELLS, type WindowsLocalShell } from '../windowsLocalShell';
 import { MODEL_API_KINDS, type ModelApiKind, type ModelCapabilityOverrides } from './llm';
 import { type AgentDispatchTask, parseAgentDispatchTask } from './mentions';
@@ -474,10 +475,14 @@ export type AgentCommand =
       loadHarnessAssets?: boolean;
       /** 探后折叠工具 + context 折叠 */
       exploreFoldEnabled?: boolean;
+      /** 拦截 cat/grep/sed -i 等，强制走 read/grep/edit/write/find；缺省关 */
+      bashInterceptEnabled?: boolean;
       /** 父会话加载 pi-smart-compact 作为 compact 摘要后端 */
       smartCompactEnabled?: boolean;
       /** 独立摘要模型；缺省跟随当前会话模型 */
       smartCompactSummaryModel?: SpawnModelConfig;
+      /** 验证式压缩档位；缺省 auto（按占用跳档） */
+      smartCompactMode?: import('../smartCompactMode').SmartCompactMode;
       skillPaths?: string[];
       mcpServers?: McpServerSpawnConfig[];
       instruction?: { path: string; content: string };
@@ -1677,8 +1682,10 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           'loadLocalSkills',
           'loadHarnessAssets',
           'exploreFoldEnabled',
+          'bashInterceptEnabled',
           'smartCompactEnabled',
           'smartCompactSummaryModel',
+          'smartCompactMode',
           'skillPaths',
           'mcpServers',
           'instruction',
@@ -1700,10 +1707,14 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
             value.windowsLocalShell as string
           )) ||
         (value.exploreFoldEnabled !== undefined && typeof value.exploreFoldEnabled !== 'boolean') ||
+        (value.bashInterceptEnabled !== undefined &&
+          typeof value.bashInterceptEnabled !== 'boolean') ||
         (value.smartCompactEnabled !== undefined &&
           typeof value.smartCompactEnabled !== 'boolean') ||
         (value.smartCompactSummaryModel !== undefined &&
           parseSpawnModelConfig(value.smartCompactSummaryModel) === null) ||
+        (value.smartCompactMode !== undefined &&
+          parseSmartCompactMode(value.smartCompactMode) === null) ||
         (value.remote !== undefined && parseAgentRemoteConfig(value.remote) === null) ||
         (value.subagentModels !== undefined &&
           (!Array.isArray(value.subagentModels) ||

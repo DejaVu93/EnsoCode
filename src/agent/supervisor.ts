@@ -12,6 +12,7 @@ import {
   createWriteToolDefinition,
   DefaultResourceLoader,
   estimateTokens,
+  type InlineExtension,
   ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
@@ -29,6 +30,7 @@ import {
 import { ensureAccountProvider } from '@shared/piAccounts';
 import { resolvePiProviderBaseUrl } from '@shared/providerCatalog';
 import { ANTIGRAVITY_PROVIDER_ID, antigravityProviderConfig } from '@shared/providers/antigravity';
+import type { SmartCompactMode } from '@shared/smartCompactMode';
 import { buildSshShellCommand, shellQuote } from '@shared/ssh';
 import type {
   AgentCommand,
@@ -117,7 +119,7 @@ import {
   formatSmartCompactSummaryModel,
   persistEnsoSmartCompactSettings,
   providerKeyFor,
-  resolveSmartCompactExtensionPath,
+  smartCompactInlineExtension,
 } from './smartCompact';
 import {
   createSshExecutor,
@@ -285,27 +287,26 @@ function createSessionResourceLoader(options: {
     agentDir: options.agentDir,
     noSkills: options.noSkills,
     ...(options.noExtensions ? { noExtensions: true } : {}),
-    ...(!options.noExtensions && options.smartCompactEnabled
-      ? (() => {
-          const extensionPath = resolveSmartCompactExtensionPath();
-          return extensionPath ? { additionalExtensionPaths: [extensionPath] } : {};
-        })()
-      : {}),
     ...(skillPaths.length > 0 ? { additionalSkillPaths: skillPaths } : {}),
-    ...(options.exploreFold
+    ...(!options.noExtensions && (options.exploreFold || options.smartCompactEnabled)
       ? {
           extensionFactories: [
-            {
-              name: 'explore-fold',
-              hidden: true,
-              factory: (pi) => {
-                pi.on('context', (event) => ({
-                  messages: options.exploreFold!.apply(
-                    event.messages as never
-                  ) as typeof event.messages,
-                }));
-              },
-            },
+            ...(options.exploreFold
+              ? [
+                  {
+                    name: 'explore-fold',
+                    hidden: true,
+                    factory: (pi) => {
+                      pi.on('context', (event) => ({
+                        messages: options.exploreFold!.apply(
+                          event.messages as never
+                        ) as typeof event.messages,
+                      }));
+                    },
+                  } satisfies InlineExtension,
+                ]
+              : []),
+            ...(options.smartCompactEnabled ? [smartCompactInlineExtension] : []),
           ],
         }
       : {}),
@@ -694,8 +695,10 @@ export class SessionSupervisor {
           command.loadHarnessAssets,
           command.windowsLocalShell,
           command.exploreFoldEnabled,
+          command.bashInterceptEnabled,
           command.smartCompactEnabled,
-          command.smartCompactSummaryModel
+          command.smartCompactSummaryModel,
+          command.smartCompactMode
         );
         return;
       case 'spawn-child':
@@ -1073,8 +1076,10 @@ export class SessionSupervisor {
     loadHarnessAssets = false,
     windowsLocalShell?: WindowsLocalShell,
     exploreFoldEnabled = false,
+    bashInterceptEnabled = false,
     smartCompactEnabled = false,
-    smartCompactSummaryModel?: SpawnModelConfig
+    smartCompactSummaryModel?: SpawnModelConfig,
+    smartCompactMode?: SmartCompactMode
   ): Promise<void> {
     const sessionId = identity.sessionId;
     const toolEnabled = (id: string) => !disabledTools.includes(id);
@@ -1125,12 +1130,12 @@ export class SessionSupervisor {
     }
     if (smartCompactEnabled) {
       try {
-        persistEnsoSmartCompactSettings(
-          undefined,
-          smartCompactSummaryModel
-            ? { summaryModel: formatSmartCompactSummaryModel(smartCompactSummaryModel) }
-            : { summaryModel: null }
-        );
+        persistEnsoSmartCompactSettings(undefined, {
+          summaryModel: smartCompactSummaryModel
+            ? formatSmartCompactSummaryModel(smartCompactSummaryModel)
+            : null,
+          ...(smartCompactMode ? { mode: smartCompactMode } : {}),
+        });
       } catch (error) {
         console.warn('[smart-compact] failed to merge host settings', error);
       }
@@ -1245,6 +1250,8 @@ export class SessionSupervisor {
           return { command: sshCommand, cwd: process.cwd() };
         }
       : undefined;
+    const maybeInterceptBash = (definition: Def): Def =>
+      bashInterceptEnabled ? withBashInterception(definition) : definition;
     const buildBaseTools = (
       toolGate: ApprovalGate,
       cp?: CheckpointManager,
@@ -1261,7 +1268,7 @@ export class SessionSupervisor {
           'command',
           guarded(
             withBackground(
-              withBashInterception(
+              maybeInterceptBash(
                 createSessionCommandTool({
                   cwd,
                   remote: Boolean(remoteOps),
@@ -2617,10 +2624,14 @@ export class SessionSupervisor {
   /** 执行一次手动压缩。进度/收束由 pi 的 compaction_start / compaction_end 事件推给渲染层；
    *  这里只兵底 compact() 直接抛错（未走到 compaction_end）的情况，否则 UI 会卡在「压缩中」。 */
   private async runCompaction(managed: ManagedSession, instructions?: string): Promise<void> {
+    // 先标 running：compact() 同步抛错时 compaction 仍是 undefined，catch 才能区分「没走过 end」
+    managed.compaction = 'running';
     try {
       await managed.session.compact(instructions);
     } catch (error) {
       console.error('[compact] failed:', toErrorMessage(error));
+      // compaction_end 已把进度清掉并上报过：再 emit 会叠两条「压缩失败」toast
+      if (managed.compaction === undefined) return;
       // 未走到 compaction_end：不清的话快照会让手机永远卡在「压缩中」
       managed.compaction = undefined;
       this.options.emit({

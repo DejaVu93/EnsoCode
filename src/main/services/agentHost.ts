@@ -20,6 +20,7 @@ import {
 import { mcpTimeoutsForSpawn } from '@shared/mcpTimeout';
 import { pickModelCapabilityOverrides } from '@shared/modelCatalog';
 import { proxyEnvPatchFromEnv } from '@shared/proxy';
+import { parseSmartCompactMode } from '@shared/smartCompactMode';
 import type {
   AgentCommand,
   AgentRemoteConfig,
@@ -384,6 +385,7 @@ export function spawnSession(
   const loadHarnessAssets = state?.loadHarnessAssets === true;
   const windowsLocalShell = parseWindowsLocalShell(state?.windowsLocalShell);
   const exploreFoldEnabled = state?.exploreFoldEnabled === true;
+  const bashInterceptEnabled = state?.bashInterceptEnabled === true;
   const smartCompactEnabled = state?.smartCompactEnabled === true;
   const smartCompactRef = asModelRef(state?.smartCompactModel);
   const smartCompactSummary =
@@ -397,6 +399,7 @@ export function spawnSession(
   const smartCompactSummaryModel = smartCompactSummary?.ok
     ? smartCompactSummary.selection.config
     : undefined;
+  const smartCompactMode = parseSmartCompactMode(state?.smartCompactMode) ?? undefined;
   // worker 崩溃/退出后不自动拉起的话，所有会话都只能靠重启 app 恢复；在 spawn 入口按需重建
   if (!worker && workerExited) startAgentWorker();
   return sendAgentCommand({
@@ -411,8 +414,10 @@ export function spawnSession(
     ...(loadHarnessAssets ? { loadHarnessAssets: true } : {}),
     ...(windowsLocalShell !== 'auto' ? { windowsLocalShell } : {}),
     ...(exploreFoldEnabled ? { exploreFoldEnabled: true } : {}),
+    ...(bashInterceptEnabled ? { bashInterceptEnabled: true } : {}),
     ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
     ...(smartCompactSummaryModel ? { smartCompactSummaryModel } : {}),
+    ...(smartCompactMode ? { smartCompactMode } : {}),
     ...(skillPaths.length > 0 ? { skillPaths } : {}),
     ...(mcpServers.length > 0 ? { mcpServers } : {}),
     ...(request.approvalMode ? { approvalMode: request.approvalMode } : {}),

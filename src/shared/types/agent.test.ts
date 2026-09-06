@@ -266,6 +266,20 @@ describe('parent/child commands', () => {
     ).toBeNull();
   });
 
+  it('spawn-parent 携 bashInterceptEnabled:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: true })).toEqual({
+      ...base,
+      bashInterceptEnabled: true,
+    });
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: false })).toEqual({
+      ...base,
+      bashInterceptEnabled: false,
+    });
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: 'true' })).toBeNull();
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: 1 })).toBeNull();
+  });
+
   it('spawn-parent 携 smartCompactEnabled:合法通过,脏值拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
     expect(parseAgentCommand({ ...base, smartCompactEnabled: true })).toEqual({
@@ -288,6 +302,28 @@ describe('parent/child commands', () => {
     });
     expect(parseAgentCommand({ ...base, smartCompactSummaryModel: { modelId: 'gpt' } })).toBeNull();
     expect(parseAgentCommand({ ...base, smartCompactSummaryModel: 'anthropic/x' })).toBeNull();
+  });
+
+  it('spawn-parent 携 smartCompactMode:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'balanced' })).toEqual({
+      ...base,
+      smartCompactMode: 'balanced',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'fast' })).toEqual({
+      ...base,
+      smartCompactMode: 'fast',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'thorough' })).toEqual({
+      ...base,
+      smartCompactMode: 'thorough',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'auto' })).toEqual({
+      ...base,
+      smartCompactMode: 'auto',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'aggressive' })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactMode: true })).toBeNull();
   });
 
   it('spawn-parent 携 windowsLocalShell:合法通过,脏值拒绝', () => {

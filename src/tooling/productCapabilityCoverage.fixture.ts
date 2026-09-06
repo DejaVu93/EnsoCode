@@ -38,11 +38,17 @@ export const SETTINGS_DATA_COVERAGE = {
   exploreFoldEnabled: excluded(
     'Explore-fold is a desktop session preference, not an Enso capability.'
   ),
+  bashInterceptEnabled: excluded(
+    'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
   smartCompactEnabled: excluded(
     'Verified smart compaction is a desktop session preference, not an Enso capability.'
   ),
   smartCompactModel: excluded(
     'Verified smart compaction model is a desktop session preference, not an Enso capability.'
+  ),
+  smartCompactMode: excluded(
+    'Verified smart compaction mode is a desktop session preference, not an Enso capability.'
   ),
   autoUpdate: surfaces('general.automatic-updates'),
   proxyMode: surfaces('general.proxy-mode'),
@@ -108,11 +114,17 @@ export const SETTINGS_ACTION_COVERAGE = {
   setExploreFoldEnabled: excluded(
     'Explore-fold is a desktop session preference, not an Enso capability.'
   ),
+  setBashInterceptEnabled: excluded(
+    'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
   setSmartCompactEnabled: excluded(
     'Verified smart compaction is a desktop session preference, not an Enso capability.'
   ),
   setSmartCompactModel: excluded(
     'Verified smart compaction model is a desktop session preference, not an Enso capability.'
+  ),
+  setSmartCompactMode: excluded(
+    'Verified smart compaction mode is a desktop session preference, not an Enso capability.'
   ),
   setAutoUpdate: surfaces('general.automatic-updates'),
   setProxyMode: surfaces('general.proxy-mode'),
