@@ -18,7 +18,13 @@ import {
   SquareTerminal,
   X,
 } from 'lucide-react';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, type ReactElement, useContext, useEffect, useRef, useState } from 'react';
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from '@/components/ui/menu';
 import { useI18n } from '@/i18n';
 import { easeOutLayout, springStandard } from '@/lib/motion';
@@ -31,6 +37,7 @@ import { BrowserView } from './BrowserView';
 import { ChangesView } from './ChangesView';
 import { FilesView } from './FilesView';
 import { TerminalView } from './TerminalView';
+import { idsToClose, type TabCloseKind } from './tabCloseActions';
 import 'dockview-react/dist/styles/dockview.css';
 import './sidepanel-dock.css';
 
@@ -146,8 +153,20 @@ function BrowserPanel(props: IDockviewPanelProps<{ conversationId?: string; proj
   return <BrowserView conversationId={conversationId} panelApi={props.api} />;
 }
 
+function closeGroupTabs(
+  api: IDockviewPanelHeaderProps['api'],
+  kind: Exclude<TabCloseKind, 'saved'>
+): void {
+  const ordered = api.group.panels.map((panel) => panel.id);
+  const closing = new Set(idsToClose(ordered, api.id, kind));
+  for (const panel of [...api.group.panels]) {
+    if (closing.has(panel.id)) panel.api.close();
+  }
+}
+
 /** 与 CoworkerTabs 同款 chip:圆角、bg-muted 激活、hover 出关闭 */
 function SidePanelTab(props: IDockviewPanelHeaderProps<{ favicon?: string | null }>) {
+  const { t } = useI18n();
   const [active, setActive] = useState(props.api.isActive);
   const [title, setTitle] = useState(props.api.title ?? '');
   const [favicon, setFavicon] = useState<string | null>(props.params.favicon ?? null);
@@ -170,7 +189,7 @@ function SidePanelTab(props: IDockviewPanelHeaderProps<{ favicon?: string | null
     };
   }, [props.api]);
   const isBrowser = props.api.id === 'browser' || props.api.id.startsWith('browser:');
-  return (
+  const tab = (
     <div
       className={cn(
         'group/tab relative flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
@@ -206,6 +225,25 @@ function SidePanelTab(props: IDockviewPanelHeaderProps<{ favicon?: string | null
         <X className="h-3 w-3" />
       </button>
     </div>
+  );
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={tab as ReactElement<Record<string, unknown>>} />
+      <ContextMenuPopup className="min-w-40">
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'self')}>
+          {t('Close')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'others')}>
+          {t('Close others')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'right')}>
+          {t('Close tabs to the right')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'all')}>
+          {t('Close all')}
+        </ContextMenuItem>
+      </ContextMenuPopup>
+    </ContextMenu>
   );
 }
 

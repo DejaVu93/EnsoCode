@@ -362,6 +362,8 @@ export const zhTranslations: Record<string, string> = {
   'Could not complete the file action.': '无法完成该文件操作。',
   'Delete {{name}} permanently?': '永久删除 {{name}}？',
   'Close others': '关闭其他',
+  'Close tabs to the right': '关闭右侧标签页',
+  'Close saved': '关闭已保存',
   'Close all': '关闭所有',
   'Force close others': '强制关闭其他',
   'Force close all': '强制关闭所有',
