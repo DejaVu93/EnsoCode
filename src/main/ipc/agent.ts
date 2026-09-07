@@ -12,6 +12,7 @@ import type {
   ApprovalMode,
   ChildHistoryResult,
   McpStatusPush,
+  ParentHistoryTailResult,
   RendererAgentEvent,
   ThinkingLevel,
 } from '@shared/types/agent';
@@ -75,6 +76,7 @@ import { maybeNotify, setViewedSession } from '../services/notifications';
 import { readStoredOauthCredentialKeys } from '../services/oauthProviders';
 import { forwardAgentEvent, setPairAgentBridge } from '../services/pairHost';
 import { removeConversationSessionFiles } from '../services/sessionFileCleanup';
+import { projectParentHistoryTail, resolveParentHistoryFile } from '../services/sessionHistoryTail';
 import {
   importExternalSession,
   listExternalSessions,
@@ -253,6 +255,35 @@ async function readChildHistory(conversationId: string): Promise<ChildHistoryRes
     return { ok: false, code: 'not-found', error: 'History file is missing.' };
   }
   return { ok: true, projection: await EnsoSafeJournal.restore(resolved) };
+}
+
+async function readParentHistoryTail(conversationId: string): Promise<ParentHistoryTailResult> {
+  const persisted = agentSessionIndex.persistedConversation(conversationId);
+  const sessionFile =
+    typeof persisted?.sessionFile === 'string' ? persisted.sessionFile : undefined;
+  const sessionDir = path.join(app.getPath('userData'), 'agent', 'sessions');
+  const resolved = resolveParentHistoryFile(sessionDir, sessionFile);
+  if (!resolved) {
+    return {
+      ok: false,
+      code: sessionFile ? 'unavailable' : 'not-found',
+      error: 'No parent history file.',
+    };
+  }
+  if (!existsSync(resolved)) {
+    return { ok: false, code: 'not-found', error: 'History file is missing.' };
+  }
+  try {
+    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+    const manager = SessionManager.open(resolved, sessionDir);
+    return { ok: true, ...projectParentHistoryTail(manager.getBranch()) };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'unavailable',
+      error: error instanceof Error ? error.message : 'Failed to read parent history.',
+    };
+  }
 }
 
 /**
@@ -533,6 +564,14 @@ export function registerAgentHandlers(): void {
       return { ok: false, code: 'not-found', error: 'conversationId is required' };
     }
     return await readChildHistory(conversationId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, async (_event, request: unknown) => {
+    const conversationId = asRecord(request)?.conversationId;
+    if (!isNonEmptyString(conversationId)) {
+      return { ok: false, code: 'not-found', error: 'conversationId is required' };
+    }
+    return await readParentHistoryTail(conversationId);
   });
 
   // 标题总结：渲染层只传 conversationId + 输入（首条即时 / 每轮滚动）；模型与凭证由 Main 从设置自读（回退链：

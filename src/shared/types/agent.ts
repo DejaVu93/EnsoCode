@@ -442,6 +442,10 @@ export type ChildHistoryResult =
   | { ok: true; projection: SafeJournalProjection }
   | { ok: false; code: 'not-found' | 'unavailable'; error: string };
 
+export type ParentHistoryTailResult =
+  | { ok: true; messages: ProjectedMessage[]; baseIndex: number }
+  | { ok: false; code: 'not-found' | 'unavailable'; error: string };
+
 export type DispatchProgressPhase =
   | 'received'
   | 'source-bound'
