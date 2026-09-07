@@ -26,13 +26,12 @@ import {
 } from '@enso/pair';
 import {
   catalogSyncFingerprint,
-  changedMetaChannels,
+  channelsForMetaPush,
   type PairMetaFingerprints,
   pairJsonFingerprint,
   shouldRelayPairSnapshot,
   slimCatalogForPhone,
   slimProjectsForPhone,
-  withholdRendererMeta,
 } from '@shared/pair/metaSync';
 import type {
   AgentSpawnRequest,
@@ -640,7 +639,8 @@ async function handleFrame(conn: Connection, frame: Uint8Array): Promise<void> {
       requestMeta(conn);
       break;
     case 'snapshot':
-      // 只要目录/外观；会话正文走 subscribe
+      // 只要目录/外观；会话正文走 subscribe。强制重发：renderer 重载会丢已推 IPC，清指纹后整包重推。
+      bumpPairMetaEpoch(conn);
       requestMeta(conn);
       break;
     case 'set-model': {
@@ -769,7 +769,7 @@ async function sendMeta(conn: Connection): Promise<void> {
   // renderer 尚未推过目录时扣下 renderer-owned 通道（catalog/projects/providers/appearance）：
   // host 重启后 guest 往往已在房里，peer-joined 先于 renderer 首推到达，空 catalog 当真目录发出去
   // 会让 guest 把仍在订阅的会话误判为幽灵。被扣下的通道不进 next，flushChangedMeta 只记实际发出的。
-  const allowed = new Set(withholdRendererMeta(changedMetaChannels(conn.sentMeta, next), catalogReady));
+  const allowed = new Set(channelsForMetaPush(conn.sentMeta, next, catalogReady));
   const gated: PairMetaFingerprints = {};
   for (const key of allowed) gated[key] = next[key];
   await flushChangedMeta(
@@ -789,7 +789,8 @@ async function sendMeta(conn: Connection): Promise<void> {
       hostInfo: () => send(conn, { type: 'host-info', ...hostInfo }),
     },
     conn
-  );}
+  );
+}
 
 /** agentHost 事件出口：按订阅过滤后加密发给每台在线手机 */
 export function forwardAgentEvent(event: RendererAgentEvent): void {
