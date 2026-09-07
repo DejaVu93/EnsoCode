@@ -934,4 +934,131 @@ describe('lastOutputAt stall heartbeat', () => {
     );
     expect(empty.lastOutputAt).toBe(1_000);
   });
+
+  it.each(['text', 'thinking'] as const)(
+    '尾窗内重复 %s 即使 seq 和无关工具参数变化也不续命，新增正文才刷新',
+    (type) => {
+      const message = (text: string, offset: number): SessionProjection['messages'][number] => ({
+        role: 'assistant',
+        content: [
+          { type, text },
+          {
+            type: 'toolCall',
+            id: 'c1',
+            name: 'read',
+            arguments: { path: '/workspace/guide.md', offset },
+          },
+        ],
+      });
+      const first = applyAgentEvent(tail(), 's1', upsert(1, 40, message('plan', 1)), 1_000);
+      const replay = message('plan', 2);
+      const repeated = applyAgentEvent(first, 's1', upsert(2, 40, replay), NOW);
+      expect(repeated.lastSeq).toBe(2);
+      expect(repeated.messages).toEqual([replay]);
+      expect.soft(repeated.lastOutputAt).toBe(1_000);
+
+      const growing = applyAgentEvent(
+        repeated,
+        's1',
+        upsert(3, 40, message('plan next step', 2)),
+        NOW + 1_000
+      );
+      expect(growing.lastOutputAt).toBe(NOW + 1_000);
+    }
+  );
+
+  it('同位置重复 toolResult 不续命，工具结果正文变化才刷新', () => {
+    const result = (text: string): SessionProjection['messages'][number] => ({
+      role: 'toolResult',
+      toolCallId: 'c1',
+      toolName: 'read',
+      content: [{ type: 'text', text }],
+    });
+    const first = applyAgentEvent(base, 's1', upsert(1, 0, result('# guide')), 1_000);
+    const repeated = applyAgentEvent(first, 's1', upsert(2, 0, result('# guide')), NOW);
+    expect(repeated.lastSeq).toBe(2);
+    expect(repeated.messages).toEqual([result('# guide')]);
+    expect.soft(repeated.lastOutputAt).toBe(1_000);
+
+    const changed = applyAgentEvent(
+      repeated,
+      's1',
+      upsert(3, 0, result('# guide\nnext section')),
+      NOW + 1_000
+    );
+    expect(changed.lastOutputAt).toBe(NOW + 1_000);
+  });
+
+  it('同一工具的非空 tool-output 重复快照不续命，变化的非空快照才刷新', () => {
+    const output = (seq: number, text: string): RendererAgentEvent => ({
+      type: 'tool-output',
+      identity: identity(),
+      seq,
+      toolCallId: 't1',
+      output: text,
+    });
+    const first = applyAgentEvent(base, 's1', output(1, 'line 1'), 1_000);
+    const repeated = applyAgentEvent(first, 's1', output(2, 'line 1'), NOW);
+    expect(repeated.lastSeq).toBe(2);
+    expect(repeated.toolOutputs).toEqual({ t1: 'line 1' });
+    expect.soft(repeated.lastOutputAt).toBe(1_000);
+
+    const changed = applyAgentEvent(repeated, 's1', output(3, 'line 2'), NOW + 1_000);
+    expect(changed.toolOutputs).toEqual({ t1: 'line 2' });
+    expect(changed.lastOutputAt).toBe(NOW + 1_000);
+  });
+
+  it.each(['write', 'edit'] as const)('%s 可见预览静止时不续命，预览继续增长才刷新', (name) => {
+    // 时间线从 write.content 或 edit.edits[] 提取可见内容，不是整个 arguments JSON。
+    const message = (text: string, path: string): SessionProjection['messages'][number] => ({
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'c1',
+          name,
+          arguments:
+            name === 'write'
+              ? { path, content: text }
+              : { path, edits: [{ oldText: 'const previous = 0;', newText: text }] },
+        },
+      ],
+    });
+    const first = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, message('const next =', '/workspace/a.ts')),
+      1_000
+    );
+    const replay = message('const next =', '/workspace/b.ts');
+    const repeated = applyAgentEvent(first, 's1', upsert(2, 0, replay), NOW);
+    expect(repeated.lastSeq).toBe(2);
+    expect(repeated.messages).toEqual([replay]);
+    expect(repeated.lastOutputAt).toBe(1_000);
+
+    const preview = message('const next = 1;', '/workspace/b.ts');
+    const growing = applyAgentEvent(repeated, 's1', upsert(3, 0, preview), NOW + 1_000);
+    expect(growing.messages).toEqual([preview]);
+    expect(growing.lastOutputAt).toBe(NOW + 1_000);
+  });
+
+  it.each(['write', 'edit'] as const)('%s 只有路径的工具占位变化不续命', (name) => {
+    const message = (path: string): SessionProjection['messages'][number] => ({
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'c1', name, arguments: { path } }],
+    });
+    const first = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, message('/workspace/a.ts')),
+      NOW
+    );
+    expect(first.lastOutputAt).toBe(1_000);
+
+    const placeholder = message('/workspace/b.ts');
+    const changed = applyAgentEvent(first, 's1', upsert(2, 0, placeholder), NOW + 1_000);
+    expect(changed.lastSeq).toBe(2);
+    expect(changed.messages).toEqual([placeholder]);
+    expect(changed.lastOutputAt).toBe(1_000);
+  });
 });

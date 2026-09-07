@@ -12,6 +12,7 @@ import {
   type SubagentInfo,
   shouldApplyDispatchMainEvent,
 } from '@shared/types/agent';
+import { extractEdits, extractWriteContent } from './timeline';
 
 /**
  * 时间线消息：乐观回显（本地先上屏、worker 尚未确认）带 optimistic 标记，
@@ -83,12 +84,41 @@ export function upsertOutOfRange(
   return localIndex < 0 || localIndex > authoritativeLength(messages);
 }
 
-/** 时间线能当成「模型还活着」的输出：非空 token / 思考文本 / 工具结果。越界丢弃的 upsert 不算。 */
-export function isVisibleGenerationOutput(message: ProjectedMessage): boolean {
-  if (message.role === 'toolResult') return true;
+/** upsert 是全量快照：只有可见正文变化才算进展，不能拿旧思考给后续工具参数续命。 */
+export function isVisibleGenerationOutput(
+  message: ProjectedMessage,
+  previous?: ProjectedMessage
+): boolean {
+  if (message.role === 'toolResult') {
+    return (
+      previous?.role !== 'toolResult' ||
+      previous.toolCallId !== message.toolCallId ||
+      previous.isError !== message.isError ||
+      JSON.stringify(previous.content) !== JSON.stringify(message.content)
+    );
+  }
   if (message.role !== 'assistant') return false;
-  return message.content.some((part) => {
-    if (part.type === 'text' || part.type === 'thinking') return part.text.trim().length > 0;
+  const before = previous?.role === 'assistant' ? previous.content : [];
+  return message.content.some((part, index) => {
+    if (part.type === 'text' || part.type === 'thinking') {
+      const old = before[index];
+      return Boolean(
+        part.text.trim() && (old?.type !== part.type || old.text.trim() !== part.text.trim())
+      );
+    }
+    if (part.type === 'toolCall') {
+      const old = before.find(
+        (candidate) => candidate.type === 'toolCall' && candidate.id === part.id
+      );
+      const oldArgs =
+        old?.type === 'toolCall' && old.name === part.name ? old.arguments : undefined;
+      const content = extractWriteContent(part.name, part.arguments);
+      if (content?.trim() && content !== extractWriteContent(part.name, oldArgs)) return true;
+      const edits = extractEdits(part.name, part.arguments);
+      return Boolean(
+        edits && JSON.stringify(edits) !== JSON.stringify(extractEdits(part.name, oldArgs))
+      );
+    }
     return false;
   });
 }
@@ -335,6 +365,7 @@ export function applyAgentEvent(
         // 丢正文只推 seq：不能续 lastOutputAt，否则 stall watchdog 把脱节心跳当成输出
         return { ...current, lastSeq: event.seq };
       }
+      const hasOutput = isVisibleGenerationOutput(event.message, authoritative[localIndex]);
       authoritative[localIndex] = event.message;
       // 同文本的 user upsert 到达 = 回显对应的真消息落地，消费掉避免重复
       if (event.message.role === 'user' && tail.length > 0) {
@@ -347,7 +378,7 @@ export function applyAgentEvent(
       return {
         ...current,
         messages: [...authoritative, ...tail],
-        lastOutputAt: isVisibleGenerationOutput(event.message) ? now : current.lastOutputAt,
+        lastOutputAt: hasOutput ? now : current.lastOutputAt,
         lastSeq: event.seq,
       };
     }
@@ -434,7 +465,10 @@ export function applyAgentEvent(
       return {
         ...current,
         toolOutputs: { ...current.toolOutputs, [event.toolCallId]: event.output },
-        lastOutputAt: event.output.trim() ? now : current.lastOutputAt,
+        lastOutputAt:
+          event.output.trim() && event.output !== current.toolOutputs[event.toolCallId]
+            ? now
+            : current.lastOutputAt,
         lastSeq: event.seq,
       };
     case 'turn-completed':

@@ -137,14 +137,14 @@ function summarizeArgs(args: unknown, cwd?: string): string {
 }
 
 /** write 工具参数里取出写入内容 */
-function extractWriteContent(name: string, args: unknown): string | null {
+export function extractWriteContent(name: string, args: unknown): string | null {
   if (name !== 'write' || !args || typeof args !== 'object') return null;
   const content = (args as Record<string, unknown>).content;
   return typeof content === 'string' && content ? content : null;
 }
 
 /** edit 工具参数里取出替换块（保持同一数组引用，供 memo 做引用比较） */
-function extractEdits(name: string, args: unknown): EditBlock[] | null {
+export function extractEdits(name: string, args: unknown): EditBlock[] | null {
   if (name !== 'edit' || !args || typeof args !== 'object') return null;
   let edits = (args as Record<string, unknown>).edits;
   // 部分模型把 edits 数组双重编码成 JSON 字符串（worker 执行侧已归一化，渲染侧同样兜底）
