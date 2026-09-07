@@ -7,6 +7,7 @@ import type {
 import { listClaudeSessions, readClaudeSession } from './claudeCode';
 import { listCodexSessions, readCodexSession } from './codex';
 import { listCursorSessions, readCursorSession } from './cursor';
+import { listFactorySessions, readFactorySession } from './factory';
 import { listGrokSessions, readGrokSession } from './grok';
 import { listOhMyPiSessions, listPiSessions, readPiV3Session } from './pi';
 import { writePiSession } from './piJsonl';
@@ -35,6 +36,7 @@ const READERS: SessionReader[] = [
     list: listOhMyPiSessions,
     read: readPiV3Session,
   },
+  { sourceId: 'factory', sourceName: 'Factory', list: listFactorySessions, read: readFactorySession },
 ];
 
 const readerOf = (sourceId: string): SessionReader | undefined =>

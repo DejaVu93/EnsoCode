@@ -433,6 +433,87 @@ describe('pi / oh-my-pi 会话', () => {
   });
 });
 
+const factorySessionFile = (home: string, projectPath: string, id: string) => {
+  const dir = path.join(home, '.factory', 'sessions', encodeClaudeProjectDir(projectPath));
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${id}.jsonl`);
+};
+
+describe('Factory 会话', () => {
+  const projectPath = '/tmp/demo';
+
+  it('列出会话时给出 Factory 来源、jsonl 路径与 session_start 标题', () => {
+    const file = factorySessionFile(tmp, projectPath, 'u-1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        { type: 'session_start', title: '排查构建失败', cwd: projectPath },
+        piTurn('user', [piText('hi')]),
+      ])
+    );
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'factory');
+    expect(source?.sourceName).toBe('Factory');
+    expect(source?.sessions.map((s) => s.path)).toEqual([file]);
+    expect(source?.sessions[0].title).toBe('排查构建失败');
+  });
+
+  it('读取时提取 user/assistant 文本轮次', () => {
+    const file = factorySessionFile(tmp, projectPath, 'u-1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        { type: 'session_start', title: '排查构建失败', cwd: projectPath },
+        piTurn('user', [piText('构建挂了')]),
+        piTurn('assistant', [piText('已修复')]),
+      ])
+    );
+    expect(readExternalSession('factory', file)).toEqual([
+      expect.objectContaining({ role: 'user', text: '构建挂了' }),
+      expect.objectContaining({ role: 'assistant', text: '已修复' }),
+    ]);
+  });
+
+  it('跳过以尖括号标签开头的 user 噪声', () => {
+    const file = factorySessionFile(tmp, projectPath, 'u-1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        { type: 'session_start', title: 't', cwd: projectPath },
+        piTurn('user', [piText('<system-reminder>噪声</system-reminder>')]),
+        piTurn('assistant', [piText('收到')]),
+      ])
+    );
+    expect(readExternalSession('factory', file)).toEqual([
+      expect.objectContaining({ role: 'assistant', text: '收到' }),
+    ]);
+  });
+
+  it('损坏的 jsonl 与缺失文件都返回空消息且不抛错', () => {
+    const file = factorySessionFile(tmp, projectPath, 'u-1');
+    fs.writeFileSync(file, 'not-json\n{"type":"session_start","title":"t"}\n');
+    expect(readExternalSession('factory', file)).toEqual([]);
+    expect(readExternalSession('factory', path.join(path.dirname(file), 'x.jsonl'))).toEqual([]);
+  });
+
+  it('只列出当前项目编码目录下的会话', () => {
+    const mine = factorySessionFile(tmp, projectPath, 'u-1');
+    fs.writeFileSync(
+      mine,
+      jsonl([{ type: 'session_start', title: 'a', cwd: projectPath }, piTurn('user', [piText('a')])])
+    );
+    const other = factorySessionFile(tmp, '/tmp/other', 'u-2');
+    fs.writeFileSync(
+      other,
+      jsonl([
+        { type: 'session_start', title: 'b', cwd: '/tmp/other' },
+        piTurn('user', [piText('b')]),
+      ])
+    );
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'factory');
+    expect(source?.sessions.map((s) => s.path)).toEqual([mine]);
+  });
+});
+
 describe('writePiSession', () => {
   it('产出 header + 消息链，parentId 依次串联', () => {
     const file = writePiSession(
