@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/testing.md", "reason": "先确认红灯因缺功能，再确认绿灯不是改测试换来的"}
+{"file": ".trellis/spec/renderer/state.md", "reason": "不要把事件处理逻辑写进订阅之外的旁路；正文仍是可丢弃投影"}
+{"file": ".trellis/tasks/09-08-switch-resync-snapshot/prd.md", "reason": "验收：半截权威切回要 snapshot、空窗仍走尾窗、离开后 TTL 才变冷"}
+{"file": "src/renderer/stores/sessions/messageCache.ts", "reason": "核对导出契约与注释是否仍写切入盖章"}
+{"file": "src/renderer/stores/sessions/index.ts", "reason": "viewed 订阅是否无条件对齐 worker，且尾窗仍只在缺权威正文时打"}
+{"file": "src/renderer/stores/sessions/index.test.ts", "reason": "切回与离开 TTL 回归是否覆盖 PRD"}
