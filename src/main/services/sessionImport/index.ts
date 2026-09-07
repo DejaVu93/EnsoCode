@@ -8,6 +8,7 @@ import { listClaudeSessions, readClaudeSession } from './claudeCode';
 import { listCodexSessions, readCodexSession } from './codex';
 import { listCursorSessions, readCursorSession } from './cursor';
 import { listFactorySessions, readFactorySession } from './factory';
+import { listGeminiSessions, readGeminiSession } from './gemini';
 import { listGrokSessions, readGrokSession } from './grok';
 import { listOpencodeSessions, readOpencodeSession } from './opencode';
 import { listOhMyPiSessions, listPiSessions, readPiV3Session } from './pi';
@@ -39,6 +40,7 @@ const READERS: SessionReader[] = [
   },
   { sourceId: 'factory', sourceName: 'Factory', list: listFactorySessions, read: readFactorySession },
   { sourceId: 'opencode', sourceName: 'OpenCode', list: listOpencodeSessions, read: readOpencodeSession },
+  { sourceId: 'gemini-cli', sourceName: 'Gemini CLI', list: listGeminiSessions, read: readGeminiSession },
 ];
 
 const readerOf = (sourceId: string): SessionReader | undefined =>

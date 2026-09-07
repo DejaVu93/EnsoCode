@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -650,6 +651,97 @@ describe('OpenCode 会话', () => {
     expect(readExternalSession('opencode', path.join(storage, 'session', 'prj1', 'x.json'))).toEqual(
       []
     );
+  });
+});
+
+const geminiChatFile = (home: string, id: string, name: string) => {
+  const dir = path.join(home, '.gemini', 'tmp', id, 'chats');
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, name);
+};
+
+const geminiHash = (projectPath: string) =>
+  crypto.createHash('sha256').update(projectPath).digest('hex');
+
+describe('Gemini CLI 会话', () => {
+  const projectPath = '/tmp/demo';
+  const geminiTurns = jsonl([
+    { type: 'user', content: '构建挂了' },
+    { type: 'assistant', content: [{ type: 'text', text: '已修复' }] },
+  ]);
+
+  it('projects.json 的 slug 目录下有 session 时列出 Gemini CLI 来源', () => {
+    writeJsonFile(path.join(tmp, '.gemini', 'projects.json'), {
+      projects: { [projectPath]: 'demo-slug' },
+    });
+    const file = geminiChatFile(tmp, 'demo-slug', 'session-a.jsonl');
+    fs.writeFileSync(file, geminiTurns);
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'gemini-cli');
+    expect(source?.sourceName).toBe('Gemini CLI');
+    expect(source?.sessions.map((s) => s.path)).toEqual([file]);
+    expect(source?.sessions[0].title).toContain('构建挂了');
+  });
+
+  it('没有 projects.json 时认 sha256 哈希目录', () => {
+    const file = geminiChatFile(tmp, geminiHash(projectPath), 'session-b.jsonl');
+    fs.writeFileSync(file, geminiTurns);
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'gemini-cli');
+    expect(source?.sessions.map((s) => s.path)).toEqual([file]);
+  });
+
+  it('读取时把 string 与 text parts 两种 content 都转成文本轮次', () => {
+    const file = geminiChatFile(tmp, geminiHash(projectPath), 'session-b.jsonl');
+    fs.writeFileSync(file, geminiTurns);
+    expect(readExternalSession('gemini-cli', file)).toEqual([
+      expect.objectContaining({ role: 'user', text: '构建挂了' }),
+      expect.objectContaining({ role: 'assistant', text: '已修复' }),
+    ]);
+  });
+
+  it('kind 为 subagent 的会话文件不出现在列表', () => {
+    const hash = geminiHash(projectPath);
+    const normal = geminiChatFile(tmp, hash, 'session-a.jsonl');
+    fs.writeFileSync(normal, geminiTurns);
+    writeJsonFile(geminiChatFile(tmp, hash, 'session-sub.json'), {
+      sessionId: 'sub',
+      kind: 'subagent',
+      messages: [{ type: 'user', content: '子代理' }],
+    });
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'gemini-cli');
+    expect(source?.sessions.map((s) => s.path)).toEqual([normal]);
+  });
+
+  it('只有 .project_root 而没有 chats 时该来源不出现', () => {
+    writeJsonFile(path.join(tmp, '.gemini', 'projects.json'), {
+      projects: { [projectPath]: 'demo-slug' },
+    });
+    const dir = path.join(tmp, '.gemini', 'tmp', 'demo-slug');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, '.project_root'), projectPath);
+    expect(
+      listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'gemini-cli')
+    ).toBeUndefined();
+  });
+
+  it('损坏的 jsonl 与缺失文件都返回空消息且不抛错', () => {
+    const file = geminiChatFile(tmp, geminiHash(projectPath), 'session-bad.jsonl');
+    fs.writeFileSync(file, 'not-json\n{"type":"system"}\n');
+    expect(readExternalSession('gemini-cli', file)).toEqual([]);
+    expect(
+      readExternalSession('gemini-cli', path.join(path.dirname(file), 'session-x.jsonl'))
+    ).toEqual([]);
+  });
+
+  it('其他项目的 slug 与哈希目录不出现', () => {
+    writeJsonFile(path.join(tmp, '.gemini', 'projects.json'), {
+      projects: { [projectPath]: 'demo-slug', '/tmp/other': 'other-slug' },
+    });
+    const mine = geminiChatFile(tmp, 'demo-slug', 'session-a.jsonl');
+    fs.writeFileSync(mine, geminiTurns);
+    fs.writeFileSync(geminiChatFile(tmp, 'other-slug', 'session-c.jsonl'), geminiTurns);
+    fs.writeFileSync(geminiChatFile(tmp, geminiHash('/tmp/other'), 'session-d.jsonl'), geminiTurns);
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'gemini-cli');
+    expect(source?.sessions.map((s) => s.path)).toEqual([mine]);
   });
 });
 
