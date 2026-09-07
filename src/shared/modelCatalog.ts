@@ -212,8 +212,9 @@ function thinkingLevelMapFromProjectLevels(
 ): Record<string, string | null> | undefined {
   if (reasoning !== true || !levels) return undefined;
   const map: Record<string, string | null> = {};
+  if (levels.includes('xhigh')) map.xhigh = 'xhigh';
   if (levels.includes('max')) map.max = 'max';
-  for (const level of ['low', 'medium', 'high'] as const) {
+  for (const level of ['minimal', 'low', 'medium', 'high'] as const) {
     if (!levels.includes(level)) map[level] = null;
   }
   return Object.keys(map).length > 0 ? map : undefined;

@@ -7,6 +7,7 @@ import {
   resolveCustomModelView,
   thinkingLevelMapForCap,
 } from './modelCatalog';
+import type { ThinkingLevel } from './types/agent';
 
 const sonnetCatalog = {
   id: 'claude-sonnet-4',
@@ -172,6 +173,21 @@ describe('thinkingLevelMapForCap', () => {
 });
 
 describe('resolveCustomModelView', () => {
+  it.each<ThinkingLevel[]>([
+    ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    ['low', 'high'],
+    ['xhigh'],
+    [],
+  ])('catalog 支持集经元数据回转后不丢失也不新增档位：%j', (...thinkingLevels) => {
+    const view = resolveCustomModelView(undefined, {
+      modelId: 'catalog-model',
+      source: 'catalog-fallback',
+      reasoning: true,
+      thinkingLevels,
+    });
+    expect(view.thinkingLevels).toEqual(thinkingLevels);
+  });
+
   it('catalog-fallback meta + 行覆盖：覆盖赢，source 可读', () => {
     const view = resolveCustomModelView(
       { reasoning: 'off', contextWindow: 64_000 },
