@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~729 | Active |
+| `journal-1.md` | ~753 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-09-08 | Force read/find promptGuidelines + Hashline read 高亮/edit diff/offset 修复 | `19bf6963`, `4408183a`, `2d7c5ea5`, `d2998bbb` | `dev` |
 | 23 | 2026-09-08 | 升级 pi-cursor 到 1.4.32 | `0c767cf9`, `2da9fd9b` | `dev` |
 | 22 | 2026-09-08 | 对齐 origin/dev 并收口未更新工作区 | `ac1ddadf`, `0c932262`, `9456e896` | `dev` |
 | 21 | 2026-09-08 | 切回半截回复时强制对齐 snapshot | `d516d52e`, `efbaf658` | `dev` |

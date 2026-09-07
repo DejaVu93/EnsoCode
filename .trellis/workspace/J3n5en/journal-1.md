@@ -727,3 +727,27 @@ rebase 合入远端 Hashline #64 与 pair VPN 修复；短会话不上报到头�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 24: Force read/find promptGuidelines + Hashline read 高亮/edit diff/offset 修复
+
+**Date**: 2026-09-08
+**Task**: Force read/find promptGuidelines + Hashline read 高亮/edit diff/offset 修复
+**Branch**: `dev`
+
+### Summary
+
+Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 renderer 剥掉头与行号恢复高亮；legacy {path,oldText,newText} edit 也出 diff；带 offset/limit 的 read 按 offset 编号、提示行不编号、快照记录整文件（修复此前必报 stale）
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `19bf6963` | (see git log) |
+| `4408183a` | (see git log) |
+| `2d7c5ea5` | (see git log) |
+| `d2998bbb` | (see git log) |
+
+### Status
+
+[OK] **Completed**
