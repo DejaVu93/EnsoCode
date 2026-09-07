@@ -115,8 +115,11 @@ export function isVisibleGenerationOutput(
       const content = extractWriteContent(part.name, part.arguments);
       if (content?.trim() && content !== extractWriteContent(part.name, oldArgs)) return true;
       const edits = extractEdits(part.name, part.arguments);
+      const previousEdits = extractEdits(part.name, oldArgs);
       return Boolean(
-        edits && JSON.stringify(edits) !== JSON.stringify(extractEdits(part.name, oldArgs))
+        edits?.some(({ oldText, newText }) => oldText.trim() || newText.trim()) &&
+          JSON.stringify(edits.map(({ oldText, newText }) => [oldText, newText])) !==
+            JSON.stringify(previousEdits?.map(({ oldText, newText }) => [oldText, newText]))
       );
     }
     return false;
@@ -235,6 +238,11 @@ export function applyAgentEvent(
     const sameGeneration = state.generation === snapshot.identity.generation;
     const running = snapshot.status === 'running';
     const continuingRun = sameGeneration && state.status === 'running' && running;
+    const completedTools = new Set(
+      snapshot.messages
+        .filter((message) => message.role === 'toolResult')
+        .map((message) => message.toolCallId)
+    );
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
     const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
@@ -264,7 +272,12 @@ export function applyAgentEvent(
       pendingAsks: snapshot.pendingAsks ?? [],
       backgroundTasks: snapshot.backgroundTasks ?? [],
       subagents: snapshot.subagents ?? [],
-      toolOutputs: {},
+      // 同轮补快照不能抹掉正在显示的工具输出与去重基准；已经收口的工具不保留旧尾巴。
+      toolOutputs: continuingRun
+        ? Object.fromEntries(
+            Object.entries(state.toolOutputs).filter(([id]) => !completedTools.has(id))
+          )
+        : {},
       historyBaseIndex:
         snapshot.baseIndex && snapshot.baseIndex > 0 ? snapshot.baseIndex : undefined,
     };

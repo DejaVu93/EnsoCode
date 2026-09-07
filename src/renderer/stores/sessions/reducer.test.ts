@@ -1062,6 +1062,70 @@ describe('lastOutputAt stall heartbeat', () => {
     expect(changed.messages).toEqual([placeholder]);
     expect(changed.lastOutputAt).toBe(1_000);
   });
+
+  it('edit 预览相同但块字段顺序或额外元数据变化不续命', () => {
+    const message = (edit: {
+      oldText: string;
+      newText: string;
+      note: number;
+    }): SessionProjection['messages'][number] => ({
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'c1',
+          name: 'edit',
+          arguments: { path: '/workspace/a.ts', edits: [edit] },
+        },
+      ],
+    });
+    const first = applyAgentEvent(
+      base,
+      's1',
+      upsert(1, 0, message({ oldText: 'old', newText: 'new', note: 1 })),
+      1_000
+    );
+    const reordered = applyAgentEvent(
+      first,
+      's1',
+      upsert(2, 0, message({ newText: 'new', oldText: 'old', note: 1 })),
+      NOW
+    );
+    expect.soft(reordered.lastOutputAt).toBe(1_000);
+    const changedMetadata = message({ newText: 'new', oldText: 'old', note: 2 });
+    const repeated = applyAgentEvent(reordered, 's1', upsert(3, 0, changedMetadata), NOW + 1_000);
+    expect(repeated.lastSeq).toBe(3);
+    expect(repeated.messages).toEqual([changedMetadata]);
+    expect(repeated.lastOutputAt).toBe(1_000);
+  });
+
+  it('edit 空 oldText/newText 占位不续命，真实删除的非空 oldText 算可见预览', () => {
+    const message = (oldText: string): SessionProjection['messages'][number] => ({
+      role: 'assistant',
+      content: [
+        {
+          type: 'toolCall',
+          id: 'c1',
+          name: 'edit',
+          arguments: { path: '/workspace/a.ts', edits: [{ oldText, newText: '' }] },
+        },
+      ],
+    });
+    const empty = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, message('')),
+      NOW
+    );
+    expect.soft(empty.lastOutputAt).toBe(1_000);
+    const deletion = applyAgentEvent(
+      empty,
+      's1',
+      upsert(2, 0, message('const obsolete = true;')),
+      NOW + 1_000
+    );
+    expect(deletion.lastOutputAt).toBe(NOW + 1_000);
+  });
 });
 
 describe('snapshot running clocks', () => {
@@ -1188,5 +1252,67 @@ describe('snapshot running clocks', () => {
       expect.soft(next.runStartedAt).toBe(1_000);
       expect.soft(next.lastOutputAt).toBe(2_000);
     }
+  });
+
+  it('同轮 running 快照保留进行中工具输出，重复输出仍使用快照前的去重基准', () => {
+    const message: SessionProjection['messages'][number] = {
+      role: 'assistant',
+      content: [{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'build' } }],
+    };
+    const running = applyAgentEvent(
+      { ...base, messages: [message] },
+      's1',
+      status(1, 'running'),
+      1_000
+    );
+    const output = (seq: number): RendererAgentEvent => ({
+      type: 'tool-output',
+      identity: identity(),
+      seq,
+      toolCallId: 'c1',
+      output: 'building',
+    });
+    const live = applyAgentEvent(running, 's1', output(2), 2_000);
+    const restored = restore(live, { messages: [message] });
+    expect.soft(restored.toolOutputs).toEqual({ c1: 'building' });
+    expect(restored.lastOutputAt).toBe(2_000);
+    const repeated = applyAgentEvent(restored, 's1', output(3), NOW + 1_000);
+    expect(repeated.lastSeq).toBe(3);
+    expect(repeated.toolOutputs).toEqual({ c1: 'building' });
+    expect(repeated.lastOutputAt).toBe(2_000);
+  });
+
+  it('同轮快照只清掉已完成工具的旧输出，idle 或新代快照清掉其余输出', () => {
+    const calls: SessionProjection['messages'][number] = {
+      role: 'assistant',
+      content: [
+        { type: 'toolCall', id: 'c1', name: 'bash' },
+        { type: 'toolCall', id: 'c2', name: 'bash' },
+      ],
+    };
+    const running: SessionProjection = {
+      ...base,
+      generation: 'g1',
+      status: 'running',
+      runStartedAt: 1_000,
+      lastOutputAt: 2_000,
+      messages: [calls],
+      toolOutputs: { c1: 'old partial', c2: 'still building' },
+    };
+    const restored = restore(running, {
+      messages: [
+        calls,
+        {
+          role: 'toolResult',
+          toolCallId: 'c1',
+          toolName: 'bash',
+          content: [{ type: 'text', text: 'done' }],
+        },
+      ],
+    });
+    expect.soft(restored.toolOutputs).toEqual({ c2: 'still building' });
+    expect(restored.lastOutputAt).toBe(2_000);
+    expect(restore(running, { status: 'idle' }).toolOutputs).toEqual({});
+    expect(restore(running, { identity: identity('g2') }).toolOutputs).toEqual({});
   });
 });
