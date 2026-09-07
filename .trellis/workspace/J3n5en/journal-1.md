@@ -572,3 +572,25 @@ worker 只消费 token 并自动 refresh、状态经独立 IPC 通道（不污�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 19: Files tree refresh after Agent writes
+
+**Date**: 2026-09-07
+**Task**: Files tree refresh after Agent writes
+**Branch**: `enso/9090acd8`
+
+### Summary
+
+Completed Agent writes now refresh the Files tree and expand ancestors without a directory watcher. Historical writes only seed a seen-set; cold/evicted history stays in seed mode until authoritative messages return, and historyBaseIndex shifts re-seed so snapshot keys do not mass-expand. Manual Refresh re-listDirs via treeEpoch. Spec notes that timeline diffs must wait for authoritative history.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `41296583` | (see git log) |
+| `197b4884` | (see git log) |
+
+### Status
+
+[OK] **Completed**
