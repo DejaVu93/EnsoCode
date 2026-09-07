@@ -6,6 +6,7 @@ import type {
   TitleSummaryInput,
   TurnDigest,
 } from '@shared/types/agent';
+import { isContinuationTurn } from '@shared/titleContinuation';
 
 /** 送给模型的用户消息上限：标题只需要开头，长指令全文只会烧 token */
 const MAX_INPUT_CHARS = 2000;
@@ -82,65 +83,6 @@ export const ROLLING_TITLE_SYSTEM_PROMPT = [
 const INLINE_CHAT_REF =
   /\[Referenced past chat "(.+?)" — transcript file: (.+?) \(pi session jsonl; read it if relevant\)\]/g;
 const INLINE_UI_REF = /\[Selected UI element "([^"]*)" — path: (.*?); text: (.*?)\]/g;
-
-/**
- * 推进类短句词表（小写、已去标点）：整句完全命中才算推进，带了实词（“继续排查 X”）就不算。
- * initial 模式的首行剔除与 rolling 模式的跳过共用这一份，避免两处各自漂移。
- */
-const CONTINUATION_PHRASES: ReadonlySet<string> = new Set([
-  '从这里继续',
-  '继续',
-  '接着',
-  '接着做',
-  '然后呢',
-  '下一步',
-  '开始',
-  '开始实施',
-  '开始做',
-  '实施',
-  '按 prd 实施',
-  '按计划实施',
-  '执行',
-  '去做',
-  '做吧',
-  '好的',
-  '好',
-  '可以',
-  '行',
-  '嗯',
-  'ok',
-  'okay',
-  'go',
-  'go ahead',
-  'continue',
-  'continue here',
-  'proceed',
-  'do it',
-  'yes',
-  'yep',
-  'next',
-  'start',
-  'start implementing',
-  'implement',
-  'implement it',
-]);
-/** 推进短句里允许夹带的连接/语气片：“好的，做吧”拆成 [好的, 做吧] 逐片查表；片内空白保留（"go ahead"） */
-const CONTINUATION_SPLIT = /[,，、;；.。!！?？:：~～\n]+/;
-
-/**
- * 推进类回合判定：“继续 / 开始实施 / 好的做吧 / go ahead”这类只推动同一话题往前走的短句。
- * 判据：去空白与标点后非空，且按连接符拆出的每一片都在推进词表里。带实词即不算。
- * 真机已证纯 prompt 约束对不听话的模型无效，这一层在 renderer 直接跳过滚动总结。
- */
-export function isContinuationTurn(text: string): boolean {
-  const pieces = text
-    .toLowerCase()
-    .split(CONTINUATION_SPLIT)
-    .map((piece) => piece.trim().replace(/\s+/g, ' '))
-    .filter((piece) => piece.length > 0);
-  if (pieces.length === 0) return false;
-  return pieces.every((piece) => CONTINUATION_PHRASES.has(piece));
-}
 
 export function buildTitleUserText(text: string): string {
   const trimmed = text.trim();
