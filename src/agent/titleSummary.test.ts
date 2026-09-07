@@ -6,11 +6,13 @@ import {
   buildTurnDigest,
   describeTitleModel,
   extractTitle,
+  isContinuationTurn,
   ROLLING_TITLE_SYSTEM_PROMPT,
   TITLE_SUMMARY_TIMEOUTS_MS,
   titleRejectReason,
   titleSummaryTimeoutMs,
   TURN_DIGEST_ASSISTANT_MAX,
+  TURN_DIGEST_FIRST_USER_MAX,
   TURN_DIGEST_USER_MAX,
 } from './titleSummary';
 
@@ -148,11 +150,43 @@ describe('buildTurnDigest：本轮消息 → 压缩摘要', () => {
     toolCallId: id,
   });
 
-  it('单 user + assistant：直接取两段文本', () => {
+  it('单 user + assistant：直接取两段文本，首条即本轮 user', () => {
     const messages: ProjectedMessage[] = [user('帮我修 bug'), assistant('已修复')];
     expect(buildTurnDigest(messages, 0)).toEqual({
+      firstUserText: '帮我修 bug',
       userText: '帮我修 bug',
       assistantText: '已修复',
+    });
+  });
+
+  it('firstUserText 取全量第一条 user，与 fromIndex 切片无关', () => {
+    const messages: ProjectedMessage[] = [
+      user('帮我把侧栏拖拽改成 dnd-kit'),
+      assistant('好，先看现状'),
+      user('开始实施'),
+      assistant('已读 PRD 并定位相关代码'),
+    ];
+    const digest = buildTurnDigest(messages, 2);
+    expect(digest?.firstUserText).toBe('帮我把侧栏拖拽改成 dnd-kit');
+    expect(digest?.userText).toBe('开始实施');
+  });
+
+  it('firstUserText 经 buildTitleUserText 清洗并截头到 TURN_DIGEST_FIRST_USER_MAX=600', () => {
+    expect(TURN_DIGEST_FIRST_USER_MAX).toBe(600);
+    const raw = [
+      '[Referenced past chat "旧会话" — transcript file: /tmp/s.jsonl (pi session jsonl; read it if relevant)]',
+      'z'.repeat(2000),
+    ].join('\n');
+    const messages: ProjectedMessage[] = [user(raw), assistant('答')];
+    expect(buildTurnDigest(messages, 0)?.firstUserText).toBe('z'.repeat(600));
+  });
+
+  it('全量无 user 时 firstUserText 为空串（assistant 有文本仍返回 digest）', () => {
+    const messages: ProjectedMessage[] = [assistant('只有 assistant')];
+    expect(buildTurnDigest(messages, 0)).toEqual({
+      firstUserText: '',
+      userText: '',
+      assistantText: '只有 assistant',
     });
   });
 
@@ -260,13 +294,17 @@ describe('buildTurnDigest：本轮消息 → 压缩摘要', () => {
 });
 
 describe('buildRollingTitleUserText：滚动模式送给模型的 user text', () => {
-  it('三段齐全时输出 Current title / Latest user request / Latest assistant conclusion', () => {
+  it('四段齐全时输出 Opening request / Current title / Latest user request / Latest assistant conclusion，且 Opening request 在最前', () => {
     const text = buildRollingTitleUserText({
       kind: 'rolling',
       currentTitle: '修复登录 bug',
+      firstUserText: '帮我把登录页的 bug 修一下',
       userText: '这个修复有通用性吗',
       assistantText: '只影响登录路径',
     });
+    expect(text).toContain('Opening request');
+    expect(text).toContain('帮我把登录页的 bug 修一下');
+    expect(text.indexOf('Opening request')).toBeLessThan(text.indexOf('Current title'));
     expect(text).toContain('Current title: 修复登录 bug');
     expect(text).toContain('Latest user request:');
     expect(text).toContain('这个修复有通用性吗');
@@ -274,10 +312,22 @@ describe('buildRollingTitleUserText：滚动模式送给模型的 user text', ()
     expect(text).toContain('只影响登录路径');
   });
 
+  it('firstUserText 为空时 Opening request 段用 (none) 占位', () => {
+    const text = buildRollingTitleUserText({
+      kind: 'rolling',
+      currentTitle: 't',
+      firstUserText: '',
+      userText: 'u',
+      assistantText: 'a',
+    });
+    expect(text).toMatch(/Opening request[^\n]*\n\(none\)/);
+  });
+
   it('userText 为空时该段用 (none) 占位', () => {
     const text = buildRollingTitleUserText({
       kind: 'rolling',
       currentTitle: 't',
+      firstUserText: 'f',
       userText: '',
       assistantText: 'a',
     });
@@ -290,6 +340,7 @@ describe('buildRollingTitleUserText：滚动模式送给模型的 user text', ()
     const text = buildRollingTitleUserText({
       kind: 'rolling',
       currentTitle: 't',
+      firstUserText: 'f',
       userText: 'u',
       assistantText: '',
     });
@@ -302,6 +353,7 @@ describe('buildRollingTitleUserText：滚动模式送给模型的 user text', ()
     const text = buildRollingTitleUserText({
       kind: 'rolling',
       currentTitle: '',
+      firstUserText: 'f',
       userText: 'u',
       assistantText: 'a',
     });
@@ -317,6 +369,51 @@ describe('ROLLING_TITLE_SYSTEM_PROMPT', () => {
 
   it('包含保持当前标题的指令', () => {
     expect(ROLLING_TITLE_SYSTEM_PROMPT.toLowerCase()).toContain('current title');
+  });
+
+  it('锰定开场请求，且明确推进类回合原样返回、不满单步动作当标题', () => {
+    const lower = ROLLING_TITLE_SYSTEM_PROMPT.toLowerCase();
+    expect(lower).toContain('opening request');
+    expect(lower).toMatch(/continue|proceed|go ahead/);
+    expect(lower).toMatch(/single step|single action|one step/);
+  });
+});
+
+describe('isContinuationTurn：推进类短句不触发滚动总结', () => {
+  it.each([
+    '开始实施',
+    '继续',
+    '好的，做吧',
+    '好的',
+    '可以',
+    '下一步',
+    '然后呢？',
+    '接着',
+    '按 PRD 实施',
+    'go ahead',
+    'ok',
+    'OK!',
+    'continue',
+    'proceed',
+    'do it',
+    'yes',
+    'next',
+    '从这里继续',
+  ])('%s → true', (text) => {
+    expect(isContinuationTurn(text)).toBe(true);
+  });
+
+  it.each([
+    '开始实施 dnd-kit 迁移',
+    '继续排查节点转圈问题',
+    '帮我修一下登录',
+    '好的，那把 CoworkerTabs 的拖拽也换掉',
+    'continue with the sidebar refactor',
+    '这个修复有通用性吗',
+    '',
+    '   ',
+  ])('%s → false', (text) => {
+    expect(isContinuationTurn(text)).toBe(false);
   });
 });
 

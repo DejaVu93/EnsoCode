@@ -48,6 +48,8 @@ export function describeTitleModel(model: SpawnModelConfig): string {
   return `${provider}/${model.modelId}`;
 }
 
+/** 滚动摘要：会话首条 user 文本截头上限（主旨锚点，不需要全文） */
+export const TURN_DIGEST_FIRST_USER_MAX = 600;
 /** 滚动摘要：本轮 user 文本截头上限 */
 export const TURN_DIGEST_USER_MAX = 2000;
 /** 滚动摘要：本轮 assistant 结论截尾上限（结论通常在末尾） */
@@ -65,10 +67,12 @@ export const TITLE_SYSTEM_PROMPT = [
 
 export const ROLLING_TITLE_SYSTEM_PROMPT = [
   'You maintain the title of an ongoing coding conversation.',
-  'You are given the current title plus the latest user request and the latest assistant conclusion.',
+  'You are given the opening request (the main topic), the current title, plus the latest user request and the latest assistant conclusion.',
   'Rules:',
-  '- The title must summarize the topic of the WHOLE conversation, not only the latest turn.',
+  "- The title must describe the conversation's main topic, anchored on the opening request, not only the latest turn.",
   '- If the current title is still accurate, reply with the current title verbatim.',
+  '- If the latest request only continues, confirms, or asks to proceed with the existing topic (e.g. "continue", "go ahead", "start implementing", "ok do it"), reply with the current title verbatim.',
+  '- Never turn a single step or action of the latest turn into the title.',
   '- Only change the title when the conversation topic has clearly shifted or become more specific.',
   '- Reply with the title text only: no quotes, no trailing punctuation, no explanations.',
   '- Keep it under 20 characters for CJK languages, or about 6 words for English.',
@@ -78,7 +82,65 @@ export const ROLLING_TITLE_SYSTEM_PROMPT = [
 const INLINE_CHAT_REF =
   /\[Referenced past chat "(.+?)" — transcript file: (.+?) \(pi session jsonl; read it if relevant\)\]/g;
 const INLINE_UI_REF = /\[Selected UI element "([^"]*)" — path: (.*?); text: (.*?)\]/g;
-const CONTINUATION_LINE = /^(?:从这里继续|继续|continue(?:\s+here)?)\s*[:：]?\s*$/i;
+
+/**
+ * 推进类短句词表（小写、已去标点）：整句完全命中才算推进，带了实词（“继续排查 X”）就不算。
+ * initial 模式的首行剔除与 rolling 模式的跳过共用这一份，避免两处各自漂移。
+ */
+const CONTINUATION_PHRASES: ReadonlySet<string> = new Set([
+  '从这里继续',
+  '继续',
+  '接着',
+  '接着做',
+  '然后呢',
+  '下一步',
+  '开始',
+  '开始实施',
+  '开始做',
+  '实施',
+  '按 prd 实施',
+  '按计划实施',
+  '执行',
+  '去做',
+  '做吧',
+  '好的',
+  '好',
+  '可以',
+  '行',
+  '嗯',
+  'ok',
+  'okay',
+  'go',
+  'go ahead',
+  'continue',
+  'continue here',
+  'proceed',
+  'do it',
+  'yes',
+  'yep',
+  'next',
+  'start',
+  'start implementing',
+  'implement',
+  'implement it',
+]);
+/** 推进短句里允许夹带的连接/语气片：“好的，做吧”拆成 [好的, 做吧] 逐片查表；片内空白保留（"go ahead"） */
+const CONTINUATION_SPLIT = /[,，、;；.。!！?？:：~～\n]+/;
+
+/**
+ * 推进类回合判定：“继续 / 开始实施 / 好的做吧 / go ahead”这类只推动同一话题往前走的短句。
+ * 判据：去空白与标点后非空，且按连接符拆出的每一片都在推进词表里。带实词即不算。
+ * 真机已证纯 prompt 约束对不听话的模型无效，这一层在 renderer 直接跳过滚动总结。
+ */
+export function isContinuationTurn(text: string): boolean {
+  const pieces = text
+    .toLowerCase()
+    .split(CONTINUATION_SPLIT)
+    .map((piece) => piece.trim().replace(/\s+/g, ' '))
+    .filter((piece) => piece.length > 0);
+  if (pieces.length === 0) return false;
+  return pieces.every((piece) => CONTINUATION_PHRASES.has(piece));
+}
 
 export function buildTitleUserText(text: string): string {
   const trimmed = text.trim();
@@ -95,12 +157,13 @@ export function buildTitleUserText(text: string): string {
     .split('\n')
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
-  while (lines.length > 1 && CONTINUATION_LINE.test(lines[0])) {
+  // initial 模式：首行若是推进短句（“从这里继续：”），剔掉它用后面的正文总结
+  while (lines.length > 1 && isContinuationTurn(lines[0])) {
     lines.shift();
   }
   const cleanBody = lines.join('\n').trim();
 
-  if (cleanBody && !CONTINUATION_LINE.test(cleanBody)) {
+  if (cleanBody && !isContinuationTurn(cleanBody)) {
     return cleanBody.slice(0, MAX_INPUT_CHARS);
   }
 
@@ -113,11 +176,14 @@ export function buildTitleUserText(text: string): string {
 
 const orNone = (text: string): string => (text.trim() ? text.trim() : '(none)');
 
-/** 滚动模式送给模型的 user text：三段结构，空段用 (none) 占位 */
+/** 滚动模式送给模型的 user text：四段结构，开场请求在最前作主旨锚点，空段用 (none) 占位 */
 export function buildRollingTitleUserText(
   input: Extract<TitleSummaryInput, { kind: 'rolling' }>
 ): string {
   return [
+    "Opening request (the conversation's main topic):",
+    orNone(input.firstUserText),
+    '',
     `Current title: ${orNone(input.currentTitle)}`,
     '',
     'Latest user request:',
@@ -136,9 +202,10 @@ function textOf(message: ProjectedMessage): string {
 }
 
 /**
- * 从投影消息里切出本轮摘要：user 段取切片内全部 user 文本（清洗后拼接、截头），
+ * 从投影消息里切出本轮摘要：firstUserText 取全量首条 user（主旨锚点，与切片无关）；
+ * user 段取切片内全部 user 文本（清洗后拼接、截头），
  * assistant 段取切片内最后一条含 text 且非 error/aborted 的 assistant（截尾）。
- * 切片内无 user 时回退到全量里最近一条 user；两段皆空返回 null。
+ * 切片内无 user 时回退到全量里最近一条 user；本轮两段皆空返回 null。
  */
 export function buildTurnDigest(
   messages: ProjectedMessage[],
@@ -146,6 +213,12 @@ export function buildTurnDigest(
 ): TurnDigest | null {
   const start = Math.max(0, Math.min(fromIndex, messages.length));
   const turn = messages.slice(start);
+
+  const firstUser = messages.find((message) => message.role === 'user');
+  const firstUserText = (firstUser ? buildTitleUserText(textOf(firstUser)) : '').slice(
+    0,
+    TURN_DIGEST_FIRST_USER_MAX
+  );
 
   let userParts = turn
     .filter((message) => message.role === 'user')
@@ -170,7 +243,7 @@ export function buildTurnDigest(
   const assistantText = conclusion ? textOf(conclusion).slice(-TURN_DIGEST_ASSISTANT_MAX) : '';
 
   if (!userText && !assistantText) return null;
-  return { userText, assistantText };
+  return { firstUserText, userText, assistantText };
 }
 
 /** 模型习惯性包裹的引号/书名号对 */
