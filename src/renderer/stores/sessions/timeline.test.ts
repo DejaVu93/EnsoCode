@@ -701,7 +701,7 @@ describe('foldTimeline', () => {
     expect(expanded.map((i) => i.key)).toEqual([groupKey, 't1', 'th', 't2', 't3']);
   });
 
-  it('compact：running 时最后一轮也折组，running 行钉在组外', () => {
+  it('compact：running 只读工具进组，不钉组外', () => {
     const runningTool = { ...toolItem('r', 'read'), state: 'running' } as TimelineItem;
     const items = [
       userItem('u0'),
@@ -711,12 +711,11 @@ describe('foldTimeline', () => {
       runningTool,
     ];
     const folded = foldTimeline(items, true, new Set(), { compact: true });
-    expect(folded.map((i) => i.kind)).toEqual(['user', 'tool-group', 'tool']);
+    expect(folded.map((i) => i.kind)).toEqual(['user', 'tool-group']);
     const group = folded[1] as Extract<TimelineItem, { kind: 'tool-group' }>;
-    expect(group.count).toBe(3);
-    expect(group.stats).toEqual({ commands: 0, reads: 1, searches: 2, others: 0 });
-    expect(folded[2]).toBe(runningTool);
-    // 展开后全量平铺，running 行不重复
+    expect(group.count).toBe(4);
+    expect(group.exploring).toBe(true);
+    expect(group.stats).toEqual({ commands: 0, reads: 2, searches: 2, others: 0 });
     const expanded = foldTimeline(items, true, new Set([group.key]), { compact: true });
     expect(expanded.map((i) => i.key)).toEqual(['u0', group.key, 'a1', 'a2', 'a3', 'r']);
   });
@@ -755,10 +754,11 @@ describe('foldTimeline', () => {
     expect((legacy[0] as Extract<TimelineItem, { kind: 'tool-group' }>).count).toBe(5);
   });
 
-  it('compact：running 行钉组外时组头标 exploring', () => {
+  it('compact：组内有 running 只读工具时组头标 exploring', () => {
     const running = { ...toolItem('r', 'read'), state: 'running' } as TimelineItem;
     const items = [toolItem('a1', 'read'), toolItem('a2', 'ls'), toolItem('a3', 'grep'), running];
     const folded = foldTimeline(items, true, new Set(), { compact: true });
+    expect(folded.map((i) => i.kind)).toEqual(['tool-group']);
     expect((folded[0] as Extract<TimelineItem, { kind: 'tool-group' }>).exploring).toBe(true);
   });
 

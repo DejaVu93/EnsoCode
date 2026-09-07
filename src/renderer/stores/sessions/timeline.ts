@@ -763,7 +763,7 @@ export function isReadOnlyTool(item: { name: string; summary: string }): boolean
  * - 带 diff 的 edit 行不进组，紧跟组头之后平铺（改动是核心产物，不折）。
  * - 默认：running 时最后一个 user 之后的段不折（进行中的轮实时展示）。
  * - compact（对齐 Cursor 的 Explored）：段只收只读工具（read/grep/find/ls/glob），
- *   bash 等其它工具打断段并平铺；live 也折，running 行钉在组外，组头标 exploring。
+ *   bash 等其它工具打断段并平铺；live 也折，running 只读行进组，组头标 exploring。
  * - expandedKeys 含组 key 时组头后平铺 children（参与虚拟化）。
  * 纯函数。
  */
@@ -791,15 +791,15 @@ export function foldTimeline(
     while (end < items.length && inSegment(items[end])) end += 1;
     const segment = items.slice(i, end);
     const liveSegment = !compact && running && lastUserIndex >= 0 && i > lastUserIndex;
-    // 钉住的行不进组：edit 的 diff、write 的内容、todo 清单是核心产物，
-    // running 行是「此刻在跑什么」，都不折进黑盒
-    const pinned = (s: TimelineItem): boolean =>
-      s.kind === 'tool' &&
-      (s.edits !== null ||
-        !!s.writeContent ||
-        s.name === 'todo' ||
-        s.state === 'running' ||
-        s.state === 'reviewing');
+    // 钉住的行不进组：edit 的 diff、write 的内容、todo 清单是核心产物。
+    // compact 下 running 只读行进组（避免完成后从平铺跳进组头抽动）；
+    // 非 compact 仍把 running 钉在组外，方便看此刻在跑什么。
+    const pinned = (s: TimelineItem): boolean => {
+      if (s.kind !== 'tool') return false;
+      if (s.edits !== null || !!s.writeContent || s.name === 'todo') return true;
+      if (s.state !== 'running' && s.state !== 'reviewing') return false;
+      return !(compact && isReadOnlyTool(s));
+    };
     const editRows = segment.filter(pinned);
     const groupRows = segment.filter((s) => !pinned(s));
     const toolCount = groupRows.filter((s) => s.kind === 'tool').length;
@@ -820,7 +820,7 @@ export function foldTimeline(
         stats,
         exploring:
           compact &&
-          editRows.some(
+          groupRows.some(
             (s) => s.kind === 'tool' && (s.state === 'running' || s.state === 'reviewing')
           ),
         children: groupRows,
