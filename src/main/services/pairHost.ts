@@ -25,7 +25,6 @@ import {
 } from '@enso/pair';
 import {
   catalogSyncFingerprint,
-  changedMetaChannels,
   type PairMetaFingerprints,
   pairJsonFingerprint,
   shouldRelayPairSnapshot,
@@ -48,6 +47,7 @@ import { app, powerMonitor, powerSaveBlocker } from 'electron';
 // 会话命令一律走 agentBridge（身份解析留在 ipc/agent.ts），这里只留无需身份的 snapshot。
 import { requestSnapshot, setPinnedSessions } from './agentHost';
 import { MacosSystemSleepAssertion } from './macosSystemSleepAssertion';
+import { bumpPairMetaEpoch, flushChangedMeta, requestPairMeta } from './pairMetaFlush';
 import {
   checkSetModel,
   checkSpawn,
@@ -104,6 +104,9 @@ interface Connection {
   pendingSnapshot?: boolean;
   /** 已下发 meta 各通道指纹；相同内容不重发 */
   sentMeta?: PairMetaFingerprints;
+  metaDirty: boolean;
+  metaSending: boolean;
+  metaEpoch?: number;
   phoneOnline: boolean;
   /** 手机页面可见性（presence 帧上报）：锁屏/切后台时 socket 半开不会 close，推送据此门控 */
   phoneVisible: boolean;
@@ -415,6 +418,8 @@ function openConnection(device: PairedDevice): void {
     ws: null,
     heartbeat: null,
     subscribedId: null,
+    metaDirty: false,
+    metaSending: false,
     phoneOnline: false,
     phoneVisible: true,
     attempt: 0,
@@ -480,9 +485,9 @@ function connect(conn: Connection): void {
           conn.subscribedId = null;
           conn.pendingSnapshot = undefined;
           conn.pendingHistory = undefined;
-          conn.sentMeta = undefined;
+          bumpPairMetaEpoch(conn);
           // 手机进房即推目录（它也会发 snapshot，指纹相同则不重发）
-          void sendMeta(conn);
+          requestMeta(conn);
           notifyStatus();
         } else if (control.type === 'peer-left') {
           conn.phoneOnline = false;
@@ -544,6 +549,7 @@ async function handleFrame(conn: Connection, frame: Uint8Array): Promise<void> {
   // 收到手机的加密帧即证明它在房间里（控制帧可能因时序丢失）
   if (!conn.phoneOnline) {
     conn.phoneOnline = true;
+    bumpPairMetaEpoch(conn);
     notifyStatus();
   }
   let payload: unknown;
@@ -590,11 +596,11 @@ async function handleFrame(conn: Connection, frame: Uint8Array): Promise<void> {
         conn.pendingSnapshot = undefined;
       }
       // 切换订阅后目录要重裁（cwd/排队只挂当前会话）
-      void sendMeta(conn);
+      requestMeta(conn);
       break;
     case 'snapshot':
       // 只要目录/外观；会话正文走 subscribe
-      void sendMeta(conn);
+      requestMeta(conn);
       break;
     case 'set-model': {
       const check = checkSetModel(command, whitelist);
@@ -676,19 +682,27 @@ async function handleFrame(conn: Connection, frame: Uint8Array): Promise<void> {
 
 // ── 发：加密下行 ──────────────────────────────────────────────────────
 
-async function send(conn: Connection, message: HostToPhone): Promise<void> {
-  if (conn.ws?.readyState !== 1) return;
+async function send(conn: Connection, message: HostToPhone): Promise<boolean> {
+  const ws = conn.ws;
+  if (ws?.readyState !== 1) return false;
   try {
     const frame = await sealFrame(conn.contentKey, message);
     // 中继对超过 1MB 的帧直接丢弃且不通知发送方：本地拦下并留痕，别白发
     if (frame.byteLength > 1_000_000) {
       console.warn(`[pair] frame ${frame.byteLength}B over relay limit, dropped locally`);
-      return;
+      return false;
     }
-    conn.ws.send(new Uint8Array(frame).slice().buffer as ArrayBuffer);
+    if (ws !== conn.ws || ws.readyState !== 1) return false;
+    ws.send(new Uint8Array(frame).slice().buffer as ArrayBuffer);
+    return true;
   } catch (error) {
     console.warn('[pair] send failed', error);
+    return false;
   }
+}
+
+function requestMeta(conn: Connection): void {
+  requestPairMeta(conn, sendMeta);
 }
 
 async function sendMeta(conn: Connection): Promise<void> {
@@ -711,23 +725,24 @@ async function sendMeta(conn: Connection): Promise<void> {
     pushConfig: pairJsonFingerprint(vapidPublicKey),
     hostInfo: pairJsonFingerprint(hostInfo),
   };
-  const changed = new Set(changedMetaChannels(conn.sentMeta, next));
-  if (changed.size === 0) return;
-  if (changed.has('catalog')) {
-    await send(conn, { type: 'catalog', entries: catalogEntries, pinnedOrder });
-  }
-  if (changed.has('projects')) {
-    await send(conn, {
-      type: 'projects',
-      projects: projectEntries,
-      ...(projectGroups.length > 0 ? { groups: projectGroups } : {}),
-    });
-  }
-  if (changed.has('providers')) await send(conn, { type: 'providers', providers });
-  if (changed.has('appearance')) await send(conn, appearance);
-  if (changed.has('pushConfig')) await send(conn, { type: 'push-config', vapidPublicKey });
-  if (changed.has('hostInfo')) await send(conn, { type: 'host-info', ...hostInfo });
-  conn.sentMeta = { ...conn.sentMeta, ...next };
+  await flushChangedMeta(
+    conn.sentMeta,
+    next,
+    {
+      catalog: () => send(conn, { type: 'catalog', entries: catalogEntries, pinnedOrder }),
+      projects: () =>
+        send(conn, {
+          type: 'projects',
+          projects: projectEntries,
+          ...(projectGroups.length > 0 ? { groups: projectGroups } : {}),
+        }),
+      providers: () => send(conn, { type: 'providers', providers }),
+      appearance: () => send(conn, appearance),
+      pushConfig: () => send(conn, { type: 'push-config', vapidPublicKey }),
+      hostInfo: () => send(conn, { type: 'host-info', ...hostInfo }),
+    },
+    conn
+  );
 }
 
 /** agentHost 事件出口：按订阅过滤后加密发给每台在线手机 */
@@ -835,7 +850,7 @@ export function updatePairCatalog(payload: {
     })),
   };
   for (const conn of connections.values()) {
-    // 连接已建立就发：phoneOnline 依赖控制帧，时序上可能晚于目录更新
-    if (conn.ws?.readyState === 1) void sendMeta(conn);
+    // 人对端在房才推：readyState 开着但 peer-left 时往 relay 白发且会误记 sentMeta
+    if (conn.phoneOnline) requestMeta(conn);
   }
 }
