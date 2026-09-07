@@ -390,6 +390,10 @@ describe('applyAgentEvent', () => {
     const zero = applyAgentEvent(tailed, 's1', { type: 'snapshot', sessions: [snapshot(0)] });
     expect((missing as TailProjection).historyBaseIndex).toBeUndefined();
     expect((zero as TailProjection).historyBaseIndex).toBeUndefined();
+    // patch 是浅合并：缺 key 会把尾巴 base 留下，全量 800 条后 upsert 写到本地 60。
+    expect(Object.hasOwn(missing, 'historyBaseIndex')).toBe(true);
+    expect(Object.hasOwn(zero, 'historyBaseIndex')).toBe(true);
+    expect({ ...tailed, ...zero }.historyBaseIndex).toBeUndefined();
   });
 
   it('snapshot keeps optimistic echoes the worker has not delivered yet', () => {
@@ -418,6 +422,39 @@ describe('applyAgentEvent', () => {
       'in flight',
     ]);
     expect(next.messages[3]).toHaveProperty('optimistic', true);
+  });
+
+  it('snapshot 不因窗口里更早的同文 user 吃掉尚未送达的乐观回显', () => {
+    const withEcho: SessionProjection = {
+      ...base,
+      historyBaseIndex: 40,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], optimistic: true },
+      ],
+    };
+    const next = applyAgentEvent(withEcho, 's1', {
+      type: 'snapshot',
+      sessions: [
+        {
+          identity: identity(),
+          status: 'running',
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+            { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+          ],
+          commands: [],
+          baseIndex: 40,
+        },
+      ],
+    });
+    expect(next.messages.map((m) => (m.content[0] as { text: string }).text)).toEqual([
+      'hi',
+      'hello',
+      'hi',
+    ]);
+    expect(next.messages[2]).toHaveProperty('optimistic', true);
   });
 
   it('乐观尾巴不被同 index 的 assistant upsert 覆盖，同文本 user upsert 将其消费', () => {

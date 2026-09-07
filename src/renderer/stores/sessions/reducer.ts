@@ -47,6 +47,23 @@ function sameUserText(optimistic: string, delivered: string): boolean {
   return slash[1] === block[1] && (slash[2] ?? '').trim() === (block[4] ?? '').trim();
 }
 
+function leftoverSnapshotUserTexts(
+  local: readonly TimelineMessage[],
+  snapshotMessages: readonly ProjectedMessage[]
+): string[] {
+  const leftover = snapshotMessages.filter((message) => message.role === 'user').map(textOf);
+  for (const message of local) {
+    if (message.optimistic || message.role !== 'user') continue;
+    const text = textOf(message);
+    const matched = leftover.findIndex(
+      (delivered) =>
+        text === delivered || sameUserText(text, delivered) || sameUserText(delivered, text)
+    );
+    if (matched !== -1) leftover.splice(matched, 1);
+  }
+  return leftover;
+}
+
 /** 权威区（乐观尾巴之前的消息）长度 */
 function authoritativeLength(messages: readonly TimelineMessage[]): number {
   const firstOptimistic = messages.findIndex((message) => message.optimistic);
@@ -178,17 +195,17 @@ export function applyAgentEvent(
     const sameGeneration = state.generation === snapshot.identity.generation;
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
-    const delivered = new Set(
-      snapshot.messages.filter((message) => message.role === 'user').map(textOf)
-    );
-    const tail = state.messages.filter(
-      (message) =>
-        message.optimistic &&
-        message.role === 'user' &&
-        ![...delivered].some((text) => sameUserText(textOf(message), text))
-    );
-    const historyBaseIndex =
-      snapshot.baseIndex && snapshot.baseIndex > 0 ? snapshot.baseIndex : undefined;
+    const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
+    const tail = state.messages.filter((message) => {
+      if (!message.optimistic || message.role !== 'user') return false;
+      const text = textOf(message);
+      const matched = leftover.findIndex(
+        (delivered) => sameUserText(text, delivered) || sameUserText(delivered, text)
+      );
+      if (matched === -1) return true;
+      leftover.splice(matched, 1);
+      return false;
+    });
     return {
       generation: snapshot.identity.generation,
       status: snapshot.status,
@@ -203,7 +220,8 @@ export function applyAgentEvent(
       backgroundTasks: snapshot.backgroundTasks ?? [],
       subagents: snapshot.subagents ?? [],
       toolOutputs: {},
-      ...(historyBaseIndex !== undefined ? { historyBaseIndex } : {}),
+      historyBaseIndex:
+        snapshot.baseIndex && snapshot.baseIndex > 0 ? snapshot.baseIndex : undefined,
     };
   }
 
