@@ -41,6 +41,35 @@ export function persistClampedThinkingLevel(
   return next === level ? undefined : next;
 }
 
+/** 展示复用运行时能力分层；乐观默认可以预览，但不能当成已知支持集回写。 */
+export function resolvePickerCapabilities(
+  provider: ModelProvider | undefined,
+  row: ModelEntry | undefined,
+  meta: ModelMeta | undefined
+): {
+  reasoning: boolean | undefined;
+  thinkingLevels: ThinkingLevel[] | undefined;
+  declaredThinkingLevels: ThinkingLevel[] | undefined;
+} {
+  const knownMeta = meta?.source === 'unknown' ? undefined : meta;
+  if (provider?.oauthAccountKey) {
+    return {
+      reasoning: knownMeta?.reasoning,
+      thinkingLevels: knownMeta?.thinkingLevels,
+      declaredThinkingLevels: knownMeta?.thinkingLevels,
+    };
+  }
+  const view = resolveCustomModelView(row, meta);
+  return {
+    reasoning: view.reasoning,
+    thinkingLevels: view.thinkingLevels,
+    declaredThinkingLevels:
+      view.source.thinkingLevel === 'override' || knownMeta?.thinkingLevels !== undefined
+        ? view.thinkingLevels
+        : undefined,
+  };
+}
+
 /** 档位显示文案的 t() key（不是已翻译文本）；沿用既有英文短词，字典里已配好中文译文 */
 const LEVEL_LABEL_KEYS: Record<ThinkingLevel, string> = {
   minimal: 'Min',
@@ -564,19 +593,28 @@ export function ModelPicker({
       onSelect(targetProviderId, targetModelId);
       // 同一次交互内钳位:目标模型已知的支持档集若不含当前档,自动降到最近支持档并回写
       const meta = metaByProvider[targetProviderId]?.[targetModelId];
-      const persisted = persistClampedThinkingLevel(thinkingLevel, meta?.thinkingLevels);
+      const provider = providers.find((entry) => entry.id === targetProviderId);
+      const row = provider?.models.find((entry) => entry.id === targetModelId);
+      const capability = resolvePickerCapabilities(provider, row, meta);
+      const persisted = persistClampedThinkingLevel(
+        thinkingLevel,
+        capability.declaredThinkingLevels
+      );
       if (persisted) normalizeThinking(persisted);
       setOpen(false);
     },
-    [onSelect, metaByProvider, thinkingLevel, normalizeThinking]
+    [onSelect, providers, metaByProvider, thinkingLevel, normalizeThinking]
   );
 
   const currentProviderMeta = useModelMeta(currentProvider);
   const currentModelMeta = currentProviderMeta[modelId];
-  const supportedLevels = currentModelMeta?.thinkingLevels;
+  const capability = useMemo(
+    () => resolvePickerCapabilities(currentProvider, current, currentModelMeta),
+    [currentProvider, current, currentModelMeta]
+  );
+  const supportedLevels = capability.thinkingLevels;
   const visibleLevels = useMemo(() => visibleThinkingLevels(supportedLevels), [supportedLevels]);
-  const reasoningUnsupported =
-    currentModelMeta?.reasoning === false || supportedLevels?.length === 0;
+  const reasoningUnsupported = capability.reasoning === false || supportedLevels?.length === 0;
   const displayedReasoningEnabled = reasoningUnsupported ? false : reasoningEnabled;
   const displayedThinkingLevel =
     visibleLevels.length > 0
@@ -596,18 +634,16 @@ export function ModelPicker({
    * 配合这个判断，每次 meta 到位最多触发一次修正性 setState，不会死循环。
    */
   useEffect(() => {
-    if (!currentModelMeta) return;
     if (reasoningUnsupported) {
       if (reasoningEnabled) normalizeReasoning(false);
       return;
     }
     if (!reasoningEnabled) return;
-    const persisted = persistClampedThinkingLevel(thinkingLevel, supportedLevels);
+    const persisted = persistClampedThinkingLevel(thinkingLevel, capability.declaredThinkingLevels);
     if (persisted) normalizeThinking(persisted);
   }, [
-    currentModelMeta,
+    capability.declaredThinkingLevels,
     reasoningUnsupported,
-    supportedLevels,
     reasoningEnabled,
     thinkingLevel,
     normalizeReasoning,
@@ -809,33 +845,37 @@ export function ModelPicker({
               <div className="mt-3">
                 <Slider
                   tabIndex={-1}
+                  thumbAlignment="center"
+                  className="[&_[data-slot=slider-indicator]]:ms-0 [&_[data-slot=slider-track]]:before:inset-x-0"
                   min={0}
-                  max={visibleLevels.length - 1}
+                  max={Math.max(1, visibleLevels.length - 1)}
                   step={1}
                   value={levelIndex}
+                  disabled={visibleLevels.length === 1}
                   onValueChange={(value) => {
                     const index = Array.isArray(value) ? value[0] : value;
                     const target = visibleLevels[index] ?? visibleLevels[0];
                     onThinkingChange(target);
                   }}
                 />
-                <div className="mt-1 flex justify-between gap-0">
+                <div className="relative mt-1 h-6">
                   {visibleLevels.map((entry, index) => (
                     <button
                       key={entry}
                       type="button"
                       tabIndex={-1}
+                      data-thinking-tick={entry}
+                      style={{ left: `${(index / Math.max(1, visibleLevels.length - 1)) * 100}%` }}
                       onClick={() => onThinkingChange(entry)}
-                      className={cn(
-                        'flex min-w-0 flex-1 flex-col items-center gap-0',
-                        index === 0 && 'items-start',
-                        index === visibleLevels.length - 1 && 'items-end'
-                      )}
+                      className="absolute top-0 flex w-0 flex-col items-center"
                     >
-                      <span className="h-1.5 w-px bg-muted-foreground/40" />
+                      <span className="h-1.5 w-px shrink-0 bg-muted-foreground/40" />
                       <span
                         className={cn(
-                          'text-[10px] transition-colors',
+                          'whitespace-nowrap text-[10px] transition-colors',
+                          index === 0
+                            ? 'self-start'
+                            : index === visibleLevels.length - 1 && 'self-end',
                           entry === displayedThinkingLevel
                             ? 'font-medium text-primary'
                             : 'text-muted-foreground/70 hover:text-foreground'
