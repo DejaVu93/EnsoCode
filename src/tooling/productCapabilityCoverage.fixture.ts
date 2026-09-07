@@ -34,6 +34,22 @@ export const SETTINGS_DATA_COVERAGE = {
   statusLineSegments: surfaces('appearance.status-line-segments'),
   loadLocalSkills: surfaces('general.load-local-skills'),
   loadHarnessAssets: surfaces('general.load-harness-assets'),
+  windowsLocalShell: surfaces('general.windows-local-shell'),
+  exploreFoldEnabled: excluded(
+    'Explore-fold is a desktop session preference, not an Enso capability.'
+  ),
+  bashInterceptEnabled: excluded(
+    'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
+  smartCompactEnabled: excluded(
+    'Verified smart compaction is a desktop session preference, not an Enso capability.'
+  ),
+  smartCompactModel: excluded(
+    'Verified smart compaction model is a desktop session preference, not an Enso capability.'
+  ),
+  smartCompactMode: excluded(
+    'Verified smart compaction mode is a desktop session preference, not an Enso capability.'
+  ),
   autoUpdate: surfaces('general.automatic-updates'),
   proxyMode: surfaces('general.proxy-mode'),
   customProxyUrl: surfaces('general.custom-proxy-url'),
@@ -46,6 +62,8 @@ export const SETTINGS_DATA_COVERAGE = {
   defaultThinkingLevel: surfaces('providers.default-model'),
   titleSummaryEnabled: excluded('Conversation title summary preference; not an Enso capability.'),
   titleSummaryModel: excluded('Conversation title summary preference; not an Enso capability.'),
+  approvalReviewer: excluded('Assistant approval reviewer model; desktop settings only.'),
+  lastApprovalMode: excluded('Last used approval mode is a desktop session preference.'),
   skills: surfaces('skills.list'),
   mcpServers: surfaces('mcp.list'),
   instructions: surfaces('instructions.list'),
@@ -59,6 +77,10 @@ export const SETTINGS_DATA_COVERAGE = {
   onboarded: surfaces('onboarding.complete'),
   keybindings: surfaces('general.keybindings.list'),
   projects: surfaces('projects.list'),
+  projectGroups: surfaces('projects.list'),
+  usageModelPricing: excluded(
+    'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'
+  ),
   // 背景图属纯外观装饰，目前未开放为面向 Enso 的产品能力（需要时再建 catalog 条目）。
   backgroundImageEnabled: excluded('Appearance-only background decoration.'),
   backgroundSourceType: excluded('Appearance-only background decoration.'),
@@ -89,6 +111,22 @@ export const SETTINGS_ACTION_COVERAGE = {
   toggleFavoriteTerminalTheme: surfaces('appearance.favorite-terminal-themes'),
   setLoadLocalSkills: surfaces('general.load-local-skills'),
   setLoadHarnessAssets: surfaces('general.load-harness-assets'),
+  setWindowsLocalShell: surfaces('general.windows-local-shell'),
+  setExploreFoldEnabled: excluded(
+    'Explore-fold is a desktop session preference, not an Enso capability.'
+  ),
+  setBashInterceptEnabled: excluded(
+    'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
+  setSmartCompactEnabled: excluded(
+    'Verified smart compaction is a desktop session preference, not an Enso capability.'
+  ),
+  setSmartCompactModel: excluded(
+    'Verified smart compaction model is a desktop session preference, not an Enso capability.'
+  ),
+  setSmartCompactMode: excluded(
+    'Verified smart compaction mode is a desktop session preference, not an Enso capability.'
+  ),
   setAutoUpdate: surfaces('general.automatic-updates'),
   setProxyMode: surfaces('general.proxy-mode'),
   setCustomProxyUrl: surfaces('general.custom-proxy-url'),
@@ -108,6 +146,8 @@ export const SETTINGS_ACTION_COVERAGE = {
     'Conversation title summary preference; not an Enso capability.'
   ),
   setTitleSummaryModel: excluded('Conversation title summary preference; not an Enso capability.'),
+  setApprovalReviewer: excluded('Assistant approval reviewer model; desktop settings only.'),
+  setLastApprovalMode: excluded('Last used approval mode is a desktop session preference.'),
   revalidateDefaultModel: surfaces('providers.default-model'),
   addProviders: surfaces('providers.add', 'providers.import-local'),
   updateProvider: surfaces(
@@ -144,7 +184,18 @@ export const SETTINGS_ACTION_COVERAGE = {
   setKeybinding: surfaces('general.keybindings.set'),
   resetKeybinding: surfaces('general.keybindings.reset'),
   addProject: surfaces('projects.add'),
+  createProjectGroup: surfaces('projects.list'),
+  updateProjectGroup: surfaces('projects.list'),
+  removeProjectGroup: surfaces('projects.list'),
+  reorderProjectGroups: surfaces('projects.list'),
+  setProjectGroupId: surfaces('projects.list'),
   removeProject: surfaces('projects.remove'),
+  setUsageModelPricing: excluded(
+    'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'
+  ),
+  removeUsageModelPricing: excluded(
+    'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'
+  ),
   setBackgroundImageEnabled: excluded('Appearance-only background decoration.'),
   setBackgroundSourceType: excluded('Appearance-only background decoration.'),
   setBackgroundImagePath: excluded('Appearance-only background decoration.'),
@@ -184,6 +235,11 @@ export const IPC_PRODUCT_COVERAGE = {
   SETTINGS_WRITE: excluded('Raw whole-settings write is forbidden to Enso.'),
   SETTINGS_WRITE_KEY: excluded('Raw store-key write is replaced by controlled field patches.'),
   SETTINGS_CHANGED: excluded('Cross-window persistence notification transport.'),
+  CONFIG_SYNC_EXPORT: excluded('Settings-only portable configuration export flow.'),
+  CONFIG_SYNC_OPEN_IMPORT: excluded('Settings-only native package picker.'),
+  CONFIG_SYNC_PREVIEW_IMPORT: excluded('Settings-only configuration import preview.'),
+  CONFIG_SYNC_COMMIT_IMPORT: excluded('Settings-only destructive configuration import commit.'),
+  CONFIG_SYNC_CANCEL_IMPORT: excluded('Settings-only import token cleanup.'),
   WINDOW_MINIMIZE: surfaces('window.minimize'),
   WINDOW_MAXIMIZE: surfaces('window.maximize'),
   WINDOW_CLOSE: surfaces('window.close'),
@@ -196,6 +252,8 @@ export const IPC_PRODUCT_COVERAGE = {
   SETTINGS_DEEP_LINK: excluded('Settings window deep-link transport.'),
   SETTINGS_DEEP_LINK_CONSUME: excluded('Settings window deep-link handshake.'),
   WINDOW_POPUP_MENU: excluded('Native application menu popup; renderer chrome only.'),
+  APP_CLOSE_REQUEST: excluded('Main-to-renderer quit confirm handshake.'),
+  APP_CLOSE_RESPONSE: excluded('Renderer-to-main quit confirm handshake.'),
   PROVIDERS_SCAN_LOCAL: surfaces('providers.import-local'),
   PROVIDERS_COLLECT_IMPORT: excluded('Second phase of the reviewed provider import flow.'),
   PROVIDERS_LIST_MODELS: surfaces('providers.fetch-models'),
@@ -242,6 +300,9 @@ export const IPC_PRODUCT_COVERAGE = {
   AGENT_SNAPSHOT: excluded('Worker recovery/debug snapshot transport.'),
   AGENT_CHILD_HISTORY_READ: excluded(
     'Read-only replay of an ended child safe journal; no product capability, no execution rights.'
+  ),
+  AGENT_PARENT_HISTORY_TAIL: excluded(
+    'Read-only parent jsonl tail for cold-open UI; no spawn, no execution rights.'
   ),
   AGENT_SUMMARIZE_TITLE: excluded(
     'Fire-and-forget conversation title summarization; single LLM completion, no execution rights.'
@@ -315,14 +376,27 @@ export const IPC_PRODUCT_COVERAGE = {
   FILES_LIST_MEDIA: excluded('Renderer media listing for background picker.'),
   FILES_LIST_DIR: excluded('Side panel Files tree listing.'),
   FILES_READ_REL: excluded('Side panel Files read scoped to conversation cwd.'),
+  FILES_READ_IMAGE: excluded('Side panel Files Markdown preview image resolved to a data URL.'),
+  FILES_FETCH_REMOTE_IMAGE: excluded(
+    'Side panel Files Markdown preview remote image proxied with SSRF guards to a data URL.'
+  ),
   FILES_WRITE: excluded('Side panel Files save scoped to conversation cwd.'),
   FILES_WATCH_START: excluded('Side panel Files open-file watch.'),
   FILES_WATCH_STOP: excluded('Side panel Files open-file watch.'),
   FILES_WATCH_EVENT: excluded('Side panel Files open-file watch events.'),
+  FILES_MKDIR: excluded('Side panel Files mkdir scoped to conversation cwd.'),
+  FILES_CREATE: excluded('Side panel Files create scoped to conversation cwd.'),
+  FILES_RENAME: excluded('Side panel Files rename scoped to conversation cwd.'),
+  FILES_REMOVE: excluded('Side panel Files delete scoped to conversation cwd.'),
+  FILES_ABS: excluded('Side panel Files resolve abs path for copy/open.'),
+  FILES_COPY_PATH: excluded('Side panel Files copy path text to clipboard.'),
+  FILES_COPY_FILE: excluded('Side panel Files copy local file to OS clipboard.'),
+  FILES_REVEAL: excluded('Side panel Files reveal in system file manager.'),
   PAIR_CANCEL: excluded('Phone second-screen pairing transport; not an Enso capability.'),
   PAIR_CATALOG: excluded('Phone second-screen pairing transport; not an Enso capability.'),
   PAIR_RESUME_SESSION: excluded('Phone second-screen pairing transport; not an Enso capability.'),
   PAIR_REVOKE: excluded('Phone second-screen pairing transport; not an Enso capability.'),
+  PAIR_RENAME: excluded('Phone second-screen pairing transport; not an Enso capability.'),
   PAIR_SESSION_CREATED: excluded('Phone second-screen pairing transport; not an Enso capability.'),
   PAIR_SET_RELAY: excluded('Phone second-screen pairing transport; not an Enso capability.'),
   PAIR_START: excluded('Phone second-screen pairing transport; not an Enso capability.'),

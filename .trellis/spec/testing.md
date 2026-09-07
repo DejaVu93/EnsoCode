@@ -21,7 +21,8 @@ pnpm test:watch    # 监听模式
 
 逻辑面大的改动（跨模块、协议 / 解析器类）**强烈推荐** coworker 角色分离：
 测试先行者用 `agent_type: tester`（只能写测试文件），实现者在红灯到手前不动手、
-不许改测试文件；以 `pnpm test` 退出码验收。
+不许改测试文件。`spawn` 只派一刀切片，后续用 `send`；`wait` 带本刀测试的 `gate`，
+以退出码验收（红=非 0，绿=另跑同一命令为 0）。
 小纯函数（测试 < 50 行或用例 < 10）inline 即可。详见
 [动手前检查清单 §1.5](guides/pre-implementation-checklist.md) 与 `AGENTS.md`。
 
@@ -42,6 +43,7 @@ pnpm test:watch    # 监听模式
 | `src/shared/types/agent.test.ts` | agent 命令/事件的收窄（脏输入不崩） |
 | `src/agent/projection.test.ts` | 消息投影白名单（脱敏即白名单克隆） |
 | `src/agent/gate.test.ts` | 操作门：同 key 串行、异 key 并行、抛错不断链 |
+| `src/agent/sessionShell.test.ts` | 本地 win32 用官方 `powershell`，SSH/非 Windows 用 `bash` |
 | `src/renderer/stores/sessions/reducer.test.ts` | 事件归并：seq 守卫、index upsert、截断 |
 
 **暂未覆盖**（有意为之）：React 组件、zustand store、真实网络请求、Electron 窗口行为。

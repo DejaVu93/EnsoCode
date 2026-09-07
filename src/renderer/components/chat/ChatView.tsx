@@ -17,6 +17,8 @@ import {
 } from '@/stores/oauthCredentials';
 
 import { useSessionsStore } from '@/stores/sessions';
+import { chatSurfaceBusy, chatTimelineBusy } from '@/stores/sessions/messageCache';
+import { selectSidebarConversations } from '@/stores/sessions/sidebarDirectory';
 import { buildTimeline, terminalErrorText } from '@/stores/sessions/timeline';
 import { useSettingsStore } from '@/stores/settings';
 import { ApprovalBar } from './ApprovalBar';
@@ -55,11 +57,17 @@ export function ChatView() {
 
   const oauthSnapshot = useOauthCredentialStore((state) => state.snapshot);
   // @ chats 候选：同项目可回放的过去会话。ChatView 本就随 agent 事件重渲染，订阅全表不额外增负。
-  const allConversations = useSessionsStore((state) => state.conversations);
+  const allConversations = useSessionsStore((state) =>
+    selectSidebarConversations(state.conversations)
+  );
   const chatCandidates = useMemo(
     () =>
       parent
-        ? toChatMentionCandidates(Object.values(allConversations), parent.projectId, parent.id)
+        ? toChatMentionCandidates(
+            Object.values(allConversations).filter((entry) => entry.id),
+            parent.projectId,
+            parent.id
+          )
         : [],
     [allConversations, parent]
   );
@@ -189,7 +197,8 @@ export function ChatView() {
   const [findIndex, setFindIndex] = useState(0);
 
   const running = conversation?.status === 'running';
-  const busy = running || conversation?.spawning === true;
+  const busy = conversation !== null && chatSurfaceBusy(conversation);
+  const timelineBusy = conversation !== null && chatTimelineBusy(conversation);
   const toolCwd = parent?.worktree?.path ?? project?.path;
   const timeline = useMemo(
     () =>
@@ -202,12 +211,14 @@ export function ChatView() {
           compaction: conversation?.compaction,
           compactionNoticeAt: conversation?.compactionNoticeAt,
           toolOutputs: conversation?.toolOutputs,
+          pendingApprovals: conversation?.pendingApprovals,
         }
       ),
     [
       conversation?.compaction,
       conversation?.compactionNoticeAt,
       conversation?.toolOutputs,
+      conversation?.pendingApprovals,
       conversation?.customEntries,
       conversation?.messages,
       running,
@@ -230,12 +241,7 @@ export function ChatView() {
     [conversation?.pendingCapabilityAsks]
   );
 
-  // app 重启后选中可恢复的对话时自动 resume（历史消息由 worker 回放）
-  useEffect(() => {
-    // modelResolution 变化代表默认/provider/OAuth 可用性已变化，需重试先前 fail-closed 的恢复。
-    void modelResolution;
-    // worktreeMissing：resume 已发现 worktree 丢失，等用户选重建/回退，不要重试循环
-    // failed：spawn 被拒 / 发送失败已显式报错，每次 patch 都重试会对永久性错误形成 spawn 循环；由用户重发驱动
+  const activateParent = useCallback(() => {
     if (
       parent &&
       !parent.started &&
@@ -245,7 +251,7 @@ export function ChatView() {
     ) {
       void useSessionsStore.getState().resumeConversation(parent.id);
     }
-  }, [modelResolution, parent]);
+  }, [parent]);
 
   useEffect(() => {
     const open = () => {
@@ -377,12 +383,17 @@ export function ChatView() {
         key={conversation.id}
         ref={timelineRef}
         items={timeline}
-        busy={busy}
+        busy={timelineBusy}
         running={running}
         runStartedAt={conversation.runStartedAt}
         lastOutputAt={conversation.lastOutputAt}
         error={terminalErrorText(conversation.messages, conversation.error)}
         emptyTitle={project?.name ?? 'EnsoCode'}
+        onRetryResume={
+          !conversation.started && conversation.sessionFile && conversation.status === 'failed'
+            ? () => void useSessionsStore.getState().resumeConversation(conversation.id)
+            : undefined
+        }
         searchQuery={findOpen ? findQuery : ''}
         activeHit={findOpen ? (findHits[findIndex] ?? null) : null}
       />
@@ -512,6 +523,7 @@ export function ChatView() {
                 )}
               </>
             }
+            onActivate={activateParent}
             onSend={(payload) => {
               if (!payload.recipient && !project) return false;
               if (

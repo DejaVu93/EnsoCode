@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  defaultApprovalMode,
   type ModelCredentialContext,
   modelUsability,
   resolveChatModel,
@@ -175,5 +176,34 @@ describe('resolveChatModel', () => {
         credentials: oauthError,
       })
     ).toMatchObject({ source: 'session', providerId: 'session', modelId: 's' });
+  });
+});
+
+describe('defaultApprovalMode', () => {
+  it('无上次档位：代审模型可用 → assistant，未选或不可用 → full', () => {
+    const providers = [provider('p', ['m'])];
+    expect(defaultApprovalMode({ providerId: 'p', modelId: 'm' }, providers, ready())).toBe(
+      'assistant'
+    );
+    expect(defaultApprovalMode(null, providers, ready())).toBe('full');
+    expect(defaultApprovalMode({ providerId: 'p', modelId: 'gone' }, providers, ready())).toBe(
+      'full'
+    );
+  });
+
+  it('记住上次非代审档，不因代审模型可用回滚 assistant', () => {
+    const providers = [provider('p', ['m'])];
+    const reviewer = { providerId: 'p', modelId: 'm' };
+    expect(defaultApprovalMode(reviewer, providers, ready(), 'supervised')).toBe('supervised');
+    expect(defaultApprovalMode(reviewer, providers, ready(), 'auto-edits')).toBe('auto-edits');
+    expect(defaultApprovalMode(reviewer, providers, ready(), 'full')).toBe('full');
+  });
+
+  it('上次是 assistant 但代审模型不可用时回落 full', () => {
+    const providers = [provider('p', ['m'])];
+    expect(defaultApprovalMode(null, providers, ready(), 'assistant')).toBe('full');
+    expect(
+      defaultApprovalMode({ providerId: 'p', modelId: 'gone' }, providers, ready(), 'assistant')
+    ).toBe('full');
   });
 });

@@ -1,4 +1,4 @@
-import { costOf, type PricingTable } from './pricing';
+import { costOf, type PricingTable, resolvePricing } from './pricing';
 import type {
   UsageDailyPoint,
   UsageModelRow,
@@ -156,12 +156,13 @@ export function aggregateUsage(
       tokens: 0,
       messages: 0,
       share: 0,
+      pricing: resolvePricing(r.model, pricing),
     };
     modelRow.tokens += tokens;
     modelRow.messages += 1;
     modelRow.cost = addCost(modelRow.cost, cost);
     byModel.set(r.model, modelRow);
-    if (cost === null) unpriced.add(r.model);
+    if (cost === null && tokens > 0) unpriced.add(r.model);
 
     const projectRow = byProject.get(r.project) ?? {
       project: r.project,
@@ -194,5 +195,6 @@ export function aggregateUsage(
     byModel: modelRows,
     byProject: projectRows,
     unpricedModels: [...unpriced],
+    pricing,
   };
 }

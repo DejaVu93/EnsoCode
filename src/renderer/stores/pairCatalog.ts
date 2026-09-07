@@ -1,4 +1,5 @@
 import { toPairProjectEntry } from '@enso/pair';
+import { catalogSyncFingerprint, pairJsonFingerprint } from '@shared/pair/metaSync';
 import type { PairCatalogPayload } from '@shared/types';
 import { getXtermTheme } from '@/lib/ghosttyTheme';
 import { useOauthCredentialStore } from '@/stores/oauthCredentials';
@@ -24,6 +25,7 @@ import {
 const DEBOUNCE_MS = 300;
 let timer: ReturnType<typeof setTimeout> | null = null;
 let bound = false;
+let lastPushFingerprint: string | null = null;
 
 function buildPayload(): PairCatalogPayload {
   const settings = useSettingsStore.getState();
@@ -95,6 +97,7 @@ function buildPayload(): PairCatalogPayload {
       ...toPairProjectEntry(project),
       ...(archivedProjects.has(project.id) ? { archived: true as const } : {}),
     })),
+    projectGroups: settings.projectGroups,
     providers,
     // 仅 main 侧用于 spawn 反查 cwd，不下发手机
     projectPaths: settings.projects.map((p) => ({ id: p.id, path: p.path })),
@@ -108,11 +111,29 @@ function buildPayload(): PairCatalogPayload {
   };
 }
 
+function catalogPushFingerprint(payload: PairCatalogPayload): string {
+  return pairJsonFingerprint({
+    catalog: catalogSyncFingerprint(payload.catalog, payload.pinnedOrder ?? []),
+    projects: payload.projects,
+    projectGroups: payload.projectGroups,
+    providers: payload.providers,
+    projectPaths: payload.projectPaths,
+    theme: payload.theme,
+    terminal: payload.terminal,
+    terminalFontFamily: payload.terminalFontFamily,
+    compactReadOnlyTools: payload.compactReadOnlyTools,
+  });
+}
+
 function schedulePush(): void {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
-    window.electronAPI.pair.pushCatalog(buildPayload());
+    const payload = buildPayload();
+    const fingerprint = catalogPushFingerprint(payload);
+    if (fingerprint === lastPushFingerprint) return;
+    lastPushFingerprint = fingerprint;
+    window.electronAPI.pair.pushCatalog(payload);
   }, DEBOUNCE_MS);
 }
 
@@ -130,6 +151,7 @@ export function bindPairCatalogSync(): void {
   useSettingsStore.subscribe((state, prev) => {
     if (
       state.projects !== prev.projects ||
+      state.projectGroups !== prev.projectGroups ||
       state.providers !== prev.providers ||
       state.theme !== prev.theme ||
       state.terminalTheme !== prev.terminalTheme ||

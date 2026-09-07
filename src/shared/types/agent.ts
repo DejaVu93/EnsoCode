@@ -20,6 +20,8 @@ import {
 } from '../capabilities/types';
 import type { DefaultModelRef } from '../defaultModel';
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
+import { parseSmartCompactMode } from '../smartCompactMode';
+import { WINDOWS_LOCAL_SHELLS, type WindowsLocalShell } from '../windowsLocalShell';
 import { MODEL_API_KINDS, type ModelApiKind, type ModelCapabilityOverrides } from './llm';
 import { type AgentDispatchTask, parseAgentDispatchTask } from './mentions';
 
@@ -28,6 +30,19 @@ export { parseChildSessionIdentity, parseSessionIdentity } from '../builtinAgent
 
 /** 会话状态。waiting/done 属权限门与 subagent 刀，M1 不引入 */
 export type NodeStatus = 'idle' | 'running' | 'failed';
+
+/** 一轮结束时 worker 切出的压缩摘要；两段均已在 worker 侧按上限截断 */
+export interface TurnDigest {
+  /** 本轮全部 user 文本（清洗后 '\n' 拼接，截头） */
+  userText: string;
+  /** 本轮最后一条含 text 的 assistant 文本（截尾） */
+  assistantText: string;
+}
+
+/** 标题总结输入：initial = 首条消息即时总结；rolling = 每轮结束后的滚动刷新 */
+export type TitleSummaryInput =
+  | { kind: 'initial'; text: string }
+  | { kind: 'rolling'; currentTitle: string; userText: string; assistantText: string };
 
 /** spawn 下发的模型配置。apiKey 只在 Main → worker 方向出现，事件类型不给 auth 位置 */
 export interface SpawnModelConfig extends ModelCapabilityOverrides {
@@ -52,8 +67,8 @@ export interface SpawnModelConfig extends ModelCapabilityOverrides {
 export const THINKING_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-/** 审批档位：supervised 写操作全审 / auto-edits 仅命令与 MCP 审 / full 全放行 */
-export const APPROVAL_MODES = ['supervised', 'auto-edits', 'full'] as const;
+/** 审批档位：supervised 全审 / auto-edits 免文件 / assistant 助手代审 / full 全放行 */
+export const APPROVAL_MODES = ['supervised', 'auto-edits', 'full', 'assistant'] as const;
 export type ApprovalMode = (typeof APPROVAL_MODES)[number];
 
 /** 审批请求的操作类别 */
@@ -88,6 +103,10 @@ export interface ApprovalRequestInfo {
   kind: ApprovalKind;
   /** 命令全文 / 文件路径 / 参数预览 */
   summary: string;
+  /** 对应 toolCall.id，代审中徽章挂到时间线该行 */
+  toolCallId?: string;
+  /** reviewing = 代审模型评审中（不弹真人按钮）；缺省 = 等人决策 */
+  phase?: 'reviewing';
 }
 
 /** agent 向用户的提问（ask_user 工具,阻塞等答复） */
@@ -126,7 +145,7 @@ export interface AgentTypeSpawnConfig {
   mcpServers?: McpServerSpawnConfig[];
   /** 绑定模型；缺省 = 跟随父会话 */
   model?: SpawnModelConfig;
-  /** 是否允许主 agent 覆盖模型（'agent_pick' 允许/必须主 agent 选型；固定模型或跟随会话时为 false，不允许自选覆盖） */
+  /** true = agent_pick：主 agent 必须传 model，禁止继承；false/缺省 = 固定模型或跟随会话，不允许自选覆盖 */
   allowModelOverride?: boolean;
 }
 
@@ -212,6 +231,10 @@ export interface McpServerSpawnConfig {
   url?: string;
   /** 已授权的 OAuth 凭据（http/sse 远程 server） */
   oauth?: McpOAuthTokens;
+  /** 连接 + listTools；缺省 10s */
+  connectTimeoutMs?: number;
+  /** 单次 callTool；缺省 120s */
+  callTimeoutMs?: number;
 }
 
 export interface ModelRef {
@@ -245,6 +268,7 @@ export const CONTEXT_OCCUPANCY_BUCKETS = [
   'tools',
   'conversation',
   'compaction',
+  // Retained for persisted context-occupancy snapshots; project memory has been removed.
   'projectMemory',
   'reminders',
 ] as const;
@@ -256,7 +280,7 @@ export type ContextOccupancyBuckets = Record<ContextOccupancyBucketId, number>;
 export interface ContextOccupancy {
   buckets: ContextOccupancyBuckets;
   used: number;
-  estimated: true;
+  estimated: boolean;
   compactedMessageCount: number;
   compactionModelMismatch: boolean;
   contextWindow?: number;
@@ -418,6 +442,10 @@ export type ChildHistoryResult =
   | { ok: true; projection: SafeJournalProjection }
   | { ok: false; code: 'not-found' | 'unavailable'; error: string };
 
+export type ParentHistoryTailResult =
+  | { ok: true; messages: ProjectedMessage[]; baseIndex: number }
+  | { ok: false; code: 'not-found' | 'unavailable'; error: string };
+
 export type DispatchProgressPhase =
   | 'received'
   | 'source-bound'
@@ -462,13 +490,27 @@ export type AgentCommand =
       loadLocalSkills?: boolean;
       /** 同时加载项目内 .claude/.codex/.cursor 的 skills 与规则文件（.cursorrules、.cursor/rules） */
       loadHarnessAssets?: boolean;
+      /** 探后折叠工具 + context 折叠 */
+      exploreFoldEnabled?: boolean;
+      /** 拦截 cat/grep/sed -i 等，强制走 read/grep/edit/write/find；缺省关 */
+      bashInterceptEnabled?: boolean;
+      /** 父会话加载 Enso compact hook 作为 compact 摘要后端 */
+      smartCompactEnabled?: boolean;
+      /** 独立摘要模型；缺省跟随当前会话模型 */
+      smartCompactSummaryModel?: SpawnModelConfig;
+      /** 验证式压缩档位；缺省 auto（按占用跳档） */
+      smartCompactMode?: import('../smartCompactMode').SmartCompactMode;
       skillPaths?: string[];
       mcpServers?: McpServerSpawnConfig[];
       instruction?: { path: string; content: string };
       approvalMode?: ApprovalMode;
+      /** 助手代审模型；仅 approvalMode=assistant 时有意义 */
+      approvalReviewer?: SpawnModelConfig;
       agentTypes?: AgentTypeSpawnConfig[];
       subagentModels?: SubagentModelOption[];
       disabledTools?: string[];
+      /** Windows 本地命令壳偏好；缺省 auto。远程会话忽略。 */
+      windowsLocalShell?: WindowsLocalShell;
       /** ssh 项目：工具执行切到远端。Main 从项目权威派生，不信任 renderer。 */
       remote?: AgentRemoteConfig;
     }
@@ -526,6 +568,7 @@ export type AgentCommand =
       decision: ApprovalDecision;
     }
   | { type: 'set-approval-mode'; identity: SessionIdentity; mode: ApprovalMode }
+  | { type: 'set-approval-reviewer'; model?: SpawnModelConfig }
   | { type: 'compact'; identity: SessionIdentity; instructions?: string }
   | { type: 'ask-respond'; identity: SessionIdentity; requestId: string; answer: string }
   | {
@@ -562,7 +605,7 @@ export type AgentCommand =
       /** 标题总结：一次性补全，不创建会话、不落盘；失败静默（不回事件） */
       type: 'summarize-title';
       conversationId: string;
-      text: string;
+      input: TitleSummaryInput;
       model: SpawnModelConfig;
     }
   | { type: 'abort-retry'; identity: SessionIdentity }
@@ -660,6 +703,8 @@ export interface ProjectedMessage {
   subagentMeta?: { modelId?: string; outputTokens?: number; steps?: number };
   /** compactionSummary 消息：压缩前的上下文 token 数 */
   tokensBefore?: number;
+  /** 摘要来自 Enso compact hook，不是原生 summarizer */
+  verified?: boolean;
 }
 
 export interface SessionSnapshot {
@@ -667,8 +712,8 @@ export interface SessionSnapshot {
   status: NodeStatus;
   messages: ProjectedMessage[];
   /**
-   * messages 的绝对起始 index。仅手机链路（pairPolicy 裁尾窗）会设置：
-   * 长对话只发最近一段，手机按 baseIndex+i 幂等写入。worker 全量快照恒缺省（=0）。
+   * messages 的绝对起始 index。尾窗快照（手机 pair / 桌面 resume 首包）会设置：
+   * 长对话只发最近一段；全量快照缺省或 0。
    */
   baseIndex?: number;
   commands: SlashCommand[];
@@ -791,7 +836,14 @@ export type AgentWorkerEvent =
       index: number;
       message: ProjectedMessage;
     }
-  | { type: 'turn-completed'; identity: SessionIdentity; seq: number; turnId: string }
+  | {
+      type: 'turn-completed';
+      identity: SessionIdentity;
+      seq: number;
+      turnId: string;
+      /** worker 切出的本轮压缩摘要，供 renderer 决定是否滚动刷新标题；纯工具轮可缺省 */
+      digest?: TurnDigest;
+    }
   | {
       type: 'turn-failed';
       identity: SessionIdentity;
@@ -992,8 +1044,38 @@ export function parseMcpOAuthTokens(value: unknown): McpOAuthTokens | null {
   };
 }
 
+/** turn-completed.digest 的形状校验：两段必须是字符串（允许空），不允许多余键 */
+export function parseTurnDigest(value: unknown): TurnDigest | null {
+  if (!isRecord(value) || !hasExactKeys(value, ['userText', 'assistantText'])) return null;
+  if (typeof value.userText !== 'string' || typeof value.assistantText !== 'string') return null;
+  return value as unknown as TurnDigest;
+}
+
+/** 标题总结输入校验：initial 要求 text 非空；rolling 要求 currentTitle 非空且两段至少一段非空 */
+export function parseTitleSummaryInput(value: unknown): TitleSummaryInput | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'initial') {
+    return hasExactKeys(value, ['kind', 'text']) &&
+      typeof value.text === 'string' &&
+      value.text.trim().length > 0
+      ? (value as unknown as TitleSummaryInput)
+      : null;
+  }
+  if (value.kind === 'rolling') {
+    return hasExactKeys(value, ['kind', 'currentTitle', 'userText', 'assistantText']) &&
+      isNonEmptyString(value.currentTitle) &&
+      typeof value.userText === 'string' &&
+      typeof value.assistantText === 'string' &&
+      (value.userText.trim().length > 0 || value.assistantText.trim().length > 0)
+      ? (value as unknown as TitleSummaryInput)
+      : null;
+  }
+  return null;
+}
+
 export function parseContextOccupancy(value: unknown): ContextOccupancy | null {
-  if (!isRecord(value) || !isRecord(value.buckets) || value.estimated !== true) return null;
+  if (!isRecord(value) || !isRecord(value.buckets) || typeof value.estimated !== 'boolean')
+    return null;
   const buckets = {} as ContextOccupancyBuckets;
   for (const id of CONTEXT_OCCUPANCY_BUCKETS) {
     const tokens = value.buckets[id];
@@ -1603,6 +1685,7 @@ export function parseSessionSnapshot(value: unknown): SessionSnapshot | null {
       'identity',
       'status',
       'messages',
+      'baseIndex',
       'commands',
       'pendingApprovals',
       'pendingAsks',
@@ -1629,7 +1712,11 @@ export function parseSessionSnapshot(value: unknown): SessionSnapshot | null {
     (value.safeJournal !== undefined && parseSafeJournalProjection(value.safeJournal) === null) ||
     (value.customEntries !== undefined &&
       (!Array.isArray(value.customEntries) ||
-        value.customEntries.some((entry) => parseAgentSessionCustomEntry(entry) === null)))
+        value.customEntries.some((entry) => parseAgentSessionCustomEntry(entry) === null))) ||
+    (value.baseIndex !== undefined &&
+      (typeof value.baseIndex !== 'number' ||
+        !Number.isInteger(value.baseIndex) ||
+        value.baseIndex < 0))
   ) {
     return null;
   }
@@ -1652,13 +1739,20 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           'thinkingLevel',
           'loadLocalSkills',
           'loadHarnessAssets',
+          'exploreFoldEnabled',
+          'bashInterceptEnabled',
+          'smartCompactEnabled',
+          'smartCompactSummaryModel',
+          'smartCompactMode',
           'skillPaths',
           'mcpServers',
           'instruction',
           'approvalMode',
+          'approvalReviewer',
           'agentTypes',
           'subagentModels',
           'disabledTools',
+          'windowsLocalShell',
           'remote',
         ]) ||
         !parseSessionIdentity(value.identity) ||
@@ -1666,10 +1760,25 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         !parseSpawnModelConfig(value.model) ||
         (value.resumeFile !== undefined && !isNonEmptyString(value.resumeFile)) ||
         (value.loadHarnessAssets !== undefined && typeof value.loadHarnessAssets !== 'boolean') ||
+        (value.windowsLocalShell !== undefined &&
+          !(WINDOWS_LOCAL_SHELLS as readonly string[]).includes(
+            value.windowsLocalShell as string
+          )) ||
+        (value.exploreFoldEnabled !== undefined && typeof value.exploreFoldEnabled !== 'boolean') ||
+        (value.bashInterceptEnabled !== undefined &&
+          typeof value.bashInterceptEnabled !== 'boolean') ||
+        (value.smartCompactEnabled !== undefined &&
+          typeof value.smartCompactEnabled !== 'boolean') ||
+        (value.smartCompactSummaryModel !== undefined &&
+          parseSpawnModelConfig(value.smartCompactSummaryModel) === null) ||
+        (value.smartCompactMode !== undefined &&
+          parseSmartCompactMode(value.smartCompactMode) === null) ||
         (value.remote !== undefined && parseAgentRemoteConfig(value.remote) === null) ||
         (value.subagentModels !== undefined &&
           (!Array.isArray(value.subagentModels) ||
-            value.subagentModels.some((entry) => parseSubagentModelOption(entry) === null)))
+            value.subagentModels.some((entry) => parseSubagentModelOption(entry) === null))) ||
+        (value.approvalReviewer !== undefined &&
+          parseSpawnModelConfig(value.approvalReviewer) === null)
       ) {
         return null;
       }
@@ -1733,9 +1842,9 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         : null;
     }
     case 'summarize-title':
-      return hasExactKeys(value, ['type', 'conversationId', 'text', 'model']) &&
+      return hasExactKeys(value, ['type', 'conversationId', 'input', 'model']) &&
         isNonEmptyString(value.conversationId) &&
-        isNonEmptyString(value.text) &&
+        parseTitleSummaryInput(value.input) &&
         parseSpawnModelConfig(value.model)
         ? (value as unknown as AgentCommand)
         : null;
@@ -1782,6 +1891,11 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
       return hasExactKeys(value, ['type', 'identity', 'mode']) &&
         parseAnySessionIdentity(value.identity) &&
         APPROVAL_MODES.includes(value.mode as ApprovalMode)
+        ? (value as unknown as AgentCommand)
+        : null;
+    case 'set-approval-reviewer':
+      return hasOnlyKeys(value, ['type', 'model']) &&
+        (value.model === undefined || parseSpawnModelConfig(value.model))
         ? (value as unknown as AgentCommand)
         : null;
     case 'ask-respond':
@@ -2007,7 +2121,10 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'turn-completed':
-      return isNonEmptyString(value.turnId) ? (value as unknown as AgentWorkerEvent) : null;
+      return isNonEmptyString(value.turnId) &&
+        (value.digest === undefined || parseTurnDigest(value.digest))
+        ? (value as unknown as AgentWorkerEvent)
+        : null;
     case 'turn-failed':
       return isNonEmptyString(value.turnId) &&
         isNonEmptyString(value.error) &&

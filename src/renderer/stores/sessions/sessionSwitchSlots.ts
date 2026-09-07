@@ -27,6 +27,8 @@ export function sessionSwitchSlotIds(input: {
   searching?: boolean;
   matches?: (id: string) => boolean;
   projectMatches?: (projectId: string) => boolean;
+  /** 侧栏「活跃中」可见行，占 Cmd+1… 最前槽 */
+  leadingIds?: readonly string[];
 }): string[] {
   const {
     order,
@@ -39,6 +41,7 @@ export function sessionSwitchSlotIds(input: {
     searching = false,
     matches = () => true,
     projectMatches = () => false,
+    leadingIds = [],
   } = input;
 
   const slots: string[] = [];
@@ -48,6 +51,8 @@ export function sessionSwitchSlotIds(input: {
     seen.add(id);
     slots.push(id);
   };
+
+  for (const id of leadingIds) push(id);
 
   const pinned = pinnedConversationIds(order, conversations, pinnedOrderIds, archivedProjectIds);
   for (const id of searching ? pinned.filter(matches) : pinned) push(id);

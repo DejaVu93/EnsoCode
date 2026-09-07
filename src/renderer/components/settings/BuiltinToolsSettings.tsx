@@ -17,6 +17,10 @@ export function BuiltinToolsSettings() {
   const { t } = useI18n();
   const disabled = useSettingsStore((state) => state.disabledBuiltinTools);
   const toggle = useSettingsStore((state) => state.toggleBuiltinTool);
+  const exploreFoldEnabled = useSettingsStore((state) => state.exploreFoldEnabled);
+  const setExploreFoldEnabled = useSettingsStore((state) => state.setExploreFoldEnabled);
+  const bashInterceptEnabled = useSettingsStore((state) => state.bashInterceptEnabled);
+  const setBashInterceptEnabled = useSettingsStore((state) => state.setBashInterceptEnabled);
   const occupancy = useOccupancyRows(
     BUILTIN_TOOLS.map((tool) => tool.id),
     () => window.electronAPI.assets.builtinToolOccupancy()
@@ -62,6 +66,33 @@ export function BuiltinToolsSettings() {
             />
           </div>
         ))}
+      </div>
+
+      <div className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5">
+        <div>
+          <p className="font-medium text-sm">{t('Explore fold')}</p>
+          <p className="text-muted-foreground text-xs">
+            {t(
+              'Let the agent mark exploratory reads and keep only a short report in later model context. Timeline stays intact.'
+            )}
+          </p>
+        </div>
+        <Switch checked={exploreFoldEnabled} onCheckedChange={setExploreFoldEnabled} />
+      </div>
+
+      <div
+        className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5"
+        data-settings-row="tools.bashInterceptEnabled"
+      >
+        <div>
+          <p className="font-medium text-sm">{t('Force read/find tools')}</p>
+          <p className="text-muted-foreground text-xs">
+            {t(
+              'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.'
+            )}
+          </p>
+        </div>
+        <Switch checked={bashInterceptEnabled} onCheckedChange={setBashInterceptEnabled} />
       </div>
 
       <div className="rounded-md border px-3 py-2.5">

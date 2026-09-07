@@ -77,6 +77,18 @@ typecheck 全绿、单测全绿，**唯独白名单没加**，运行时什么都
 手机端（pair）是否下发是独立决定：需要的话还要进 `pairPolicy.ts` 的
 `SESSION_SCOPED` 与 `guestProjection.ts` 的投影分支；不需要就在 PRD 里写成非目标。
 
+### 给既有事件加可选字段：parser 必须校验形状，不能只放行
+
+`turn-completed.digest?: TurnDigest` 是先例：字段可选，但**存在时形状非法要让整条事件判 null**
+（`value.digest === undefined || parseTurnDigest(value.digest)`），不能 `hasOnlyKeys` 放行了事。
+可选字段单独抽 `parseXxx` 导出并在 `agent.test.ts` 给「缺省合法 / 合法往返 / 形状非法整条拒」三条用例。
+
+### 命令输入用判别联合而不是平铺字段
+
+`summarize-title` 有两种模式（首条即时 / 每轮滚动），输入收成 `TitleSummaryInput = {kind:'initial'} | {kind:'rolling'}`
+一个字段，而不是在命令上平铺 `text?` / `currentTitle?` / `userText?`。这样 `hasExactKeys` 白名单
+不用随模式增减变动，renderer → preload → main IPC → worker 四层签名同一个类型，模式增加只改联合与其 parser。
+
 ## 解析失败不得静默丢弃
 
 进程间消息入口拿不到合法命令时，**必须留下可观测痕迹**：
@@ -157,6 +169,8 @@ export const MODEL_API_KINDS = [
 - **新增字段一律可选**，或在读取处兜底。例：`ModelEntry.enabled?: boolean`，
   用 `model.enabled !== false` 判断，让老数据（无该字段）默认视为启用
   （见 `src/renderer/components/settings/ProviderEditDialog.tsx` 的 `isEnabled`）。
+  MCP 超时同理：`McpServerEntry.connectTimeoutSec` / `callTimeoutSec` 可选，
+  经 `src/shared/mcpTimeout.ts` 归一成 spawn 毫秒；缺省仍是 10s 连接 / 120s 调用。
 - **重命名字段等于丢数据**。`InstructionEntry.path` 曾改名为 `sourcePath`，
   旧条目在界面上直接变成空路径。真要改名就得写迁移，或接受旧数据失效并说明。
 - 主进程也会直接读这个文件做去重比对

@@ -1,7 +1,7 @@
 import type { AgentTypeKey } from '@shared/builtinAgents';
 import type { CapabilityAskRequest } from '@shared/capabilities/types';
 import { parseCompactCommand } from '@shared/compactCommand';
-import { type DefaultModelRef, resolveChatModel } from '@shared/defaultModel';
+import { type DefaultModelRef, defaultApprovalMode, resolveChatModel } from '@shared/defaultModel';
 import type {
   ApprovalMode,
   AttachedImage,
@@ -12,6 +12,7 @@ import type {
   ProjectAuthorityProjection,
   ProjectedMessage,
   ThinkingLevel,
+  TurnDigest,
 } from '@shared/types/agent';
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
 import type { PairCreatedSession } from '@shared/types/pair';
@@ -20,7 +21,6 @@ import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
 import {
   cleanTitleSummarySource,
   extractRepresentativeTitle,
-  mentionDisplayText,
 } from '@/components/chat/mentionComposer';
 
 /** 会话目标(pi-goal 式):active 时每次轮次收束自动续跑一次,直到终止信号或安全限制 */
@@ -46,10 +46,10 @@ export interface QueuedMessage {
 
 import { projectSafeJournal } from '@shared/safeJournalProjection';
 import { create } from 'zustand';
-import { createJSONStorage, persist } from 'zustand/middleware';
+import { persist } from 'zustand/middleware';
 import { oauthCredentialContext, useOauthCredentialStore } from '@/stores/oauthCredentials';
 import { useSettingsStore } from '@/stores/settings';
-import { electronStorage, openPersistWriteGate } from '@/stores/settings/storage';
+import { createElectronPersistStorage, openPersistWriteGate } from '@/stores/settings/storage';
 import { purgeConversationAuthority } from './authorityCleanup';
 import {
   evictColdMessages,
@@ -57,9 +57,13 @@ import {
   isBulkyAgentEvent,
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
+  needsHistoryHydration,
+  pruneSessionClocks,
   viewedConversationId,
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
+import { cachedPartializeSessions } from './persistSnapshot';
+import { remapConversationProjectIds } from './projectAuthorityRemap';
 import {
   applyAgentEvent,
   applyDispatchEvent,
@@ -72,6 +76,7 @@ import { isPairViewed, nextUnread } from './unread';
 import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
 
 const lastViewedAt: Record<string, number> = {};
+const parentTailInFlight = new Set<string>();
 let evictTimer: ReturnType<typeof setTimeout> | null = null;
 /** 正文脱节时向 worker 补要 snapshot 的去抖：同一会话一轮重叠的 upsert 不重复要 */
 const snapshotResyncAt: Record<string, number> = {};
@@ -81,6 +86,12 @@ function resyncSnapshot(sessionId: string): void {
   if (now - (snapshotResyncAt[sessionId] ?? 0) < SNAPSHOT_RESYNC_DEBOUNCE_MS) return;
   snapshotResyncAt[sessionId] = now;
   void window.electronAPI.agent.requestSnapshot(sessionId);
+}
+
+function forgetUnknownSessionClocks(conversations: Record<string, unknown>): void {
+  const known = new Set(Object.keys(conversations));
+  pruneSessionClocks(lastViewedAt, known);
+  pruneSessionClocks(snapshotResyncAt, known);
 }
 
 function viewedFromState(state: {
@@ -104,6 +115,8 @@ export interface Conversation extends SessionProjection {
   projectId: string;
   /** 首条消息的截断，作为列表展示名 */
   title: string;
+  /** 用户手动改过名：此后一切自动标题总结（首条即时 / 每轮滚动）都跳过；随 partialize 持久化 */
+  titleLocked?: boolean;
   /** 是否已在 worker 侧 spawn（首条消息发出时才 spawn） */
   started: boolean;
   spawning: boolean;
@@ -374,15 +387,55 @@ export const useSessionsStore = create<SessionsState>()(
         ) {
           return;
         }
+        // resume 与否由各调用点用触发时刻的快照判断（spawn 路径 !sessionFile、事件路径空标题）。
+        // 这里不能再读 live sessionFile：parent-ready 常抢在 spawn IPC 返回之前落地，
+        // 新会话此刻已带 sessionFile，按它判断会把桌面首条消息的总结整个误杀。
         const conversation = get().conversations[conversationId];
-        if (!conversation || conversation.sessionFile) return;
+        if (!conversation || conversation.titleLocked) return;
 
         pendingTitleBaselines.set(conversationId, baselineTitle);
         void window.electronAPI.agent.summarizeTitle(
           conversationId,
-          cleanedText,
+          { kind: 'initial', text: cleanedText },
           sessionModel?.providerId && sessionModel?.modelId
             ? { providerId: sessionModel.providerId, modelId: sessionModel.modelId }
+            : undefined
+        );
+      }
+
+      /**
+       * 回合成功结束后的滚动标题刷新：当前标题 + worker 切出的本轮摘要送模型，
+       * 模型可原样返回当前标题（不改）。每个成功回合都触发，不收敛；在飞未回流时跳过。
+       * 冷会话/手机端会话没有正文也能触发——摘要来自 worker，不依赖 renderer 的 messages。
+       */
+      function tryRollingSummarizeTitle(
+        conversationId: string,
+        digest: TurnDigest | undefined
+      ): void {
+        if (!digest || !useSettingsStore.getState().titleSummaryEnabled) return;
+        if (!digest.userText.trim() && !digest.assistantText.trim()) return;
+        const conversation = get().conversations[conversationId];
+        if (
+          !conversation ||
+          conversation.parentId ||
+          conversation.coworkerName ||
+          conversation.titleLocked ||
+          !conversation.title.trim() ||
+          pendingTitleBaselines.has(conversationId)
+        ) {
+          return;
+        }
+        pendingTitleBaselines.set(conversationId, conversation.title);
+        void window.electronAPI.agent.summarizeTitle(
+          conversationId,
+          {
+            kind: 'rolling',
+            currentTitle: conversation.title,
+            userText: digest.userText,
+            assistantText: digest.assistantText,
+          },
+          conversation.lastProviderId && conversation.lastModelId
+            ? { providerId: conversation.lastProviderId, modelId: conversation.lastModelId }
             : undefined
         );
       }
@@ -614,7 +667,9 @@ export const useSessionsStore = create<SessionsState>()(
                   ...conversation,
                   ...next,
                   title,
-                  ...(keepBody ? {} : { messages: [], customEntries: [] }),
+                  ...(keepBody
+                    ? {}
+                    : { messages: [], customEntries: [], historyBaseIndex: undefined }),
                   ...(snapshot.child
                     ? {
                         parentId: snapshot.child.parentId,
@@ -742,6 +797,7 @@ export const useSessionsStore = create<SessionsState>()(
                 ),
                 activeTabId: parent.activeTabId === coworker.id ? undefined : parent.activeTabId,
               };
+              forgetUnknownSessionClocks(conversations);
               return { conversations };
             }
             const existing = conversations[coworker.id];
@@ -869,6 +925,15 @@ export const useSessionsStore = create<SessionsState>()(
                 })
               : state
           );
+          // 压缩不发 turn-completed：成功结束后再泵队列，否则排队消息会卡住
+          if (event.state === 'end') {
+            if (get().conversations[id]?.abortRequested) {
+              set((state) => patch(state, id, { abortRequested: false }));
+              return;
+            }
+            flushQueue(id);
+            continueGoal(id);
+          }
           return;
         }
 
@@ -902,43 +967,41 @@ export const useSessionsStore = create<SessionsState>()(
           return;
         }
 
+        const current = get();
+        const currentConversation = current.conversations[id];
+        if (!currentConversation) return;
+        // 手机创建的冷会话仍需从首条用户消息提取标题。
+        const rawUserText =
+          !currentConversation.title &&
+          event.type === 'message-upsert' &&
+          event.message.role === 'user'
+            ? userMessageRawText(event.message)
+            : undefined;
+        const extractedTitle = rawUserText ? truncateTitle(rawUserText) : undefined;
+        if (
+          isBulkyAgentEvent(event.type) &&
+          !isMessageCacheHot(id, viewedFromState(current), lastViewedAt, Date.now())
+        ) {
+          if (extractedTitle && rawUserText) {
+            trySummarizeTitle(id, rawUserText, extractedTitle, {
+              providerId: currentConversation.lastProviderId,
+              modelId: currentConversation.lastModelId,
+            });
+            set((state) => patch(state, id, { title: extractedTitle }));
+          }
+          // persist 在 set 返回原 state 时也会写，必须在调用 set 之前跳过。
+          return;
+        }
+
         set((state) => {
           const conversation = state.conversations[id];
           if (!conversation) return state;
-
-          // 桌面建的会话在 spawn 时就有标题；空标题只会出现在手机建的会话上。
-          // 当首条用户消息到达时（message-upsert），无论该会话是否是桌面 hot 缓存，
-          // 都必须捕获首条消息来生成截断标题，并在开启设置时触发标题总结。
-          const isUserMessageUpsert =
-            event.type === 'message-upsert' && event.message.role === 'user';
-          let extractedTitle: string | undefined;
-          let rawUserText: string | undefined;
-          if (!conversation.title && isUserMessageUpsert) {
-            rawUserText = userMessageRawText(event.message);
-            if (rawUserText) {
-              extractedTitle = truncateTitle(rawUserText);
-            }
-          }
-
-          if (
-            isBulkyAgentEvent(event.type) &&
-            !isMessageCacheHot(id, viewedFromState(state), lastViewedAt, Date.now())
-          ) {
-            if (extractedTitle && rawUserText) {
-              trySummarizeTitle(id, rawUserText, extractedTitle, {
-                providerId: conversation.lastProviderId,
-                modelId: conversation.lastModelId,
-              });
-              return patch(state, id, { title: extractedTitle });
-            }
-            return state;
-          }
           // 冷缓存清空后用户先发了一句（乐观回显占位），worker 推来的 upsert 带原 index 对不上
           // 本地权威区：reducer 会丢正文只推 seq，若不补要 snapshot，历史与正在跑的工具卡永远不出现。
           if (
             event.type === 'message-upsert' &&
             conversation.started &&
-            upsertOutOfRange(conversation.messages, event.index)
+            upsertOutOfRange(conversation.messages, event.index, conversation.historyBaseIndex)
           ) {
             resyncSnapshot(id);
           }
@@ -1015,6 +1078,7 @@ export const useSessionsStore = create<SessionsState>()(
             return;
           }
           if (event.type !== 'turn-completed') return;
+          tryRollingSummarizeTitle(id, event.digest);
           flushQueue(id);
           continueGoal(id);
         }
@@ -1173,6 +1237,8 @@ export const useSessionsStore = create<SessionsState>()(
       function flushQueue(id: string): void {
         const conversation = get().conversations[id];
         if (!conversation?.started || conversation.status !== 'idle') return;
+        // 压缩排队/进行中先等压完：上下文还没换形就发下一条会打在旧占用上
+        if (conversation.compaction) return;
         const [next, ...rest] = conversation.queuedMessages ?? [];
         if (!next) return;
         if (
@@ -1359,6 +1425,7 @@ export const useSessionsStore = create<SessionsState>()(
                   activeConversationIds.has(id) &&
                   conversation.projectId === projectId &&
                   !conversation.started &&
+                  conversation.archived !== true &&
                   !conversation.sessionFile &&
                   conversation.messages.length === 0 &&
                   !conversation.title
@@ -1393,8 +1460,15 @@ export const useSessionsStore = create<SessionsState>()(
           const id = created.value.conversationId;
           const pendingAgentPrefill = get().pendingAgentPrefill;
           // 新会话应用默认预设；'default'（内置全局）或预设已删除时不写，spawn 时自然回落全局
-          const { defaultPresetId, presets, defaultReasoningEnabled, defaultThinkingLevel } =
-            useSettingsStore.getState();
+          const {
+            defaultPresetId,
+            presets,
+            defaultReasoningEnabled,
+            defaultThinkingLevel,
+            approvalReviewer,
+            lastApprovalMode,
+            providers,
+          } = useSettingsStore.getState();
           const defaultPreset =
             defaultPresetId !== 'default' && presets.some((preset) => preset.id === defaultPresetId)
               ? { presetId: defaultPresetId }
@@ -1409,6 +1483,12 @@ export const useSessionsStore = create<SessionsState>()(
             createdAt: Date.now(),
             reasoningEnabled: defaultReasoningEnabled ?? true,
             thinkingLevel: defaultThinkingLevel ?? 'medium',
+            approvalMode: defaultApprovalMode(
+              approvalReviewer,
+              providers,
+              oauthCredentialContext(useOauthCredentialStore.getState().snapshot),
+              lastApprovalMode
+            ),
             ...defaultPreset,
             ...(pendingAgentPrefill ? { prefillAgentTypeKey: pendingAgentPrefill } : {}),
             ...(options?.forkedFrom
@@ -1503,10 +1583,13 @@ export const useSessionsStore = create<SessionsState>()(
         renameConversation(id, title) {
           const next = title.trim().slice(0, 80);
           if (!next) return;
+          // 手动改名即永久锁定：在飞的自动总结作废，之后的回合也不再刷
+          pendingTitleBaselines.delete(id);
           set((state) => {
             const conversation = state.conversations[id];
-            if (!conversation || conversation.title === next) return state;
-            return patch(state, id, { title: next });
+            if (!conversation) return state;
+            if (conversation.title === next && conversation.titleLocked) return state;
+            return patch(state, id, { title: next, titleLocked: true });
           });
         },
 
@@ -1552,6 +1635,7 @@ export const useSessionsStore = create<SessionsState>()(
             }
             delete conversations[id];
             const order = state.order.filter((entry) => entry !== id);
+            forgetUnknownSessionClocks(conversations);
             return {
               conversations,
               order,
@@ -1772,8 +1856,12 @@ export const useSessionsStore = create<SessionsState>()(
             text = `${workspaceNote}\n\n${text}`;
             set((state) => patch(state, id, { pendingWorkspaceNote: undefined }));
           }
-          // agent 干活时消息进队列(不打断);轮次结束自动投递,队列区可编辑/删除/立即发送
-          if (conversation.started && conversation.status === 'running') {
+          // agent 干活或压缩中消息进队列(不打断);收束后自动投递。压缩时 status 仍是 idle，
+          // 立刻 prompt 会撞上 isStreaming 僵尸轮报错。
+          if (
+            conversation.started &&
+            (conversation.status === 'running' || conversation.compaction)
+          ) {
             const queuedId = crypto.randomUUID();
             set((state) =>
               patch(state, id, {
@@ -1818,7 +1906,7 @@ export const useSessionsStore = create<SessionsState>()(
               ],
             })
           );
-          if (!conversation.started) {
+          if (!conversation.started && !conversation.spawning) {
             set((state) =>
               patch(state, id, {
                 spawning: true,
@@ -1866,7 +1954,6 @@ export const useSessionsStore = create<SessionsState>()(
             }
             set((state) =>
               patch(state, id, {
-                spawning: false,
                 started: true,
                 lastProviderId: target.providerId,
                 lastModelId: target.modelId,
@@ -1961,6 +2048,8 @@ export const useSessionsStore = create<SessionsState>()(
                 // IPC 只是命令入队的同步 ack；等该会话首个 worker 事件（status/snapshot）到达再清
                 patch(state, id, {
                   started: true,
+                  status: 'idle',
+                  error: undefined,
                   lastProviderId: providerId,
                   lastModelId: modelId,
                 })
@@ -2053,10 +2142,17 @@ export const useSessionsStore = create<SessionsState>()(
         },
 
         setApprovalMode(id, mode) {
+          const previous = get().conversations[id]?.approvalMode;
           set((state) => patch(state, id, { approvalMode: mode }));
+          useSettingsStore.getState().setLastApprovalMode(mode);
           const conversation = get().conversations[id];
           if (conversation?.started) {
-            void window.electronAPI.agent.setApprovalMode(id, mode);
+            void window.electronAPI.agent.setApprovalMode(id, mode).then((result) => {
+              if (result && !result.ok) {
+                set((state) => patch(state, id, { approvalMode: previous ?? 'full' }));
+                if (previous) useSettingsStore.getState().setLastApprovalMode(previous);
+              }
+            });
           }
         },
 
@@ -2184,6 +2280,7 @@ export const useSessionsStore = create<SessionsState>()(
               coworkerIds: (parent.coworkerIds ?? []).filter((id) => id !== coworkerId),
               activeTabId: parent.activeTabId === coworkerId ? undefined : parent.activeTabId,
             };
+            forgetUnknownSessionClocks(conversations);
             return { conversations };
           });
         },
@@ -2268,6 +2365,7 @@ export const useSessionsStore = create<SessionsState>()(
           const conversation = get().conversations[conversationId];
           const item = conversation?.queuedMessages?.find((message) => message.id === messageId);
           if (!conversation || !item) return;
+          if (conversation.compaction) return;
           const running = conversation.status === 'running';
           // 出队并乐观回显。optimistic 标记使其浮在权威消息之后：running 时 steer
           // 要到下一个循环边界才送达，期间当前轮的 assistant upsert 若按裸 index
@@ -2359,75 +2457,72 @@ export const useSessionsStore = create<SessionsState>()(
       version: SESSIONS_VERSION,
       migrate: (persisted, version) => migrateSessions(persisted, version) as SessionsState,
       // 存 settings.json（localStorage 按 origin 隔离，dev 与打包版会分家）
-      storage: createJSONStorage(() => electronStorage),
+      storage: createElectronPersistStorage(),
       // 只存元数据：messages 由 worker snapshot 补回（刷新场景）；app 重启后拿不回则标结束
-      partialize: (state) => ({
-        conversations: Object.fromEntries(
-          Object.entries(state.conversations).map(([id, conversation]) => [
-            id,
-            {
-              ...conversation,
-              // 剥离 messages 前留下活跃时刻标量，重启后侧栏排序用（pinned.ts lastActiveAt）
-              lastActiveAt:
-                conversation.messages.at(-1)?.timestamp ??
-                conversation.lastActiveAt ??
-                conversation.createdAt,
-              messages: [],
-              customEntries: [],
-              dispatchMainEvents: {},
-              generation: undefined,
-              lastSeq: 0,
-              spawning: false,
-              error: undefined,
-              // started 是「worker 里这个会话还活着」的运行态。worker 随 app 一起重启，
-              // 持久化它会让重启后 ChatView 的 `!started` 自动恢复门永假：会话点开空白、
-              // 无 loading 无报错，且再也不会重试（打包版 worker 延后启动时必现）。
-              // status 同理：把 running 写盘会让重启后的会话锁 composer 装忙；
-              // 有 sessionFile 的降为 idle 等回放，无 sessionFile 的无从回放，直接落终态。
-              ...(conversation.started && !conversation.sessionFile
-                ? { status: 'failed' as const, error: 'Session ended — history not restored' }
-                : { status: 'idle' as const }),
-              started: false,
-              runStartedAt: undefined,
-              lastOutputAt: undefined,
-              // 运行态字段不持久化：重启后由 worker snapshot 重建，避免 rehydrate 先摆出陈旧状态
-              pendingApprovals: [],
-              pendingAsks: [],
-              pendingCapabilityAsks: [],
-              activeOauthAsk: undefined,
-              historyOnly: undefined,
-              historyLoadAttempted: undefined,
-              backgroundTasks: [],
-              subagents: [],
-              activeTabId: undefined,
-              draftText: undefined,
-              prefillAgentTypeKey: undefined,
-              // resume 时重新校验，不持久化陈旧的丢失/迁移标记
-              worktreeMissing: undefined,
-              workspaceMigrating: undefined,
-              abortRequested: undefined,
-              compaction: undefined,
-              compactionError: undefined,
-            },
-          ])
-        ),
-        order: state.order,
-        activeId: state.activeId,
-      }),
+      partialize: (state) => cachedPartializeSessions(state),
       onRehydrateStorage: () => (_state, error) => {
         if (!error) openPersistWriteGate('enso-conversations');
         // 刷新时 worker 仍活着：只补当前正在看的会话正文。其它会话点开再 snapshot。
         const state = useSessionsStore.getState();
         const viewed = viewedFromState(state);
-        if (viewed) void window.electronAPI.agent.requestSnapshot(viewed);
+        if (viewed) {
+          void hydrateParentHistoryTail(viewed);
+          void window.electronAPI.agent.requestSnapshot(viewed);
+        }
+        void syncConversationProjectIds();
       },
     }
   )
 );
 
+async function syncConversationProjectIds(): Promise<void> {
+  const authority = await window.electronAPI.sourceAuthority.read();
+  const conversations = useSessionsStore.getState().conversations;
+  const next = remapConversationProjectIds(conversations, authority.conversations);
+  if (next !== conversations) useSessionsStore.setState({ conversations: next });
+}
+
+void syncConversationProjectIds();
+window.electronAPI.sourceAuthority.onChanged((projection) => {
+  const conversations = useSessionsStore.getState().conversations;
+  const next = remapConversationProjectIds(conversations, projection.conversations);
+  if (next !== conversations) useSessionsStore.setState({ conversations: next });
+});
+
 // 上报「当前正在查看的会话」给 main：窗口聚焦时,只有正被查看的会话才抑制系统通知。
 // tab 生效时以 tab（coworker/子会话）为准,与 sendActive 等处的解析口径一致。
 let lastReportedViewedId: string | null = null;
+
+async function hydrateParentHistoryTail(conversationId: string): Promise<void> {
+  if (parentTailInFlight.has(conversationId)) return;
+  const current = useSessionsStore.getState().conversations[conversationId];
+  if (!current || current.parentId || hasAuthoritativeMessages(current.messages)) return;
+  const read = window.electronAPI.agent.readParentHistoryTail;
+  if (!read) return;
+  parentTailInFlight.add(conversationId);
+  try {
+    const result = await read(conversationId);
+    if (!result.ok || result.messages.length === 0) return;
+    const latest = useSessionsStore.getState().conversations[conversationId];
+    if (!latest || latest.parentId || hasAuthoritativeMessages(latest.messages)) return;
+    const optimistic = latest.messages.filter((message) => message.optimistic);
+    useSessionsStore.setState({
+      conversations: {
+        ...useSessionsStore.getState().conversations,
+        [conversationId]: {
+          ...latest,
+          messages: optimistic.length > 0 ? [...result.messages, ...optimistic] : result.messages,
+          historyBaseIndex: result.baseIndex > 0 ? result.baseIndex : undefined,
+        },
+      },
+    });
+  } catch {
+    // 尾巴失败不挡 resume；下次点开再试
+  } finally {
+    parentTailInFlight.delete(conversationId);
+  }
+}
+
 useSessionsStore.subscribe((state) => {
   const viewed = viewedFromState(state);
   if (viewed === lastReportedViewedId) return;
@@ -2435,13 +2530,8 @@ useSessionsStore.subscribe((state) => {
   window.electronAPI.agent.setViewedSession?.(viewed);
   if (viewed) lastViewedAt[viewed] = Date.now();
   const conversation = viewed ? state.conversations[viewed] : undefined;
-  if (
-    viewed &&
-    conversation &&
-    (conversation.started || conversation.sessionFile) &&
-    !hasAuthoritativeMessages(conversation.messages) &&
-    !conversation.spawning
-  ) {
+  if (viewed && conversation && needsHistoryHydration(conversation)) {
+    void hydrateParentHistoryTail(viewed);
     void window.electronAPI.agent.requestSnapshot(viewed);
   }
   if (evictTimer) clearTimeout(evictTimer);

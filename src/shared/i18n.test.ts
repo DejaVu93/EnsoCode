@@ -33,10 +33,14 @@ const MAPPED_I18N_KEYS = [
   'Supervised',
   'Auto-accept edits',
   'Full access',
+  'Assistant approval',
+  'Assistant reviewing…',
   // ApprovalModePicker.MODE_META.descKey
   'Approve every command and file change',
   'Edits run freely; commands and MCP still ask',
   'Run everything without asking',
+  'A configured model reviews each action first',
+  'Select an assistant approval model in Settings first',
   // StatusLineSettings.PRESET_LABEL_KEYS
   'Minimal',
   'Default',
@@ -65,6 +69,10 @@ const MAPPED_I18N_KEYS = [
   'New terminal tab',
   'New terminal when the side panel is focused; otherwise new conversation',
   'Close terminal tab',
+  // fileTreeMenu.revealLabel()：按平台返回其一，t() 的实参不是字面量
+  'Reveal in Finder',
+  'Open Containing Folder',
+  'Reveal in File Explorer',
 ] as const;
 
 const MODEL_CENTER_ENSO_I18N_KEYS = [

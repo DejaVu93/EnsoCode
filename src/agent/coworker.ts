@@ -17,6 +17,7 @@ export interface CoworkerSendOptions {
   wait?: boolean;
   /** 轮次完成后在会话 cwd 执行的验收命令,退出码即结论 */
   gate?: string;
+  schema?: unknown;
 }
 
 export interface CoworkerToolDeps {
@@ -38,6 +39,8 @@ export interface CoworkerToolDeps {
   wait(name: string, opts?: { signal?: AbortSignal; gate?: string }): Promise<string>;
   /** 最近一轮的完整结果(未截断) */
   report(name: string): string | Promise<string>;
+  /** coworker → coworker；idle 唤醒 / busy 捎带 */
+  message(from: string, to: string, text: string): Promise<string> | string;
 }
 
 const truncate = (text: string, name: string): string =>
@@ -55,8 +58,21 @@ const truncateReport = (text: string): string =>
  * coworker 保有自己的完整上下文,可多轮 send 追问;用户在 tab 中旁观并可直接介入。
  */
 export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
-  const typeList = deps.agentTypes.map((type) => type.name).join(', ');
+  const typeList = deps.agentTypes
+    .map(
+      (type) =>
+        type.name +
+        (type.allowModelOverride
+          ? ' [custom model required]'
+          : type.model
+            ? ` (model: ${type.model.modelId})`
+            : ' (follows conversation model)')
+    )
+    .join(', ');
   const modelNames = deps.models.map((option) => option.name);
+  const requiredPickTypes = deps.agentTypes
+    .filter((type) => type.allowModelOverride)
+    .map((type) => type.name);
   const modelList = deps.models
     .map((option) => option.name + (option.description ? ` (${option.description})` : ''))
     .join('; ');
@@ -78,7 +94,8 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
             type: 'string',
             description:
               `Model override for spawn: ${modelList}. ` +
-              'Pick the cheapest model that fits the role; omit to inherit the default. ' +
+              'Pick the cheapest model that fits the role. ' +
+              'Required for agent_type marked [custom model required]; omit only when the type follows the conversation or uses a fixed model. ' +
               'Append :off/:minimal/:low/:medium/:high/:xhigh/:max to set thinking for this coworker.',
           },
         }
@@ -92,7 +109,7 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
       'spawn it once with a role and initial task, then send follow-ups that build on everything it has seen. ' +
       'The user watches each coworker in its own tab and may reply there directly. ' +
       'Operations: spawn {name, agent_type?, task} / send {name, message} / wait {name, gate?} / ' +
-      'report {name} / list / dismiss {name}. ' +
+      'report {name} / list / dismiss {name} / message {name, to, text}. ' +
       'spawn and send are ASYNC by default: they return immediately and you are notified automatically ' +
       'when the round completes — keep working on other lines meanwhile. When you have nothing else to do, ' +
       'use wait {name} to block until its current round ends (never sleep/poll). ' +
@@ -106,10 +123,11 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
       'should watch and join, then keep steering it with send. ' +
       'spawn/send are async by default — you get notified on completion; when idle use wait {name} ' +
       'instead of sleep/poll, and report {name} for the untruncated last result. ' +
+      'Peer coworkers with operation=message (to + text). ' +
       'Verify delegated work with gate:"<command>" (exit code speaks, not the coworker). ' +
       'One coworker per role, reused across rounds; dismiss when its goal is met' +
       (deps.models.length > 0
-        ? '. A model parameter on spawn lets you pick a cheaper/stronger model per role — see the tool schema for options'
+        ? '. A model parameter on spawn lets you pick a cheaper/stronger model per role — required for [custom model required] types, otherwise omit to inherit'
         : ''),
     promptGuidelines: [
       'Hire a coworker whenever the same thread MAY need a follow-up round: review/verify loops, test-fix loops, ' +
@@ -123,16 +141,21 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
         'do not redo its work yourself and do not spawn a second coworker for the same role (reuse the name). ' +
         'When a coworker reaches you via message_main_agent, answer it with send. ' +
         "dismiss only when the role's goal is met or the user says stop",
+      ...(requiredPickTypes.length > 0 && modelNames.length > 0
+        ? [
+            `When spawning an agent_type marked [custom model required] (${requiredPickTypes.join(', ')}), always pass model on the first spawn — omitting it fails, do not retry without model. Available: ${modelNames.join(', ')}`,
+          ]
+        : []),
     ],
     parameters: {
       type: 'object',
       properties: {
         operation: {
           type: 'string',
-          enum: ['spawn', 'send', 'wait', 'report', 'list', 'dismiss'],
+          enum: ['spawn', 'send', 'wait', 'report', 'list', 'dismiss', 'message'],
           description:
             'spawn: hire + first task; send: follow-up; wait: block until current round ends; ' +
-            'report: full text of last round; list: roster; dismiss: fire',
+            'report: full text of last round; list: roster; dismiss: fire; message: peer coworker',
         },
         name: {
           type: 'string',
@@ -149,6 +172,12 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
           description: 'First-round task for spawn (role + first step); continue with send',
         },
         message: { type: 'string', description: 'Message for send' },
+        to: { type: 'string', description: 'Target coworker name for operation=message' },
+        text: { type: 'string', description: 'Body for operation=message' },
+        schema: {
+          type: 'object',
+          description: 'Optional JSON Schema; report/wait may append a <!-- yield:json --> block',
+        },
         wait: {
           type: 'boolean',
           description:
@@ -175,6 +204,9 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
         message = '',
         wait = false,
         gate,
+        to = '',
+        text: peerText = '',
+        schema,
       } = params as {
         operation?: string;
         name?: string;
@@ -185,6 +217,9 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
         message?: string;
         wait?: boolean;
         gate?: string;
+        to?: string;
+        text?: string;
+        schema?: unknown;
       };
       const text = (value: string) => ({
         content: [{ type: 'text' as const, text: value }],
@@ -213,7 +248,7 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
             !deps.models.some((option) => option.name === resolvedModelName)
           ) {
             throw new Error(
-              `unknown model "${resolvedModelName}". Available: [${modelNames.join(', ')}] or omit to inherit.`
+              `unknown model "${resolvedModelName}". Available: [${modelNames.join(', ')}].`
             );
           }
           const targetType = agentTypeName
@@ -224,9 +259,14 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
               `agent_type "${targetType.name}" does not allow custom model selection (it is locked to ${targetType.model ? targetType.model.modelId : 'conversation model'}).`
             );
           }
+          if (targetType?.allowModelOverride && !resolvedModelName) {
+            throw new Error(
+              `agent_type "${targetType.name}" requires a model. Available: [${modelNames.join(', ')}]`
+            );
+          }
           const info = await deps.spawn(name.trim(), agentTypeName, resolvedModelName, thinking);
           // 角色提示由 supervisor 的 pendingRole 机制在首条前缀注入
-          const result = await deps.send(info.name, task, sendOptions);
+          const result = await deps.send(info.name, task, { ...sendOptions, schema });
           return text(
             `Coworker "${info.name}" hired${info.agentType ? ` (${info.agentType})` : ''}.\n\n${truncate(result, info.name)}`
           );
@@ -237,7 +277,7 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
           const result = await deps.send(
             name.trim(),
             `<message-from-main-agent>\n${message}\n</message-from-main-agent>`,
-            sendOptions
+            { ...sendOptions, schema }
           );
           return text(truncate(result, name.trim()));
         }
@@ -263,6 +303,12 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
               .join('\n')
           );
         }
+        case 'message': {
+          if (!name.trim()) throw new Error('message requires a name');
+          if (!to.trim()) throw new Error('message requires to');
+          if (!peerText.trim()) throw new Error('message requires text');
+          return text(await deps.message(name.trim(), to.trim(), peerText));
+        }
         case 'dismiss': {
           if (!name.trim()) throw new Error('dismiss requires a name');
           await deps.dismiss(name.trim());
@@ -270,7 +316,7 @@ export function createCoworkerTool(deps: CoworkerToolDeps): ToolDefinition {
         }
         default:
           throw new Error(
-            `unknown operation "${operation}". Use spawn/send/wait/report/list/dismiss.`
+            `unknown operation "${operation}". Use spawn/send/wait/report/list/dismiss/message.`
           );
       }
     },

@@ -27,6 +27,7 @@ function makeDeps(overrides: Partial<CoworkerToolDeps> = {}): CoworkerToolDeps {
     dismiss: vi.fn(async () => {}),
     wait: vi.fn(async () => 'waited'),
     report: vi.fn(() => 'full'),
+    message: vi.fn(async () => 'peer-ok'),
     ...overrides,
   };
 }
@@ -134,11 +135,65 @@ describe('coworker tool model 参数', () => {
     expect(first).toMatch(/multi-round|follow-up/i);
   });
 
+  it('存在必须自选的 agent_type 时，guidelines 提前要求 spawn 带 model', () => {
+    const text =
+      createCoworkerTool(
+        makeDeps({
+          agentTypes: [
+            {
+              name: 'scout',
+              description: 'scout',
+              systemPrompt: '',
+              tools: 'readonly',
+              allowModelOverride: true,
+            },
+          ],
+        })
+      ).promptGuidelines?.join('\n') ?? '';
+    expect(text).toMatch(/\[custom model required\]/);
+    expect(text).toMatch(/always pass model/i);
+    expect(text).toMatch(/OpenAI\/gpt-cheap/);
+    expect(
+      createCoworkerTool(
+        makeDeps({
+          agentTypes: [
+            { name: 'scout', description: 'scout', systemPrompt: '', tools: 'readonly' },
+          ],
+        })
+      ).promptGuidelines?.join('\n')
+    ).not.toMatch(/always pass model/i);
+  });
+
   it('description/promptSnippet 与 guidelines 同向：不再劝省着用、不再劝先交差', () => {
     const tool = createCoworkerTool(makeDeps());
     expect(tool.description).not.toMatch(/return to the user/);
     expect(tool.promptSnippet).not.toMatch(/prefer few/);
     expect(tool.promptSnippet).toMatch(/multi-round/);
+  });
+
+  it('当 agent_type 设为必须自选（allowModelOverride === true）时，spawn 不填 model 拒绝继承', async () => {
+    const deps = makeDeps({
+      agentTypes: [
+        {
+          name: 'scout',
+          description: 'scout',
+          systemPrompt: '',
+          tools: 'readonly',
+          allowModelOverride: true,
+        },
+      ],
+    });
+    const tool = createCoworkerTool(deps);
+    await expect(
+      tool.execute(
+        't1',
+        { operation: 'spawn', name: 'bob', task: 'do', agent_type: 'scout' },
+        undefined,
+        undefined,
+        {} as never
+      )
+    ).rejects.toThrow(/requires a model/i);
+    expect(deps.spawn).not.toHaveBeenCalled();
   });
 
   it('当 agent_type 锁定模型（allowModelOverride === false）时，spawn 传 model 报错拒绝', async () => {
@@ -252,7 +307,24 @@ describe('coworker tool wait/report 操作', () => {
     const tool = createCoworkerTool(makeDeps());
     const properties = (tool.parameters as { properties: { operation: { enum: string[] } } })
       .properties;
-    expect(properties.operation.enum).toEqual(expect.arrayContaining(['wait', 'report']));
+    expect(properties.operation.enum).toEqual(
+      expect.arrayContaining(['wait', 'report', 'message'])
+    );
+  });
+
+  it('operation=message 投递给 deps.message，不走 send', async () => {
+    const deps = makeDeps();
+    const tool = createCoworkerTool(deps);
+    const result = await tool.execute(
+      't1',
+      { operation: 'message', name: 'alice', to: 'bob', text: 'ping' },
+      undefined,
+      undefined,
+      {} as never
+    );
+    expect(deps.message).toHaveBeenCalledWith('alice', 'bob', 'ping');
+    expect(deps.send).not.toHaveBeenCalled();
+    expect((result.content[0] as { text: string }).text).toBe('peer-ok');
   });
 
   it('promptSnippet 提到 wait,并劝阻 sleep/poll', () => {

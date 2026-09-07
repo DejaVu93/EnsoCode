@@ -27,10 +27,59 @@ export function isMessageCacheHot(
  * 不算：冷缓存清空后用户先发一句，length 变 1 但历史与正在跑的工具卡都还没补回，
  * 仍需要向 worker 要 snapshot。
  */
-export function hasAuthoritativeMessages(
-  messages: readonly { optimistic?: boolean }[]
-): boolean {
+export function hasAuthoritativeMessages(messages: readonly { optimistic?: boolean }[]): boolean {
   return messages.some((message) => !message.optimistic);
+}
+
+/** 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 snapshot */
+export function needsHistoryHydration(conversation: {
+  started: boolean;
+  sessionFile?: string;
+  messages: readonly { optimistic?: boolean }[];
+  spawning: boolean;
+  status?: string;
+}): boolean {
+  return (
+    conversation.status !== 'failed' &&
+    (conversation.started || Boolean(conversation.sessionFile)) &&
+    !hasAuthoritativeMessages(conversation.messages) &&
+    !conversation.spawning
+  );
+}
+
+/** 输入框 busy：有权威正文后不再因 spawn/读历史锁输入 */
+export function chatSurfaceBusy(conversation: {
+  started: boolean;
+  sessionFile?: string;
+  messages: readonly { optimistic?: boolean }[];
+  spawning: boolean;
+  status?: string;
+}): boolean {
+  if (conversation.status === 'running') return true;
+  if (hasAuthoritativeMessages(conversation.messages)) return false;
+  return needsHistoryHydration(conversation) || conversation.spawning;
+}
+
+/** 时间线脚点：空窗读历史 / spawn / 乐观未确认 / running 立刻出 loading */
+export function chatTimelineBusy(conversation: {
+  started?: boolean;
+  sessionFile?: string;
+  messages: readonly { optimistic?: boolean }[];
+  spawning: boolean;
+  status?: string;
+}): boolean {
+  return (
+    conversation.status === 'running' ||
+    conversation.spawning ||
+    conversation.messages.some((message) => message.optimistic) ||
+    needsHistoryHydration({
+      started: conversation.started === true,
+      sessionFile: conversation.sessionFile,
+      messages: conversation.messages,
+      spawning: conversation.spawning,
+      status: conversation.status,
+    })
+  );
 }
 
 export function isBulkyAgentEvent(type: string): boolean {
@@ -49,8 +98,18 @@ export function evictColdMessages<T extends { messages: unknown[]; customEntries
   for (const [id, conversation] of Object.entries(conversations)) {
     if (isMessageCacheHot(id, viewedId, lastViewedAt, now, ttl)) continue;
     if (conversation.messages.length === 0 && conversation.customEntries.length === 0) continue;
-    next[id] = { ...conversation, messages: [], customEntries: [] };
+    next[id] = { ...conversation, messages: [], customEntries: [], historyBaseIndex: undefined };
     changed = true;
   }
   return changed ? next : conversations;
+}
+
+/** 已删会话的浏览/resync 时间戳不再占表 */
+export function pruneSessionClocks(
+  clocks: Record<string, number>,
+  knownIds: ReadonlySet<string>
+): void {
+  for (const id of Object.keys(clocks)) {
+    if (!knownIds.has(id)) delete clocks[id];
+  }
 }

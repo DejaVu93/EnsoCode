@@ -18,7 +18,13 @@ import {
   SquareTerminal,
   X,
 } from 'lucide-react';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, type ReactElement, useContext, useEffect, useRef, useState } from 'react';
+import {
+  ContextMenu,
+  ContextMenuItem,
+  ContextMenuPopup,
+  ContextMenuTrigger,
+} from '@/components/ui/context-menu';
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from '@/components/ui/menu';
 import { useI18n } from '@/i18n';
 import { easeOutLayout, springStandard } from '@/lib/motion';
@@ -30,7 +36,9 @@ import { useSidePanelStore } from '@/stores/sidePanel';
 import { BrowserView } from './BrowserView';
 import { ChangesView } from './ChangesView';
 import { FilesView } from './FilesView';
+import { shouldSkipSidePanelWidthAnim } from './sidePanelWidthAnim';
 import { TerminalView } from './TerminalView';
+import { idsToClose, type TabCloseKind } from './tabCloseActions';
 import 'dockview-react/dist/styles/dockview.css';
 import './sidepanel-dock.css';
 
@@ -146,8 +154,20 @@ function BrowserPanel(props: IDockviewPanelProps<{ conversationId?: string; proj
   return <BrowserView conversationId={conversationId} panelApi={props.api} />;
 }
 
+function closeGroupTabs(
+  api: IDockviewPanelHeaderProps['api'],
+  kind: Exclude<TabCloseKind, 'saved'>
+): void {
+  const ordered = api.group.panels.map((panel) => panel.id);
+  const closing = new Set(idsToClose(ordered, api.id, kind));
+  for (const panel of [...api.group.panels]) {
+    if (closing.has(panel.id)) panel.api.close();
+  }
+}
+
 /** 与 CoworkerTabs 同款 chip:圆角、bg-muted 激活、hover 出关闭 */
 function SidePanelTab(props: IDockviewPanelHeaderProps<{ favicon?: string | null }>) {
+  const { t } = useI18n();
   const [active, setActive] = useState(props.api.isActive);
   const [title, setTitle] = useState(props.api.title ?? '');
   const [favicon, setFavicon] = useState<string | null>(props.params.favicon ?? null);
@@ -170,7 +190,7 @@ function SidePanelTab(props: IDockviewPanelHeaderProps<{ favicon?: string | null
     };
   }, [props.api]);
   const isBrowser = props.api.id === 'browser' || props.api.id.startsWith('browser:');
-  return (
+  const tab = (
     <div
       className={cn(
         'group/tab relative flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
@@ -206,6 +226,25 @@ function SidePanelTab(props: IDockviewPanelHeaderProps<{ favicon?: string | null
         <X className="h-3 w-3" />
       </button>
     </div>
+  );
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger render={tab as ReactElement<Record<string, unknown>>} />
+      <ContextMenuPopup className="min-w-40">
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'self')}>
+          {t('Close')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'others')}>
+          {t('Close others')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'right')}>
+          {t('Close tabs to the right')}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => closeGroupTabs(props.api, 'all')}>
+          {t('Close all')}
+        </ContextMenuItem>
+      </ContextMenuPopup>
+    </ContextMenu>
   );
 }
 
@@ -443,6 +482,13 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
   const [cover, setCover] = useState(fullscreen);
   const [workspaceW, setWorkspaceW] = useState(0);
   const asideRef = useRef<HTMLElement>(null);
+  const [widthAnim, setWidthAnim] = useState({
+    id: conversation?.id,
+    from: conversation?.id,
+  });
+  if (conversation?.id !== widthAnim.id) {
+    setWidthAnim({ id: conversation?.id, from: widthAnim.id });
+  }
   if (fullscreen && !cover) setCover(true);
   useEffect(() => {
     const parent = asideRef.current?.parentElement;
@@ -453,9 +499,25 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
     ro.observe(parent);
     return () => ro.disconnect();
   }, []);
-  const skipWidthAnim = resizing;
-  const targetW = fullscreen ? workspaceW || width : open ? width : 0;
+  useEffect(() => {
+    if (widthAnim.from === widthAnim.id) return;
+    setWidthAnim((s) => (s.from === s.id ? s : { ...s, from: s.id }));
+  }, [widthAnim.from, widthAnim.id]);
+  /**
+   * 内容层固定为目标宽度、左对齐，而不是 w-full 跟随 aside：
+   * dockview 的 resize 回调在 ResizeObserver 里又套了一层 rAF，至少滞后一帧；
+   * aside 展开态是透明的（给 Browser 挖孔），若内容跟着 aside 逐帧重排，
+   * 弹簧过冲/打开首帧时 aside 比内容宽出来的那一条就会露出没有面板遮罩的裸壁纸。
+   * 全屏 cover 态 aside 本身是实底，内容照常铺满。border-l 占 1px，内容按 content-box 扣掉。
+   */
+  const contentW = cover ? undefined : Math.max(0, width - (open ? 1 : 0));
   const activeId = conversation?.id;
+  const skipWidthAnim = shouldSkipSidePanelWidthAnim({
+    resizing,
+    conversationId: widthAnim.id,
+    previousConversationId: widthAnim.from,
+  });
+  const targetW = fullscreen ? workspaceW || width : open ? width : 0;
   if (activeId && !mountedIds.includes(activeId)) {
     setMountedIds((ids) => (ids.includes(activeId) ? ids : [...ids, activeId]));
   }
@@ -481,7 +543,23 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
           open && 'border-l'
         )}
       >
-        <div className={cn('flex h-full min-h-0 w-full flex-col', !open && 'hidden')}>
+        {open && !cover && contentW !== undefined ? (
+          // 过冲补条：只盖 [内容右边缘, aside 右边缘]，稳态宽度为 0，不会压到 Browser 挖孔
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-0 bg-background"
+            style={{ left: contentW }}
+          />
+        ) : null}
+        <div
+          className={cn(
+            'relative flex h-full min-h-0 flex-col',
+            cover && 'w-full',
+            // invisible 而非 hidden：关着时 dockview 也按目标宽度排好，打开首帧即满遮罩
+            !open && 'invisible'
+          )}
+          style={contentW !== undefined ? { width: contentW } : undefined}
+        >
           {visibleIds.length > 0 ? (
             <div className="relative min-h-0 flex-1">
               {visibleIds.map((id) => {

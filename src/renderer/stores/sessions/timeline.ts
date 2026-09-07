@@ -1,5 +1,6 @@
 import type {
   AgentSessionCustomEntry,
+  ApprovalRequestInfo,
   ProjectedMessage,
   TodoItem,
   TurnPerf,
@@ -39,7 +40,7 @@ export type TimelineItem =
       name: string;
       summary: string;
       output: string | null;
-      state: 'running' | 'ok' | 'error';
+      state: 'running' | 'reviewing' | 'ok' | 'error';
       /** edit 工具的替换块，用于渲染 diff；非 edit 为 null */
       edits: EditBlock[] | null;
       /** write 工具写入的文件内容,展开即可查看;非 write 为 null */
@@ -65,11 +66,23 @@ export type TimelineItem =
     }
   | { kind: 'error'; key: string; text: string }
   /** pi 的 compaction 摘要：之前的历史已被压缩出 LLM 上下文，渲染为分隔行 */
-  | { kind: 'compaction'; key: string; summary: string; tokensBefore: number | null }
+  | {
+      kind: 'compaction';
+      key: string;
+      summary: string;
+      tokensBefore: number | null;
+      verified?: boolean;
+    }
   /** 压缩进行中 / 排队：钉在时间线底部，不依赖占用面板 */
   | { kind: 'compaction-progress'; key: string; state: 'queued' | 'running' }
   /** 摘要不在末尾时，底部再钉一条可展开提示 */
-  | { kind: 'compaction-notice'; key: string; summary: string; tokensBefore: number | null }
+  | {
+      kind: 'compaction-notice';
+      key: string;
+      summary: string;
+      tokensBefore: number | null;
+      verified?: boolean;
+    }
   /** 后台任务完成的合成注入消息（<background-task-update>），渲染为系统通知行 */
   | { kind: 'task-note'; key: string; summary: string; detail: string }
   /** 不进入 LLM context 的 parent/child SessionManager custom entry。 */
@@ -219,12 +232,24 @@ function splitThinkingTaggedText(text: string): Array<{ kind: 'text' | 'thinking
  * - assistant 的 text/thinking 各自成块，未完结（isLast 且会话 running）的块标 streaming
  * 纯函数，输入不被修改。
  */
+function reviewingToolCallIds(
+  pendingApprovals: readonly ApprovalRequestInfo[] | undefined
+): Set<string> {
+  const ids = new Set<string>();
+  for (const request of pendingApprovals ?? []) {
+    if (request.phase === 'reviewing' && request.toolCallId) ids.add(request.toolCallId);
+  }
+  return ids;
+}
+
 function buildMessageTimeline(
   messages: ProjectedMessage[],
   running: boolean,
   cwd?: string,
-  toolOutputs?: Record<string, string>
+  toolOutputs?: Record<string, string>,
+  pendingApprovals?: readonly ApprovalRequestInfo[]
 ): TimelineItem[] {
+  const reviewingIds = reviewingToolCallIds(pendingApprovals);
   const results = new Map<
     string,
     {
@@ -298,6 +323,7 @@ function buildMessageTimeline(
         key: `${messageIndex}`,
         summary: partText(message),
         tokensBefore: message.tokensBefore ?? null,
+        ...(message.verified ? { verified: true } : {}),
       });
       return;
     }
@@ -396,7 +422,9 @@ function buildMessageTimeline(
                 ? 'error'
                 : 'ok'
               : running && messageIndex === lastTurnIndex
-                ? 'running'
+                ? reviewingIds.has(part.id)
+                  ? 'reviewing'
+                  : 'running'
                 : running
                   ? 'ok'
                   : 'error',
@@ -481,6 +509,7 @@ function insertCompactionNotice(items: TimelineItem[], noticeAt: number): Timeli
     key: `compaction-notice:${lastSummary.key}`,
     summary: lastSummary.summary,
     tokensBefore: lastSummary.tokensBefore,
+    ...(lastSummary.verified ? { verified: true } : {}),
   };
   return [...items.slice(0, at), notice, ...items.slice(at)];
 }
@@ -509,9 +538,16 @@ export function buildTimeline(
     compactionNoticeAt?: number;
     /** 运行中工具的输出快照（toolCallId → 文本）；真实 toolResult 到位后优先用后者 */
     toolOutputs?: Record<string, string>;
+    pendingApprovals?: readonly ApprovalRequestInfo[];
   }
 ): TimelineItem[] {
-  const messageItems = buildMessageTimeline(messages, running, cwd, options?.toolOutputs);
+  const messageItems = buildMessageTimeline(
+    messages,
+    running,
+    cwd,
+    options?.toolOutputs,
+    options?.pendingApprovals
+  );
   const merged =
     customEntries.length === 0
       ? messageItems
@@ -727,7 +763,7 @@ export function isReadOnlyTool(item: { name: string; summary: string }): boolean
  * - 带 diff 的 edit 行不进组，紧跟组头之后平铺（改动是核心产物，不折）。
  * - 默认：running 时最后一个 user 之后的段不折（进行中的轮实时展示）。
  * - compact（对齐 Cursor 的 Explored）：段只收只读工具（read/grep/find/ls/glob），
- *   bash 等其它工具打断段并平铺；live 也折，running 行钉在组外，组头标 exploring。
+ *   bash 等其它工具打断段并平铺；live 也折，running 只读行进组，组头标 exploring。
  * - expandedKeys 含组 key 时组头后平铺 children（参与虚拟化）。
  * 纯函数。
  */
@@ -755,11 +791,15 @@ export function foldTimeline(
     while (end < items.length && inSegment(items[end])) end += 1;
     const segment = items.slice(i, end);
     const liveSegment = !compact && running && lastUserIndex >= 0 && i > lastUserIndex;
-    // 钉住的行不进组：edit 的 diff、write 的内容、todo 清单是核心产物，
-    // running 行是「此刻在跑什么」，都不折进黑盒
-    const pinned = (s: TimelineItem): boolean =>
-      s.kind === 'tool' &&
-      (s.edits !== null || !!s.writeContent || s.name === 'todo' || s.state === 'running');
+    // 钉住的行不进组：edit 的 diff、write 的内容、todo 清单是核心产物。
+    // compact 下 running 只读行进组（避免完成后从平铺跳进组头抽动）；
+    // 非 compact 仍把 running 钉在组外，方便看此刻在跑什么。
+    const pinned = (s: TimelineItem): boolean => {
+      if (s.kind !== 'tool') return false;
+      if (s.edits !== null || !!s.writeContent || s.name === 'todo') return true;
+      if (s.state !== 'running' && s.state !== 'reviewing') return false;
+      return !(compact && isReadOnlyTool(s));
+    };
     const editRows = segment.filter(pinned);
     const groupRows = segment.filter((s) => !pinned(s));
     const toolCount = groupRows.filter((s) => s.kind === 'tool').length;
@@ -778,7 +818,11 @@ export function foldTimeline(
         expanded,
         count: toolCount,
         stats,
-        exploring: compact && editRows.some((s) => s.kind === 'tool' && s.state === 'running'),
+        exploring:
+          compact &&
+          groupRows.some(
+            (s) => s.kind === 'tool' && (s.state === 'running' || s.state === 'reviewing')
+          ),
         children: groupRows,
       });
       // 展开：原始顺序全量平铺；收拢：仅 edit 行（diff）跟在组头后

@@ -13,10 +13,13 @@ import type {
   ModelProvider,
   Preset,
   Project,
+  ProjectGroup,
   SkillEntry,
   SubagentModelEntry,
 } from '@shared/types';
-import type { ThinkingLevel } from '@shared/types/agent';
+import type { ApprovalMode, ThinkingLevel } from '@shared/types/agent';
+import type { ModelPricing, PricingTable } from '@shared/usage/pricing';
+import type { WindowsLocalShell } from '@shared/windowsLocalShell';
 import type { OauthCredentialSnapshot } from '@/stores/oauthCredentials';
 
 export type DefaultModelRevalidation =
@@ -94,6 +97,22 @@ export interface SettingsState {
   /** 是否同时加载项目内 .claude/.codex/.cursor 的 skills 与规则文件（.cursorrules、.cursor/rules）；缺省 false */
   loadHarnessAssets: boolean;
 
+  /** Windows 本地 agent 命令壳；auto=本机 PowerShell。SSH/非 Windows 忽略。 */
+  windowsLocalShell: WindowsLocalShell;
+
+  /** 探后折叠：模型可 explore_mark / explore_fold；缺省关 */
+  exploreFoldEnabled: boolean;
+
+  /** 强制用 read/grep/edit/write/find 替代 cat/grep/sed -i 等 shell 读写；缺省关 */
+  bashInterceptEnabled: boolean;
+
+  /** 父会话用 Enso compact hook 做 compact 摘要；缺省关，新会话生效 */
+  smartCompactEnabled: boolean;
+  /** 智能压缩独立模型；null = 跟随当前会话模型 */
+  smartCompactModel: DefaultModelRef | null;
+  /** 验证式压缩档位；缺省 auto */
+  smartCompactMode: import('@shared/smartCompactMode').SmartCompactMode;
+
   /** 是否自动检查并下载应用更新；缺省 true */
   autoUpdate: boolean;
 
@@ -150,6 +169,10 @@ export interface SettingsState {
   titleSummaryEnabled: boolean;
   /** 标题总结独立模型；null = 跟随全局默认模型 */
   titleSummaryModel: DefaultModelRef | null;
+  /** 助手代审模型；null = 该档不可用 */
+  approvalReviewer: DefaultModelRef | null;
+  /** 上次选的审批档；null = 新会话仍按代审可用性默认 */
+  lastApprovalMode: ApprovalMode | null;
   /** 新会话默认是否开启推理；缺省 true */
   defaultReasoningEnabled: boolean;
   /** 新会话默认思考深度；缺省 medium */
@@ -182,6 +205,11 @@ export interface SettingsState {
 
   // Projects（本地目录引用，作为会话工作目录）
   projects: Project[];
+  /** 扁平项目组；缺省 []。项目用 groupId 挂靠 */
+  projectGroups: ProjectGroup[];
+
+  /** 用量估算覆盖：精确 model id → 四项单价 $/M；缺省 {} */
+  usageModelPricing: PricingTable;
 
   // Setters
   setTheme: (theme: Theme) => void;
@@ -194,6 +222,12 @@ export interface SettingsState {
   toggleFavoriteTerminalTheme: (theme: string) => void;
   setLoadLocalSkills: (value: boolean) => void;
   setLoadHarnessAssets: (value: boolean) => void;
+  setWindowsLocalShell: (value: WindowsLocalShell) => void;
+  setExploreFoldEnabled: (value: boolean) => void;
+  setBashInterceptEnabled: (value: boolean) => void;
+  setSmartCompactEnabled: (value: boolean) => void;
+  setSmartCompactModel: (value: DefaultModelRef | null) => void;
+  setSmartCompactMode: (value: import('@shared/smartCompactMode').SmartCompactMode) => void;
   setAutoUpdate: (value: boolean) => void;
   setProxyMode: (mode: ProxyMode) => void;
   setCustomProxyUrl: (url: string) => void;
@@ -237,6 +271,8 @@ export interface SettingsState {
   setTitleSummaryEnabled: (value: boolean) => void;
   /** 设置标题总结独立模型；null = 回到跟随全局默认 */
   setTitleSummaryModel: (model: DefaultModelRef | null) => void;
+  setApprovalReviewer: (model: DefaultModelRef | null) => void;
+  setLastApprovalMode: (mode: ApprovalMode) => void;
   // Skill actions
   /** 按技能目录路径去重，返回实际新增数量 */
   addSkills: (skills: SkillEntry[]) => number;
@@ -288,6 +324,22 @@ export interface SettingsState {
   // Project actions
   /** Main authority创建project并返回canonical projection。 */
   /** remote 传入时创建 ssh 远程项目;创建被拒(含远端探测失败)时抛 Error(message 可直接展示) */
-  addProject: (path: string, remote?: { sshConnectionId: string }) => Promise<Project | null>;
+  addProject: (
+    path: string,
+    remote?: { sshConnectionId: string },
+    groupId?: string
+  ) => Promise<Project | null>;
   removeProject: (id: string) => Promise<boolean>;
+  createProjectGroup: (input: { name: string; emoji?: string; color?: string }) => ProjectGroup;
+  updateProjectGroup: (
+    id: string,
+    patch: { name?: string; emoji?: string; color?: string }
+  ) => void;
+  removeProjectGroup: (id: string) => void;
+  reorderProjectGroups: (activeId: string, overId: string) => void;
+  setProjectGroupId: (projectId: string, groupId: string | null) => void;
+
+  /** 非法条目不写入，返回 false */
+  setUsageModelPricing: (modelId: string, pricing: ModelPricing) => boolean;
+  removeUsageModelPricing: (modelId: string) => void;
 }

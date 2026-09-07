@@ -139,6 +139,20 @@ describe('aggregateUsage — byModel', () => {
     const summary = aggregateUsage([], [], {}, { days: 1, now: NOW });
     expect(summary.byModel).toHaveLength(0);
   });
+
+  it('pricing 取解析后的单价，无价为 null；思考档位后缀回落到基础 id', () => {
+    const rates = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 };
+    const records = [
+      record({ ts: dayStart(0), id: 'a', model: 'priced', input: 1 }),
+      record({ ts: dayStart(0), id: 'b', model: 'priced-max', input: 1 }),
+      record({ ts: dayStart(0), id: 'c', model: 'unpriced', input: 1 }),
+    ];
+    const summary = aggregateUsage(records, [], { priced: rates }, { days: 1, now: NOW });
+    expect(summary.byModel.find((row) => row.model === 'priced')?.pricing).toEqual(rates);
+    expect(summary.byModel.find((row) => row.model === 'priced-max')?.pricing).toEqual(rates);
+    expect(summary.byModel.find((row) => row.model === 'unpriced')?.pricing).toBeNull();
+    expect(summary.pricing).toEqual({ priced: rates });
+  });
 });
 
 describe('aggregateUsage — byProject', () => {
@@ -225,13 +239,57 @@ describe('aggregateUsage — cost', () => {
 describe('aggregateUsage — unpricedModels', () => {
   it('列出周期内出现过但无定价的模型，去重且只统计区间内的', () => {
     const records = [
-      record({ ts: dayStart(0), model: 'unpriced-a' }),
-      record({ ts: dayStart(0), model: 'unpriced-a' }),
-      record({ ts: dayStart(0), model: 'unpriced-b' }),
-      record({ ts: dayStart(0) - 1, model: 'unpriced-out-of-range' }),
+      record({ ts: dayStart(0), model: 'unpriced-a', input: 10 }),
+      record({ ts: dayStart(0), model: 'unpriced-a', input: 20 }),
+      record({ ts: dayStart(0), model: 'unpriced-b', output: 5 }),
+      record({ ts: dayStart(0) - 1, model: 'unpriced-out-of-range', input: 10 }),
     ];
     const summary = aggregateUsage(records, [], {}, { days: 1, now: NOW });
     expect(summary.unpricedModels.sort()).toEqual(['unpriced-a', 'unpriced-b']);
+  });
+
+  it('零 token 的 imported 或其它未定价记录不进入 unpricedModels，但有 token 的未知模型仍进入', () => {
+    const records = [
+      // 真实场景：导入外部会话生成的虚拟 imported 记录，token 全为 0
+      record({
+        ts: dayStart(0),
+        model: 'imported',
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      }),
+      // 零 token 的普通未知模型也不报缺价
+      record({ ts: dayStart(0), model: 'zero-token-unknown', input: 0, output: 0 }),
+      // 有 token 消耗的真实未知模型必须进入 unpricedModels 告警
+      record({ ts: dayStart(0), model: 'real-unknown-model', input: 500 }),
+    ];
+    const summary = aggregateUsage(records, [], {}, { days: 1, now: NOW });
+    expect(summary.unpricedModels).not.toContain('imported');
+    expect(summary.unpricedModels).not.toContain('zero-token-unknown');
+    expect(summary.unpricedModels).toContain('real-unknown-model');
+
+    // 防回归强化：imported 仍保留在 byModel，且 messages=1、tokens=0、cost=null
+    const importedRow = summary.byModel.find((row) => row.model === 'imported');
+    expect(importedRow).toMatchObject({
+      model: 'imported',
+      messages: 1,
+      tokens: 0,
+      cost: null,
+    });
+
+    // totals.messages 与 totals.sessions 仍计入零 token 记录
+    expect(summary.totals.messages).toBe(3);
+    expect(summary.totals.sessions).toBe(1);
+
+    // 真实有 token 未知模型在 byModel 中正常展示
+    const realRow = summary.byModel.find((row) => row.model === 'real-unknown-model');
+    expect(realRow).toMatchObject({
+      model: 'real-unknown-model',
+      messages: 1,
+      tokens: 500,
+      cost: null,
+    });
   });
 });
 

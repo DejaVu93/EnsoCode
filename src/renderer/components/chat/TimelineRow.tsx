@@ -22,7 +22,7 @@ import {
   TerminalSquare,
   Undo2,
 } from 'lucide-react';
-import { memo, type ReactNode, useEffect, useRef, useState } from 'react';
+import { memo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -126,7 +126,8 @@ function itemEqual(prev: TimelineRowProps, next: TimelineRowProps): boolean {
         (b.kind === 'compaction' || b.kind === 'compaction-notice') &&
         a.kind === b.kind &&
         a.summary === b.summary &&
-        a.tokensBefore === b.tokensBefore
+        a.tokensBefore === b.tokensBefore &&
+        a.verified === b.verified
       );
     case 'compaction-progress':
       return b.kind === 'compaction-progress' && a.state === b.state;
@@ -986,10 +987,16 @@ function CompactionRow({
   const divider = item.kind === 'compaction';
   const label =
     item.tokensBefore === null
-      ? t('Context compacted')
-      : t('Context compacted ({{tokens}} tokens before)', {
-          tokens: formatTokens(item.tokensBefore),
-        });
+      ? item.verified
+        ? t('Verified context compacted')
+        : t('Context compacted')
+      : item.verified
+        ? t('Verified context compacted ({{tokens}} tokens before)', {
+            tokens: formatTokens(item.tokensBefore),
+          })
+        : t('Context compacted ({{tokens}} tokens before)', {
+            tokens: formatTokens(item.tokensBefore),
+          });
   return (
     <div>
       <button
@@ -997,9 +1004,13 @@ function CompactionRow({
         onClick={() => setExpanded((v) => !v)}
         className={cn('flex items-center gap-3', divider && 'w-full')}
         title={
-          divider
-            ? t('Messages above are no longer in the model context; only this summary is.')
-            : t('Latest compaction summary — expand to read what the model kept.')
+          item.verified
+            ? t(
+                'Verified summary from smart compaction. Messages above are no longer in the model context.'
+              )
+            : divider
+              ? t('Messages above are no longer in the model context; only this summary is.')
+              : t('Latest compaction summary — expand to read what the model kept.')
         }
       >
         {divider && <span className="h-px flex-1 bg-border" />}
@@ -1076,7 +1087,107 @@ function ToolGroupRow({
   );
 }
 
-/** 只读探索工具：开关开时去卡片化为一行（与 timeline.ts 的 SEARCH_TOOLS + read 一致） */
+/** 工具详情独立跟随底部：用户上滚时暂停，滚回底部后恢复。 */
+function ToolContentScroller({
+  children,
+  className,
+  follow,
+}: {
+  children: ReactNode;
+  className?: string;
+  follow: boolean;
+}) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const followingRef = useRef(follow);
+  const followEnabledRef = useRef(follow);
+  const programmaticTargetRef = useRef<number | null>(null);
+  const touchYRef = useRef<number | null>(null);
+  const frameRef = useRef(0);
+  followEnabledRef.current = follow;
+
+  const pauseFollowing = useCallback(() => {
+    followingRef.current = false;
+    programmaticTargetRef.current = null;
+    cancelAnimationFrame(frameRef.current);
+  }, []);
+  const pinToBottom = useCallback(() => {
+    if (!followEnabledRef.current || !followingRef.current) return;
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = requestAnimationFrame(() => {
+      const scroller = scrollerRef.current;
+      if (!scroller || !followEnabledRef.current || !followingRef.current) return;
+      const target = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+      programmaticTargetRef.current = target;
+      scroller.scrollTop = target;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (follow) {
+      followingRef.current = true;
+      pinToBottom();
+    } else {
+      programmaticTargetRef.current = null;
+      cancelAnimationFrame(frameRef.current);
+    }
+  }, [follow, pinToBottom]);
+  useEffect(pinToBottom);
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) return;
+    const observer = new ResizeObserver(pinToBottom);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [pinToBottom]);
+  useEffect(() => () => cancelAnimationFrame(frameRef.current), []);
+
+  return (
+    <div
+      ref={scrollerRef}
+      onWheel={(event) => {
+        if (event.deltaY < 0) pauseFollowing();
+      }}
+      onPointerDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        pauseFollowing();
+      }}
+      onTouchStart={(event) => {
+        touchYRef.current = event.touches[0]?.clientY ?? null;
+      }}
+      onTouchMove={(event) => {
+        const y = event.touches[0]?.clientY;
+        if (y !== undefined && touchYRef.current !== null && y > touchYRef.current) {
+          pauseFollowing();
+        }
+        touchYRef.current = y ?? null;
+      }}
+      onTouchEnd={() => {
+        touchYRef.current = null;
+      }}
+      onScroll={(event) => {
+        if (!followEnabledRef.current) return;
+        const scroller = event.currentTarget;
+        const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 2;
+        if (atBottom) {
+          followingRef.current = true;
+          programmaticTargetRef.current = null;
+          return;
+        }
+        const target = programmaticTargetRef.current;
+        if (target !== null && scroller.scrollTop >= target - 2) {
+          programmaticTargetRef.current = null;
+          pinToBottom();
+          return;
+        }
+        pauseFollowing();
+      }}
+      className={cn('max-h-96 overflow-auto [overflow-anchor:none]', className)}
+    >
+      <div ref={contentRef}>{children}</div>
+    </div>
+  );
+}
 
 /** 单行工具摘要：状态点/图标 + 工具名 + 参数摘要；edit 展开为 diff,write 展开为写入内容,其余为输出 */
 function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
@@ -1131,7 +1242,11 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
               </span>
             </>
           )}
-          {item.state === 'running' ? (
+          {item.state === 'reviewing' ? (
+            <span className="shrink-0 text-[10px] text-muted-foreground">
+              {t('Assistant reviewing…')}
+            </span>
+          ) : item.state === 'running' ? (
             <RunningElapsed itemKey={item.key} />
           ) : (
             (item.agentMeta || item.durationMs !== null) && (
@@ -1167,23 +1282,26 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
         )}
       </div>
       {expanded && hasDiff && item.edits && (
-        <div className="max-h-96 overflow-auto">
+        <ToolContentScroller follow={item.state === 'running'}>
           <EditDiff path={item.summary} blocks={item.edits} />
-        </div>
+        </ToolContentScroller>
       )}
       {expanded && hasWrite && item.writeContent && (
-        <div className="max-h-96 overflow-auto rounded-b-lg border-t border-border/60">
+        <ToolContentScroller
+          follow={item.state === 'running'}
+          className="rounded-b-lg border-t border-border/60"
+        >
           <ReadFileView path={item.summary} contents={item.writeContent} />
-        </div>
+        </ToolContentScroller>
       )}
       {expanded && !hasDiff && !hasWrite && item.output && (
-        <div
-          className={cn(
-            'max-h-96 overflow-auto',
+        <ToolContentScroller
+          follow={item.state === 'running'}
+          className={
             compact
               ? 'mt-1 rounded-lg border border-border/60 bg-muted/30'
               : 'rounded-b-lg border-t border-border/60'
-          )}
+          }
         >
           {item.name === 'bash' ? (
             <TerminalOutput command={item.summary} output={item.output} />
@@ -1198,7 +1316,7 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
               {item.output}
             </pre>
           )}
-        </div>
+        </ToolContentScroller>
       )}
     </div>
   );
@@ -1309,9 +1427,10 @@ function RunningElapsed({ itemKey, since }: { itemKey: string; since?: number })
   );
 }
 
-function ToolStateIcon({ state }: { state: 'running' | 'ok' | 'error' }) {
+function ToolStateIcon({ state }: { state: 'running' | 'reviewing' | 'ok' | 'error' }) {
   switch (state) {
     case 'running':
+    case 'reviewing':
       return <LoaderCircle className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />;
     case 'error':
       return <CircleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />;

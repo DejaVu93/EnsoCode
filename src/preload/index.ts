@@ -15,7 +15,18 @@ import type {
   AssetOccupancyRow,
   CollectedAsset,
   CollectedProvider,
+  ConfigSyncCommitOptions,
+  ConfigSyncCommitResult,
+  ConfigSyncExportOptions,
+  ConfigSyncExportResult,
+  ConfigSyncOpenResult,
+  ConfigSyncPreviewOptions,
+  ConfigSyncPreviewResult,
+  FilesAbsResult,
+  FilesFetchRemoteImageResult,
   FilesListResult,
+  FilesMutateResult,
+  FilesReadImageResult,
   FilesReadRelResult,
   FilesWatchEvent,
   FilesWatchResult,
@@ -54,12 +65,14 @@ import type {
   DispatchMainEvent,
   McpStatusEvent,
   McpStatusPush,
+  ParentHistoryTailResult,
   ProjectAuthorityProjection,
   RemoveProjectAuthorityRequest,
   RendererAgentEvent,
   SelectProjectAuthorityRequest,
   SourceAuthorityProjection,
   ThinkingLevel,
+  TitleSummaryInput,
   UpdateConversationSelectionRequest,
 } from '@shared/types/agent';
 import { parseDispatchMainEvent } from '@shared/types/agent';
@@ -105,6 +118,17 @@ const electronAPI = {
     platform: process.platform,
   },
 
+  app: {
+    onCloseRequest: (callback: (requestId: string) => void): (() => void) => {
+      const listener = (_: unknown, requestId: string) => callback(requestId);
+      ipcRenderer.on(IPC_CHANNELS.APP_CLOSE_REQUEST, listener);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.APP_CLOSE_REQUEST, listener);
+    },
+    respondCloseRequest: (requestId: string, payload: { confirmed: boolean }): void => {
+      ipcRenderer.send(IPC_CHANNELS.APP_CLOSE_RESPONSE, requestId, payload);
+    },
+  },
+
   settings: {
     read: (): Promise<Record<string, unknown> | null> =>
       ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_READ),
@@ -119,6 +143,19 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.SETTINGS_CHANGED, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.SETTINGS_CHANGED, listener);
     },
+  },
+
+  configSync: {
+    exportConfig: (options: ConfigSyncExportOptions): Promise<ConfigSyncExportResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_EXPORT, options),
+    openImport: (): Promise<ConfigSyncOpenResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_OPEN_IMPORT),
+    previewImport: (options: ConfigSyncPreviewOptions): Promise<ConfigSyncPreviewResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_PREVIEW_IMPORT, options),
+    commitImport: (options: ConfigSyncCommitOptions): Promise<ConfigSyncCommitResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_COMMIT_IMPORT, options),
+    cancelImport: (token: string): Promise<void> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CONFIG_SYNC_CANCEL_IMPORT, token),
   },
 
   usage: {
@@ -234,6 +271,19 @@ const electronAPI = {
       projectId: string;
       rel: string;
     }): Promise<FilesReadRelResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_READ_REL, request),
+    /** Markdown 预览相对图片：主进程按工作区边界解析后返回 data URL */
+    readImage: (request: {
+      conversationId: string;
+      projectId: string;
+      rel: string;
+    }): Promise<FilesReadImageResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_READ_IMAGE, request),
+    /** Markdown 预览远程图片：主进程带 SSRF 防护代理读取，返回 data URL */
+    fetchRemoteImage: (request: {
+      conversationId: string;
+      projectId: string;
+      url: string;
+    }): Promise<FilesFetchRemoteImageResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.FILES_FETCH_REMOTE_IMAGE, request),
     write: (request: {
       conversationId: string;
       projectId: string;
@@ -255,6 +305,50 @@ const electronAPI = {
       ipcRenderer.on(IPC_CHANNELS.FILES_WATCH_EVENT, listener);
       return () => ipcRenderer.removeListener(IPC_CHANNELS.FILES_WATCH_EVENT, listener);
     },
+    mkdir: (request: {
+      conversationId: string;
+      projectId: string;
+      rel?: string;
+      name: string;
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_MKDIR, request),
+    createFile: (request: {
+      conversationId: string;
+      projectId: string;
+      rel?: string;
+      name: string;
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_CREATE, request),
+    rename: (request: {
+      conversationId: string;
+      projectId: string;
+      rel: string;
+      name: string;
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_RENAME, request),
+    remove: (request: {
+      conversationId: string;
+      projectId: string;
+      rel: string;
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_REMOVE, request),
+    absPath: (request: {
+      conversationId: string;
+      projectId: string;
+      rel?: string;
+    }): Promise<FilesAbsResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_ABS, request),
+    copyPath: (request: {
+      conversationId: string;
+      projectId: string;
+      rel?: string;
+      mode: 'absolute' | 'relative';
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_COPY_PATH, request),
+    copyFile: (request: {
+      conversationId: string;
+      projectId: string;
+      rel: string;
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_COPY_FILE, request),
+    reveal: (request: {
+      conversationId: string;
+      projectId: string;
+      rel?: string;
+    }): Promise<FilesMutateResult> => ipcRenderer.invoke(IPC_CHANNELS.FILES_REVEAL, request),
   },
 
   files: {
@@ -336,15 +430,17 @@ const electronAPI = {
     /** 已结束 child 的只读历史；只传 conversationId，路径由 Main 推导 */
     readChildHistory: (conversationId: string): Promise<ChildHistoryResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHILD_HISTORY_READ, { conversationId }),
-    /** 标题总结：只传 id + 首条消息文本（+会话模型作回退链末级），凭证由 Main 自读；结果经 title-generated 事件回流 */
+    readParentHistoryTail: (conversationId: string): Promise<ParentHistoryTailResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, { conversationId }),
+    /** 标题总结：只传 id + 输入（首条即时 / 每轮滚动，+会话模型作回退链末级），凭证由 Main 自读；结果经 title-generated 事件回流 */
     summarizeTitle: (
       conversationId: string,
-      text: string,
+      input: TitleSummaryInput,
       sessionModel?: { providerId: string; modelId: string }
     ): Promise<AgentActionResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_SUMMARIZE_TITLE, {
         conversationId,
-        text,
+        input,
         sessionModel,
       }),
     /** 已启动会话就地换模型（未启动的会话只需记忆，下次 spawn 生效） */
@@ -571,6 +667,8 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.PAIR_START),
     cancel: (): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PAIR_CANCEL),
     revoke: (pairId: string): Promise<void> => ipcRenderer.invoke(IPC_CHANNELS.PAIR_REVOKE, pairId),
+    rename: (pairId: string, deviceName: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PAIR_RENAME, pairId, deviceName),
     status: (): Promise<PairStatus> => ipcRenderer.invoke(IPC_CHANNELS.PAIR_STATUS),
     setRelayUrl: (url: string): Promise<PairStatus> =>
       ipcRenderer.invoke(IPC_CHANNELS.PAIR_SET_RELAY, url),

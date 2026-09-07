@@ -1,3 +1,5 @@
+import { conversationDotTone, conversationHasRunningChild } from '@shared/conversationDotTone';
+
 /**
  * 侧栏会话分组的排序纯函数。各栏目内按最后活跃时间倒序
  * (最后一条消息 timestamp,无消息回落 createdAt);置顶只改分组内先后。
@@ -15,6 +17,12 @@ interface SidebarConversation {
   /** 持久化的最后活跃时刻:partialize 剥离 messages 前留下的标量,重启后排序靠它 */
   lastActiveAt?: number;
   messages: { timestamp?: number }[];
+  status?: string;
+  spawning?: boolean;
+  unread?: boolean;
+  pendingAsks?: readonly { requestId: string }[];
+  coworkerIds?: readonly string[];
+  subagents?: readonly { status: string }[];
 }
 
 type Conversations = Record<string, SidebarConversation | undefined>;
@@ -61,6 +69,34 @@ export function projectConversationIds(
  * 命中的按其顺序排前,未收录的新置顶按活跃时间追加末尾,失效 id 忽略。
  * 归档的与 order 之外的会话(coworker)不参与。
  */
+/** 蓝/绿/红活跃态:运行、待确认、失败、未读。 */
+export function activeConversationIds(
+  order: readonly string[],
+  conversations: Conversations,
+  archivedProjectIds: readonly string[] = []
+): string[] {
+  const archivedProjects = new Set(archivedProjectIds);
+  return sortByActivity(
+    order.filter((id) => {
+      const conversation = conversations[id];
+      if (!conversation || conversation.archived === true) return false;
+      if (archivedProjects.has(conversation.projectId)) return false;
+      const tone = conversationDotTone({
+        status: conversation.status ?? 'idle',
+        spawning: conversation.spawning,
+        unread: conversation.unread,
+        pendingAskCount: conversation.pendingAsks?.length ?? 0,
+        hasRunningChild: conversationHasRunningChild(
+          { ...conversation, status: conversation.status ?? 'idle' },
+          conversations as Record<string, { status: string; spawning?: boolean } | undefined>
+        ),
+      });
+      return tone === 'running' || tone === 'waiting' || tone === 'failed' || tone === 'unread';
+    }),
+    conversations
+  );
+}
+
 export function pinnedConversationIds(
   order: readonly string[],
   conversations: Conversations,

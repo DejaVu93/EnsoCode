@@ -1,4 +1,5 @@
 import type { ModelProvider } from './types';
+import type { ApprovalMode } from './types/agent';
 
 export interface DefaultModelRef {
   providerId: string;
@@ -141,6 +142,21 @@ export function isUsableModel(
   credentials: ModelCredentialContext
 ): selection is DefaultModelRef {
   return modelUsability(selection, providers, credentials) === 'usable';
+}
+
+/** 新会话缺省审批档：优先上次档；assistant 仅在代审模型可用时保留，否则 full。 */
+export function defaultApprovalMode(
+  reviewer: DefaultModelRef | null,
+  providers: readonly ModelProvider[],
+  credentials: ModelCredentialContext,
+  lastMode?: ApprovalMode | null
+): ApprovalMode {
+  const reviewerUsable = isUsableModel(reviewer, providers, credentials);
+  if (lastMode === 'assistant') return reviewerUsable ? 'assistant' : 'full';
+  if (lastMode === 'supervised' || lastMode === 'auto-edits' || lastMode === 'full') {
+    return lastMode;
+  }
+  return reviewerUsable ? 'assistant' : 'full';
 }
 
 export function resolveChatModel(input: {

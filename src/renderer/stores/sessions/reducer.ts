@@ -47,6 +47,23 @@ function sameUserText(optimistic: string, delivered: string): boolean {
   return slash[1] === block[1] && (slash[2] ?? '').trim() === (block[4] ?? '').trim();
 }
 
+function leftoverSnapshotUserTexts(
+  local: readonly TimelineMessage[],
+  snapshotMessages: readonly ProjectedMessage[]
+): string[] {
+  const leftover = snapshotMessages.filter((message) => message.role === 'user').map(textOf);
+  for (const message of local) {
+    if (message.optimistic || message.role !== 'user') continue;
+    const text = textOf(message);
+    const matched = leftover.findIndex(
+      (delivered) =>
+        text === delivered || sameUserText(text, delivered) || sameUserText(delivered, text)
+    );
+    if (matched !== -1) leftover.splice(matched, 1);
+  }
+  return leftover;
+}
+
 /** 权威区（乐观尾巴之前的消息）长度 */
 function authoritativeLength(messages: readonly TimelineMessage[]): number {
   const firstOptimistic = messages.findIndex((message) => message.optimistic);
@@ -57,8 +74,13 @@ function authoritativeLength(messages: readonly TimelineMessage[]): number {
  * message-upsert 的 index 是否落在本地权威区之外（会被 reducer 丢正文只推 seq）。
  * store 层据此判断正文已与 worker 脱节，需重新要 snapshot。
  */
-export function upsertOutOfRange(messages: readonly TimelineMessage[], index: number): boolean {
-  return index > authoritativeLength(messages);
+export function upsertOutOfRange(
+  messages: readonly TimelineMessage[],
+  index: number,
+  historyBaseIndex = 0
+): boolean {
+  const localIndex = index - historyBaseIndex;
+  return localIndex < 0 || localIndex > authoritativeLength(messages);
 }
 
 /** 时间线能当成「模型还活着」的输出：非空 token / 思考文本 / 工具结果。越界丢弃的 upsert 不算。 */
@@ -95,12 +117,14 @@ export interface SessionProjection {
   ended?: boolean;
   /** 本次 running 的起点（wall clock），idle/failed 时清空 */
   runStartedAt?: number;
-  /** 最近一次可见生成输出（非空 text/thinking、toolResult、非空 tool-output）。stall watchdog 与「距上次返回」都靠它，随 running 结束清空 */
+  /** 最近一次可见进展时间（消息/工具/子代理/任务/审批提问）：运行中计时显示「距上次返回」，随 running 结束清空 */
   lastOutputAt?: number;
   /** 自动重试中（非终态）：turn-retry 设置，下一个 status/turn-* 事件清除 */
   retry?: { attempt: number; maxAttempts: number; delayMs: number; error: string; at: number };
   /** 运行中工具的输出快照（toolCallId → 全量文本）；轮次收口即清空，不持久化 */
   toolOutputs: Record<string, string>;
+  /** 当前权威消息对应的 worker 绝对起点；全量快照缺省 */
+  historyBaseIndex?: number;
 }
 
 export const emptyProjection: SessionProjection = {
@@ -181,15 +205,17 @@ export function applyAgentEvent(
     const sameGeneration = state.generation === snapshot.identity.generation;
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
-    const delivered = new Set(
-      snapshot.messages.filter((message) => message.role === 'user').map(textOf)
-    );
-    const tail = state.messages.filter(
-      (message) =>
-        message.optimistic &&
-        message.role === 'user' &&
-        ![...delivered].some((text) => sameUserText(textOf(message), text))
-    );
+    const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
+    const tail = state.messages.filter((message) => {
+      if (!message.optimistic || message.role !== 'user') return false;
+      const text = textOf(message);
+      const matched = leftover.findIndex(
+        (delivered) => sameUserText(text, delivered) || sameUserText(delivered, text)
+      );
+      if (matched === -1) return true;
+      leftover.splice(matched, 1);
+      return false;
+    });
     return {
       generation: snapshot.identity.generation,
       status: snapshot.status,
@@ -204,6 +230,8 @@ export function applyAgentEvent(
       backgroundTasks: snapshot.backgroundTasks ?? [],
       subagents: snapshot.subagents ?? [],
       toolOutputs: {},
+      historyBaseIndex:
+        snapshot.baseIndex && snapshot.baseIndex > 0 ? snapshot.baseIndex : undefined,
     };
   }
 
@@ -300,13 +328,14 @@ export function applyAgentEvent(
       const authoritativeLen = authoritativeLength(current.messages);
       const authoritative = current.messages.slice(0, authoritativeLen);
       let tail = current.messages.slice(authoritativeLen);
+      const localIndex = event.index - (current.historyBaseIndex ?? 0);
       // 正文被冷缓存清空后重新变热，snapshot 回来前的 upsert 以原 index 到达：直接写会
       // 留下稀疏空洞（.role/.optimistic 读 undefined 崩溃）。丢掉正文、只推进 seq，等 snapshot 整体被覆。
-      if (event.index > authoritative.length) {
+      if (localIndex < 0 || localIndex > authoritative.length) {
         // 丢正文只推 seq：不能续 lastOutputAt，否则 stall watchdog 把脱节心跳当成输出
         return { ...current, lastSeq: event.seq };
       }
-      authoritative[event.index] = event.message;
+      authoritative[localIndex] = event.message;
       // 同文本的 user upsert 到达 = 回显对应的真消息落地，消费掉避免重复
       if (event.message.role === 'user' && tail.length > 0) {
         const deliveredText = textOf(event.message);
@@ -322,16 +351,23 @@ export function applyAgentEvent(
         lastSeq: event.seq,
       };
     }
-    case 'approval-request':
+    case 'approval-request': {
+      const existing = current.pendingApprovals.findIndex(
+        (request) => request.requestId === event.request.requestId
+      );
+      const pendingApprovals =
+        existing === -1
+          ? [...current.pendingApprovals, event.request]
+          : current.pendingApprovals.map((request, index) =>
+              index === existing ? event.request : request
+            );
       return {
         ...current,
-        pendingApprovals: current.pendingApprovals.some(
-          (request) => request.requestId === event.request.requestId
-        )
-          ? current.pendingApprovals
-          : [...current.pendingApprovals, event.request],
+        pendingApprovals,
+        lastOutputAt: now,
         lastSeq: event.seq,
       };
+    }
     case 'approval-resolved':
       return {
         ...current,
@@ -346,6 +382,7 @@ export function applyAgentEvent(
         pendingAsks: current.pendingAsks.some((ask) => ask.requestId === event.ask.requestId)
           ? current.pendingAsks
           : [...current.pendingAsks, event.ask],
+        lastOutputAt: now,
         lastSeq: event.seq,
       };
     case 'ask-resolved':
@@ -361,6 +398,7 @@ export function applyAgentEvent(
         subagents: exists
           ? current.subagents.map((agent) => (agent.id === event.agent.id ? event.agent : agent))
           : [...current.subagents, event.agent],
+        lastOutputAt: now,
         lastSeq: event.seq,
       };
     }
@@ -370,6 +408,7 @@ export function applyAgentEvent(
         backgroundTasks: current.backgroundTasks.some((task) => task.taskId === event.task.taskId)
           ? current.backgroundTasks
           : [...current.backgroundTasks, event.task],
+        lastOutputAt: now,
         lastSeq: event.seq,
       };
     case 'task-output':
@@ -378,6 +417,7 @@ export function applyAgentEvent(
         backgroundTasks: current.backgroundTasks.map((task) =>
           task.taskId === event.taskId ? { ...task, tail: event.tail, status: event.status } : task
         ),
+        lastOutputAt: now,
         lastSeq: event.seq,
       };
     case 'task-ended':

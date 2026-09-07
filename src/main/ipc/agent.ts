@@ -12,6 +12,7 @@ import type {
   ApprovalMode,
   ChildHistoryResult,
   McpStatusPush,
+  ParentHistoryTailResult,
   RendererAgentEvent,
   ThinkingLevel,
 } from '@shared/types/agent';
@@ -19,6 +20,7 @@ import {
   APPROVAL_MODES,
   parseConversationAuthorityRequest,
   parseCreateConversationAuthorityRequest,
+  parseTitleSummaryInput,
   parseUpdateConversationSelectionRequest,
   THINKING_LEVELS,
 } from '@shared/types/agent';
@@ -64,6 +66,7 @@ import {
   stopBackgroundTask,
   summarizeConversationTitle,
 } from '../services/agentHost';
+import { pickBrowserFileRoot, setBrowserFileRootResolver } from '../services/browserFileRoot';
 import { browserHost } from '../services/browserHost';
 import { searchFiles } from '../services/fileSearch';
 import { toStoredTokens } from '../services/mcpOAuth';
@@ -73,6 +76,7 @@ import { maybeNotify, setViewedSession } from '../services/notifications';
 import { readStoredOauthCredentialKeys } from '../services/oauthProviders';
 import { forwardAgentEvent, setPairAgentBridge } from '../services/pairHost';
 import { removeConversationSessionFiles } from '../services/sessionFileCleanup';
+import { projectParentHistoryTail, resolveParentHistoryFile } from '../services/sessionHistoryTail';
 import {
   importExternalSession,
   listExternalSessions,
@@ -233,7 +237,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  * 必须落在 sessions 目录内（防穿越）、basename 必须是 enso- 前缀的 safe journal
  * （不读 pi 的普通 session 文件，那里面没经过脱敏）。
  */
-function readChildHistory(conversationId: string): ChildHistoryResult {
+async function readChildHistory(conversationId: string): Promise<ChildHistoryResult> {
   const persisted = agentSessionIndex.persistedConversation(conversationId);
   const sessionFile = persisted?.sessionFile;
   if (!isNonEmptyString(sessionFile)) {
@@ -250,7 +254,36 @@ function readChildHistory(conversationId: string): ChildHistoryResult {
   if (!existsSync(resolved)) {
     return { ok: false, code: 'not-found', error: 'History file is missing.' };
   }
-  return { ok: true, projection: EnsoSafeJournal.restore(resolved) };
+  return { ok: true, projection: await EnsoSafeJournal.restore(resolved) };
+}
+
+async function readParentHistoryTail(conversationId: string): Promise<ParentHistoryTailResult> {
+  const persisted = agentSessionIndex.persistedConversation(conversationId);
+  const sessionFile =
+    typeof persisted?.sessionFile === 'string' ? persisted.sessionFile : undefined;
+  const sessionDir = path.join(app.getPath('userData'), 'agent', 'sessions');
+  const resolved = resolveParentHistoryFile(sessionDir, sessionFile);
+  if (!resolved) {
+    return {
+      ok: false,
+      code: sessionFile ? 'unavailable' : 'not-found',
+      error: 'No parent history file.',
+    };
+  }
+  if (!existsSync(resolved)) {
+    return { ok: false, code: 'not-found', error: 'History file is missing.' };
+  }
+  try {
+    const { SessionManager } = await import('@earendil-works/pi-coding-agent');
+    const manager = SessionManager.open(resolved, sessionDir);
+    return { ok: true, ...projectParentHistoryTail(manager.getBranch()) };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'unavailable',
+      error: error instanceof Error ? error.message : 'Failed to read parent history.',
+    };
+  }
 }
 
 /**
@@ -315,6 +348,21 @@ export function registerAgentHandlers(): void {
     onChanged: (projection) => {
       sendToAllWindows(IPC_CHANNELS.SOURCE_AUTHORITY_CHANGED, projection);
     },
+  });
+  setBrowserFileRootResolver((conversationId) => {
+    const conversation = sourceAuthority?.conversation(conversationId);
+    const project = conversation ? sourceAuthority?.project(conversation.projectId) : undefined;
+    const cwd = pickBrowserFileRoot({
+      conversation,
+      project,
+      worktree: sessionWorktree(conversationId),
+    });
+    if (!cwd) return null;
+    try {
+      return statSync(cwd).isDirectory() ? cwd : null;
+    } catch {
+      return null;
+    }
   });
   sourceBindings = new ActiveConversationRegistry({
     authority: sourceAuthority,
@@ -510,23 +558,31 @@ export function registerAgentHandlers(): void {
 
   // 已结束 child 的只读历史：渲染层只能给 conversationId，路径一律由 Main 从自己读的
   // 持久化会话里推导。接受渲染层传路径等于开放任意文件读取。
-  ipcMain.handle(IPC_CHANNELS.AGENT_CHILD_HISTORY_READ, (_event, request: unknown) => {
+  ipcMain.handle(IPC_CHANNELS.AGENT_CHILD_HISTORY_READ, async (_event, request: unknown) => {
     const conversationId = asRecord(request)?.conversationId;
     if (!isNonEmptyString(conversationId)) {
       return { ok: false, code: 'not-found', error: 'conversationId is required' };
     }
-    return readChildHistory(conversationId);
+    return await readChildHistory(conversationId);
   });
 
-  // 标题总结：渲染层只传 conversationId + 首条消息文本；模型与凭证由 Main 从设置自读（回退链：
+  ipcMain.handle(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, async (_event, request: unknown) => {
+    const conversationId = asRecord(request)?.conversationId;
+    if (!isNonEmptyString(conversationId)) {
+      return { ok: false, code: 'not-found', error: 'conversationId is required' };
+    }
+    return await readParentHistoryTail(conversationId);
+  });
+
+  // 标题总结：渲染层只传 conversationId + 输入（首条即时 / 每轮滚动）；模型与凭证由 Main 从设置自读（回退链：
   // 独立标题模型 → 全局默认）。失败路径全部静默：保留截断标题即兑底，不影响发消息。
   ipcMain.handle(
     IPC_CHANNELS.AGENT_SUMMARIZE_TITLE,
     async (_event, request: unknown): Promise<AgentActionResult> => {
       const record = asRecord(request);
       const conversationId = record?.conversationId;
-      const text = record?.text;
-      if (!isNonEmptyString(conversationId) || !isNonEmptyString(text)) {
+      const input = parseTitleSummaryInput(record?.input);
+      if (!isNonEmptyString(conversationId) || !input) {
         return { ok: false, error: 'invalid title summary request' };
       }
       // 会话模型是回退链末级：只收 id，凭证照样由 Main 补全；形状坏则当作未传
@@ -559,7 +615,7 @@ export function registerAgentHandlers(): void {
           credentialKeys
         );
         if (!resolved.ok || !resolved.selection) continue;
-        return summarizeConversationTitle(conversationId, text, resolved.selection.config);
+        return summarizeConversationTitle(conversationId, input, resolved.selection.config);
       }
       return { ok: false, error: 'no usable title model' };
     }
@@ -820,12 +876,16 @@ export function registerAgentHandlers(): void {
 
   ipcMain.handle(
     IPC_CHANNELS.AGENT_SET_APPROVAL_MODE,
-    (_event, sessionId: unknown, mode: unknown): AgentActionResult => {
+    async (_event, sessionId: unknown, mode: unknown): Promise<AgentActionResult> => {
       const identity = exactIdentity(sessionId);
       if (!identity || !APPROVAL_MODES.includes(mode as ApprovalMode)) {
         return { ok: false, error: 'invalid approval mode or stale generation' };
       }
-      return setSessionApprovalMode(identity, mode as ApprovalMode);
+      return setSessionApprovalMode(
+        identity,
+        mode as ApprovalMode,
+        await readStoredOauthCredentialKeys()
+      );
     }
   );
 

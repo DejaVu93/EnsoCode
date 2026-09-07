@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/renderer/index.md", "reason": "Renderer checklist: i18n, dialogs, store fields, no extra ui primitives"}
+{"file": ".trellis/spec/renderer/state.md", "reason": "Adding projectGroups to settings store: types + initial + actions"}
+{"file": ".trellis/spec/renderer/styling.md", "reason": "Group headers and selector must use semantic tokens and existing size scale"}
+{"file": ".trellis/spec/shared/index.md", "reason": "ProjectGroup is cross-process; belongs in shared types"}
+{"file": ".trellis/spec/shared/types.md", "reason": "Shared type conventions for Project / pair payloads"}
+{"file": ".trellis/spec/testing.md", "reason": "TDD for routeDrop and slice helpers"}
+{"file": ".trellis/tasks/09-06-sidebar-project-groups/design.md", "reason": "Contracts for settings, drag, pair frame"}

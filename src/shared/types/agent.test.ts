@@ -17,6 +17,7 @@ import {
   parseSelectProjectAuthorityRequest,
   parseSessionSnapshot,
   parseSourceAuthorityProjection,
+  parseTitleSummaryInput,
   parseUpdateConversationSelectionRequest,
   shouldApplyDispatchMainEvent,
 } from './agent';
@@ -266,6 +267,84 @@ describe('parent/child commands', () => {
     ).toBeNull();
   });
 
+  it('spawn-parent 携 bashInterceptEnabled:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: true })).toEqual({
+      ...base,
+      bashInterceptEnabled: true,
+    });
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: false })).toEqual({
+      ...base,
+      bashInterceptEnabled: false,
+    });
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: 'true' })).toBeNull();
+    expect(parseAgentCommand({ ...base, bashInterceptEnabled: 1 })).toBeNull();
+  });
+
+  it('spawn-parent 携 smartCompactEnabled:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: true })).toEqual({
+      ...base,
+      smartCompactEnabled: true,
+    });
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: false })).toEqual({
+      ...base,
+      smartCompactEnabled: false,
+    });
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: 'true' })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactEnabled: 1 })).toBeNull();
+  });
+
+  it('spawn-parent 携 smartCompactSummaryModel:合法 spawn config 通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactSummaryModel: model })).toEqual({
+      ...base,
+      smartCompactSummaryModel: model,
+    });
+    expect(parseAgentCommand({ ...base, smartCompactSummaryModel: { modelId: 'gpt' } })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactSummaryModel: 'anthropic/x' })).toBeNull();
+  });
+
+  it('spawn-parent 携 smartCompactMode:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'balanced' })).toEqual({
+      ...base,
+      smartCompactMode: 'balanced',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'fast' })).toEqual({
+      ...base,
+      smartCompactMode: 'fast',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'thorough' })).toEqual({
+      ...base,
+      smartCompactMode: 'thorough',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'auto' })).toEqual({
+      ...base,
+      smartCompactMode: 'auto',
+    });
+    expect(parseAgentCommand({ ...base, smartCompactMode: 'aggressive' })).toBeNull();
+    expect(parseAgentCommand({ ...base, smartCompactMode: true })).toBeNull();
+  });
+
+  it('spawn-parent 携 windowsLocalShell:合法通过,脏值拒绝', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand({ ...base, windowsLocalShell: 'bash' })).toEqual({
+      ...base,
+      windowsLocalShell: 'bash',
+    });
+    expect(parseAgentCommand({ ...base, windowsLocalShell: 'auto' })).toEqual({
+      ...base,
+      windowsLocalShell: 'auto',
+    });
+    expect(parseAgentCommand({ ...base, windowsLocalShell: 'powershell' })).toEqual({
+      ...base,
+      windowsLocalShell: 'powershell',
+    });
+    expect(parseAgentCommand({ ...base, windowsLocalShell: 'pwsh' })).toBeNull();
+    expect(parseAgentCommand({ ...base, windowsLocalShell: true })).toBeNull();
+  });
+
   it('spawn-parent 携 remote:合法通过,坏 shape 拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/srv/app', model };
     const withRemote = { ...base, remote: { host: 'user@dev-box', auth: 'key' } };
@@ -456,25 +535,156 @@ describe('parent/child commands', () => {
   });
 });
 
+describe('removed project memory protocol', () => {
+  it('拒绝旧记忆管线命令与进度事件', () => {
+    expect(
+      parseAgentCommand({ type: 'run-memory-pipeline', requestId: RECEIPT_ID, cwd: '/repo', model })
+    ).toBeNull();
+    expect(
+      parseAgentWorkerEvent({ type: 'memory-pipeline-done', requestId: RECEIPT_ID, ok: true })
+    ).toBeNull();
+    expect(
+      parseAgentWorkerEvent({
+        type: 'memory-pipeline-progress',
+        requestId: RECEIPT_ID,
+        phase: 'stage1',
+        current: 1,
+        total: 1,
+      })
+    ).toBeNull();
+  });
+
+  it('父会话正常启动，但不再接受旧记忆配置字段', () => {
+    const command = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand(command)).toEqual(command);
+    expect(parseAgentCommand({ ...command, localMemoryEnabled: true })).toBeNull();
+    expect(parseAgentCommand({ ...command, memoryPhase2Model: model })).toBeNull();
+  });
+});
+
 describe('标题总结命令与事件', () => {
-  const summarize = {
+  const summarizeInitial = {
     type: 'summarize-title',
     conversationId: 'conversation-1',
-    text: '帮我把登录页的 bug 修一下',
+    input: { kind: 'initial', text: '帮我把登录页的 bug 修一下' },
+    model,
+  };
+  const summarizeRolling = {
+    type: 'summarize-title',
+    conversationId: 'conversation-1',
+    input: {
+      kind: 'rolling',
+      currentTitle: '修复登录 bug',
+      userText: '这个修复有通用性吗',
+      assistantText: '只影响登录路径',
+    },
     model,
   };
 
-  it('summarize-title 命令完整往返；缺字段或空值拒绝', () => {
-    expect(parseAgentCommand(summarize)).toEqual(summarize);
-    expect(parseAgentCommand({ ...summarize, conversationId: '' })).toBeNull();
-    expect(parseAgentCommand({ ...summarize, text: '' })).toBeNull();
-    expect(parseAgentCommand({ ...summarize, model: undefined })).toBeNull();
-    expect(parseAgentCommand({ ...summarize, extra: 1 })).toBeNull();
+  it('summarize-title 命令 initial 输入完整往返；缺字段或空值拒绝', () => {
+    expect(parseAgentCommand(summarizeInitial)).toEqual(summarizeInitial);
+    expect(parseAgentCommand({ ...summarizeInitial, conversationId: '' })).toBeNull();
+    expect(
+      parseAgentCommand({ ...summarizeInitial, input: { kind: 'initial', text: '' } })
+    ).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, model: undefined })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, extra: 1 })).toBeNull();
+  });
+
+  it('summarize-title 命令 rolling 输入完整往返', () => {
+    expect(parseAgentCommand(summarizeRolling)).toEqual(summarizeRolling);
+  });
+
+  it('summarize-title 旧形状（顶层 text 字段而无 input）拒绝', () => {
+    const legacy = {
+      type: 'summarize-title',
+      conversationId: 'conversation-1',
+      text: '帮我把登录页的 bug 修一下',
+      model,
+    };
+    expect(parseAgentCommand(legacy)).toBeNull();
+  });
+
+  it('summarize-title rolling 缺 currentTitle 拒绝', () => {
+    expect(
+      parseAgentCommand({
+        ...summarizeRolling,
+        input: {
+          kind: 'rolling',
+          currentTitle: '',
+          userText: 'x',
+          assistantText: 'y',
+        },
+      })
+    ).toBeNull();
+  });
+
+  it('summarize-title rolling 的 userText 与 assistantText 都为空串拒绝', () => {
+    expect(
+      parseAgentCommand({
+        ...summarizeRolling,
+        input: { kind: 'rolling', currentTitle: 't', userText: '', assistantText: '' },
+      })
+    ).toBeNull();
+  });
+
+  it('summarize-title initial 的 text 为空拒绝', () => {
+    expect(
+      parseAgentCommand({ ...summarizeInitial, input: { kind: 'initial', text: '   ' } })
+    ).toBeNull();
   });
 
   it('summarize-title 的 model 缺 settingsProviderId 拒绝（与 spawn 同约束）', () => {
     const { settingsProviderId: _omitted, ...rest } = model;
-    expect(parseAgentCommand({ ...summarize, model: rest })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, model: rest })).toBeNull();
+  });
+
+  it('parseTitleSummaryInput 直接单测：initial / rolling 合法形状通过', () => {
+    expect(parseTitleSummaryInput({ kind: 'initial', text: 'hi' })).toEqual({
+      kind: 'initial',
+      text: 'hi',
+    });
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        userText: 'u',
+        assistantText: 'a',
+      })
+    ).toEqual({ kind: 'rolling', currentTitle: 't', userText: 'u', assistantText: 'a' });
+  });
+
+  it('parseTitleSummaryInput 直接单测：非法形状返回 null', () => {
+    expect(parseTitleSummaryInput(null)).toBeNull();
+    expect(parseTitleSummaryInput({})).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'initial' })).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'initial', text: '' })).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: '',
+        userText: 'u',
+        assistantText: 'a',
+      })
+    ).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        userText: '',
+        assistantText: '',
+      })
+    ).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        userText: 1,
+        assistantText: 'a',
+      })
+    ).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'other', text: 'x' })).toBeNull();
+    expect(parseTitleSummaryInput({ kind: 'initial', text: 'x', extra: 1 })).toBeNull();
   });
 
   it('title-generated 事件完整往返；脏输入不崩', () => {
@@ -499,6 +709,44 @@ describe('标题总结命令与事件', () => {
     });
     expect(parseAgentWorkerEvent({ ...event, undelivered: 'yes' })).toBeNull();
     expect(parseAgentWorkerEvent({ ...event, undelivered: false })).toBeNull();
+  });
+
+  it('turn-completed 带合法 digest 往返', () => {
+    const event = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+      digest: { userText: '本轮请求', assistantText: '本轮结论' },
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+  });
+
+  it('turn-completed digest 形状非法 → 整条事件返回 null', () => {
+    const base = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+    };
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { userText: 1, assistantText: 'a' } })
+    ).toBeNull();
+    expect(parseAgentWorkerEvent({ ...base, digest: { userText: 'u' } })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...base, digest: 'nope' })).toBeNull();
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a', extra: 1 } })
+    ).toBeNull();
+  });
+
+  it('turn-completed 无 digest 仍合法', () => {
+    const event = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
   });
 });
 
@@ -592,6 +840,15 @@ describe('generation lifecycle/events', () => {
         ...event,
         occupancy: { ...occupancy, estimated: false },
       })
+    ).toEqual({
+      ...event,
+      occupancy: { ...occupancy, estimated: false },
+    });
+    expect(
+      parseAgentWorkerEvent({
+        ...event,
+        occupancy: { ...occupancy, estimated: 'yes' },
+      })
     ).toBeNull();
     expect(
       parseAgentWorkerEvent({
@@ -637,6 +894,13 @@ describe('generation lifecycle/events', () => {
     expect(parseAgentCommand({ type: 'set-proxy-env', env: 'x' })).toBeNull();
     expect(parseAgentCommand({ type: 'set-proxy-env', env: { HTTP_PROXY: 1 } })).toBeNull();
     expect(parseAgentCommand({ type: 'set-proxy-env', env: { HTTP_PROXY: undefined } })).toBeNull();
+  });
+
+  it('set-approval-mode 接受 assistant 合法字面量；未知 mode 不解析成 assistant', () => {
+    const base = { type: 'set-approval-mode', identity: parent, mode: 'assistant' };
+    expect(parseAgentCommand(base)).toEqual(base);
+    expect(parseAgentCommand({ ...base, mode: 'bogus-mode' })).toBeNull();
+    expect(parseAgentCommand({ ...base, mode: undefined })).toBeNull();
   });
 
   it('pin-sessions 只接受字符串数组（脏项整体拒绝）', () => {
@@ -726,6 +990,30 @@ describe('Main dispatch sequence and terminal authority', () => {
 });
 
 describe('custom entry and snapshot projection', () => {
+  const minimalSnapshot = {
+    identity: parent,
+    status: 'idle',
+    messages: [],
+    commands: [],
+  } as const;
+
+  it('SessionSnapshot 接受非负整数 baseIndex', () => {
+    expect(parseSessionSnapshot({ ...minimalSnapshot, baseIndex: 12 })).toEqual({
+      ...minimalSnapshot,
+      baseIndex: 12,
+    });
+  });
+
+  it('SessionSnapshot 拒绝负数 baseIndex', () => {
+    expect(parseSessionSnapshot(minimalSnapshot)).toEqual(minimalSnapshot);
+    expect(parseSessionSnapshot({ ...minimalSnapshot, baseIndex: -1 })).toBeNull();
+  });
+
+  it('SessionSnapshot 拒绝非整数 baseIndex', () => {
+    expect(parseSessionSnapshot(minimalSnapshot)).toEqual(minimalSnapshot);
+    expect(parseSessionSnapshot({ ...minimalSnapshot, baseIndex: 1.5 })).toBeNull();
+  });
+
   it('dispatch/completed/failed/receipt 是 custom entry，不是 ProjectedMessage', () => {
     const entry = {
       kind: 'capability-receipt',

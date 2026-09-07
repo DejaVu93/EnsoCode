@@ -12,6 +12,7 @@ import {
   resolveChildThinkingInput,
 } from './childReasoning';
 import { runFooter } from './runFooter';
+import { collectStructuredYield, type JsonSchema } from './structuredYield';
 
 /** 进度事件节流 */
 const UPDATE_INTERVAL_MS = 500;
@@ -37,6 +38,8 @@ export interface SubagentDeps {
   runGate(gate: string): Promise<string>;
   /** 异步模式完成时回传报告(running 搭车/轮末冲刷/idle 唤醒由 notifier 决定) */
   notify(text: string, urgent?: boolean): void;
+  /** 结构化 yield 登记，供父会话 read agent://id */
+  storeYield?(id: string, value: unknown): void;
 }
 
 /** 从 pi 会话消息取最后一条 assistant 文本 */
@@ -55,6 +58,11 @@ export function lastAssistantText(session: AgentSession): string {
     }
   }
   return '';
+}
+
+function asJsonSchema(value: unknown): JsonSchema | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  return value as JsonSchema;
 }
 
 let counter = 0;
@@ -102,7 +110,8 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
             type: 'string',
             description:
               `Model override for this subagent: ${modelList}. ` +
-              'Pick the cheapest model that fits the subtask; omit to inherit the default. ' +
+              'Pick the cheapest model that fits the subtask. ' +
+              'Required for agent_type marked [custom model required]; omit only when the type follows the conversation or uses a fixed model. ' +
               'Append :off/:minimal/:low/:medium/:high/:xhigh/:max to set thinking for this run.',
           },
         }
@@ -124,6 +133,9 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
   const roleHints = deps.agentTypes
     .map((type) => builtinRoleHints[type.name])
     .filter((hint): hint is string => hint !== undefined);
+  const requiredPickTypes = deps.agentTypes
+    .filter((type) => type.allowModelOverride)
+    .map((type) => type.name);
   return {
     name: 'subagent',
     label: 'Subagent',
@@ -148,13 +160,18 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
             .join(', ')} — pick the cheapest type that fits the subtask`
         : '') +
       (deps.models.length > 0
-        ? '; a model parameter lets you pick a cheaper/stronger model per subtask — see the tool schema for options'
+        ? '; a model parameter lets you pick a cheaper/stronger model per subtask — required for [custom model required] types, otherwise omit to inherit'
         : ''),
     promptGuidelines: [
       'Delegate by default: when a request has 2+ independent lines of work (explore module A / change B / verify C), ' +
         'dispatch them as parallel subagent calls in the same message instead of doing them serially yourself. ' +
         'Searching the whole repo yourself before acting is an anti-pattern when a subagent could do the recon',
       ...(roleHints.length > 0 ? [`Pick agent_type by role: ${roleHints.join('; ')}`] : []),
+      ...(requiredPickTypes.length > 0 && modelNames.length > 0
+        ? [
+            `When using agent_type marked [custom model required] (${requiredPickTypes.join(', ')}), always pass model on the first call — omitting it fails, do not retry without model. Available: ${modelNames.join(', ')}`,
+          ]
+        : []),
     ],
     parameters: {
       type: 'object',
@@ -182,6 +199,12 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
             'Default true: block until the report is ready. Pass false to dispatch and keep ' +
             'working — the report is delivered to you when done',
         },
+        schema: {
+          type: 'object',
+          description:
+            'Optional JSON Schema. The subagent final reply must be JSON matching this schema; ' +
+            'read it later via agent://<id> or agent://<id>?q=/pointer',
+        },
       },
       required: ['description', 'prompt'],
     } as unknown as ToolDefinition['parameters'],
@@ -194,6 +217,7 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
         thinking: thinkingRaw,
         gate,
         wait = true,
+        schema: schemaRaw,
       } = params as {
         description?: string;
         prompt?: string;
@@ -202,7 +226,9 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
         thinking?: string;
         gate?: string;
         wait?: boolean;
+        schema?: unknown;
       };
+      const schema = asJsonSchema(schemaRaw);
       if (!prompt.trim()) throw new Error('task prompt is required');
       const agentType = agentTypeName
         ? deps.agentTypes.find((type) => type.name === agentTypeName)
@@ -221,12 +247,17 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
         : undefined;
       if (resolvedModelName && !modelOption) {
         throw new Error(
-          `unknown model "${resolvedModelName}". Available: [${modelNames.join(', ')}] or omit to inherit.`
+          `unknown model "${resolvedModelName}". Available: [${modelNames.join(', ')}].`
         );
       }
       if (agentType && agentType.allowModelOverride === false && resolvedModelName) {
         throw new Error(
           `agent_type "${agentType.name}" does not allow custom model selection (it is locked to ${agentType.model ? agentType.model.modelId : 'conversation model'}).`
+        );
+      }
+      if (agentType?.allowModelOverride && !resolvedModelName) {
+        throw new Error(
+          `agent_type "${agentType.name}" requires a model. Available: [${modelNames.join(', ')}]`
         );
       }
       const id = `agent-${++counter}-${Date.now().toString(36)}`;
@@ -299,11 +330,24 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
 
       let footer = '';
       const run = async (): Promise<string> => {
-        const fullPrompt = agentType?.systemPrompt
-          ? `<role>\n${agentType.systemPrompt}\n</role>\n\n${prompt}`
-          : prompt;
+        const rolePrefix = agentType?.systemPrompt
+          ? `<role>\n${agentType.systemPrompt}\n</role>\n\n`
+          : '';
+        const schemaSuffix = schema
+          ? `\n\nReturn your final answer as JSON only, matching this schema:\n${JSON.stringify(schema)}`
+          : '';
+        const fullPrompt = `${rolePrefix}${prompt}${schemaSuffix}`;
         try {
           await session.prompt(fullPrompt);
+          if (schema) {
+            const collected = await collectStructuredYield({
+              text: lastAssistantText(session),
+              schema,
+              prompt: (nudge) => session.prompt(nudge),
+              reread: () => lastAssistantText(session),
+            });
+            deps.storeYield?.(id, collected.value);
+          }
           let result = lastAssistantText(session) || '(subagent produced no output)';
           // 脚注先于 gate:工具分布/耗时是子代理自身的事实,gate 是父的验收
           footer = runFooter({

@@ -35,9 +35,18 @@
 2. **防抖 + 上限** —— 500ms 防抖，5s 强制落盘（`MAX_WAIT_MS`），
    避免连续拖动滑块时反复写文件，也避免一直被打断永远不落盘。
 3. **原子写** —— 先写 `.tmp` 再 `renameSync`，避免崩溃留下半截文件。
+   `flushSettings()` 只有写入成功才清 `isDirty`；失败必须保持 dirty，让后续事务或退出重试。
 
 退出前 `app.on('before-quit')` 调 `flushSettings()` 把未落盘的写掉。
 新增会频繁触发写入的设置项时，确认它经过这条路径而不是自己写文件。
+
+配置包导入走 `commitSettingsTransaction()`：先比对预览指纹、flush、写完整备份，
+再用现有原子写提交 allowlist 补丁。备份和落盘失败不得改缓存或广播；落盘成功后
+渲染进程 `send` 失败也不得把这次导入判失败。
+
+配置同步的资源与设置备份成对保留：完整 JSON 备份可能仍引用导入前的技能/指令路径，
+因此导入成功后不得自动删除旧资源。恢复备份前应确保其引用的资源仍在，避免“备份存在但
+无法回滚”的安全与可靠性假象。
 
 ## 多窗口同步
 
@@ -141,3 +150,55 @@ useSettingsStore.setState({ projects: next });
 - 大段文本（指令文件内容）→ `userData/instructions/<id>.md`，
   settings 里只存元数据。理由：settings.json 每次设置变更都整体重写，
   塞进几十 KB 文本会让每次写入都变重。
+
+## 会话流式持久化的内存上限
+
+### 适用范围
+
+会话 store 每条流式事件都可能触发持久化。主进程的磁盘防抖发生在 IPC 收包之后，
+不能限制 renderer 的 JSON 编解码、contextBridge 复制及在途请求。大量重复 commands
+会放大每笔元数据，突发写入可造成 V8 OOM。设置 store 保留原来的字符串适配器。
+
+### 接口
+
+`stores/settings/storage.ts` 导出 `createElectronPersistStorage<State>(): PersistStorage<State>`，
+供会话 store 直接传入 `persist.storage`，不包 `createJSONStorage`。
+复用既有 `settings.writeKey(name, { state, version })`；删除传 `undefined`，不增加 IPC。
+
+### 契约
+
+- 每个适配器、每个键最多一个在途 IPC 和一个最新待写对象；第一笔立即发送，后续覆盖待写值。
+- 同一批次共享完成 Promise，不逐事件保存 payload 或 resolver 列表。
+- 删除与更新共同排序；最后操作决定最终值。不同键独立推进。
+- 水合前丢弃写入；接受后的每次更新均增加 `writeGeneration`，即使之后被合并。
+- `getItem` 等待同键在途批次完成后读取，防止主动 rehydrate 回退到旧值。
+- commands 不进入会话 partialize；旧数据可读，后续正常写入剥离，worker 继续恢复内存。
+
+### 错误与验证
+
+| 条件 | 行为 |
+| --- | --- |
+| 闸门关闭 | 直接丢弃，不排队、不增加写入代数 |
+| IPC 返回 false / 拒绝 / 同步抛错 | 批次 Promise 拒绝并报告错误，继续处理最新待写值，不锁死后续批次 |
+| 同键批次写入成功 | 完成 Promise 在最后值写完后解决 |
+
+### 场景
+
+正常：单次元数据更新立即发送；突发：首值在途时数百次更新合并为最新值；
+错误：把数百个完整会话副本各自发送，再指望主进程的磁盘 debounce 解决内存峰值。
+
+### 回归测试
+
+`settings/coalescedStorage.test.ts` 覆盖在途上限、最后值、共享 Promise、不同键隔离、
+更新/删除顺序、失败恢复、读写顺序和水合闸门；`sessions/index.test.ts` 覆盖冷事件
+不触发持久化、commands 恢复及投影。断言写入次数和最后值，不能只断言 UI state 正确。
+
+### 错误与正确接法
+
+```ts
+// 错误：每次 state 更新已经 stringify，排队时还会保留多份巨型字符串。
+storage: createJSONStorage(() => electronStorage)
+
+// 正确：会话在对象级合并，发送时才发生跨进程复制。
+storage: createElectronPersistStorage()
+```

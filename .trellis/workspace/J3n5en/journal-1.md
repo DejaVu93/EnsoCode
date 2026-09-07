@@ -488,3 +488,54 @@ worker 只消费 token 并自动 refresh、状态经独立 IPC 通道（不污�
 - 授权前无条件 `clearTokens`，用户中途取消就把原本可用的凭据弄没 → 失败路径回滚。
 
 遗留：真实 Notion 端到端授权未验证（需要用户账号）；授权只对新建会话生效（工具集 spawn 时定格）。
+
+
+## Session 16: Bash intercept switch (default off)
+
+**Date**: 2026-09-06
+**Task**: Bash intercept switch (default off)
+**Branch**: `enso/4e6016e3`
+
+### Summary
+
+设置页增加 bash 拦截开关，默认关；新会话生效。任务已归档。
+
+### Main Changes
+
+- opt-in bashInterceptEnabled：settings → spawn-parent → supervisor maybeInterceptBash
+
+## Session 17: 会话标题滚动总结 + 修首条总结被 sessionFile 守卫误杀
+
+**Date**: 2026-09-04
+**Task**: 会话标题滚动总结 + 修首条总结被 sessionFile 守卫误杀
+**Branch**: `dev`
+
+### Summary
+
+先修一个既有 bug：trySummarizeTitle 读 live sessionFile 判 resume，parent-ready 抢在 spawn IPC 返回前落地导致桌面首条消息的标题总结整个被误杀（红灯复现后修复）。随后实现标题滚动总结：worker 在 agent_end 按 turnStartIndex 切本轮摘要（用户请求截头 2000 / assistant 结论截尾 1500）随 turn-completed.digest 下发；summarize-title 输入改判别联合 TitleSummaryInput（initial/rolling）贯通 shared→worker→main→preload→renderer；renderer 每个成功回合按当前标题+摘要发起滚动总结（不收敛，在飞跳过），模型可原样返回当前标题；新增持久化 titleLocked，手动改名后永久停止自动总结。TDD 角色分离（tester coworker 出红灯 33 条），trellis-check 指出 adaptive 降级重发未推进 turnStartIndex 已修；隔离环境 CDP 真机验证三轮场景通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c09ff4dc` | (see git log) |
+
+### Testing
+
+- [OK] typecheck + 相关 vitest 108 通过
+| `b829adc` | (see git log) |
+| `72bff65` | (see git log) |
+| `71ebc56` | (see git log) |
+| `fee4dca` | (see git log) |
+| `432a6c6` | (see git log) |
+| `8942bbe` | (see git log) |
+| `0f51813` | (see git log) |
+| `2d3b056` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无

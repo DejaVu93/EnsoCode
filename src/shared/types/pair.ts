@@ -90,6 +90,15 @@ export interface PairCatalogPayload {
     kind?: 'local' | 'ssh';
     sshConnectionName?: string;
     sshHost?: string;
+    groupId?: string;
+  }[];
+  /** 扁平项目组；缺省（旧桌面）手机不显示选择器 */
+  projectGroups?: {
+    id: string;
+    name: string;
+    emoji?: string;
+    color?: string;
+    order: number;
   }[];
   providers: { id: string; name: string; models: { id: string; label?: string }[] }[];
   /** 仅供 main 侧 spawn 反查 cwd，不下发手机 */

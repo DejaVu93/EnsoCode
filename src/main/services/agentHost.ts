@@ -12,9 +12,15 @@ import {
   type SessionIdentity,
 } from '@shared/builtinAgents';
 import type { CapabilityExecutionEnvelope } from '@shared/capabilities/types';
-import { type ModelCredentialContext, modelUsability } from '@shared/defaultModel';
+import {
+  type DefaultModelRef,
+  type ModelCredentialContext,
+  modelUsability,
+} from '@shared/defaultModel';
+import { mcpTimeoutsForSpawn } from '@shared/mcpTimeout';
 import { pickModelCapabilityOverrides } from '@shared/modelCatalog';
 import { proxyEnvPatchFromEnv } from '@shared/proxy';
+import { parseSmartCompactMode } from '@shared/smartCompactMode';
 import type {
   AgentCommand,
   AgentRemoteConfig,
@@ -31,6 +37,7 @@ import type {
   SpawnModelConfig,
   SubagentModelOption,
   ThinkingLevel,
+  TitleSummaryInput,
 } from '@shared/types/agent';
 import { parseAgentWorkerEvent } from '@shared/types/agent';
 import type { SubagentModelEntry } from '@shared/types/assets';
@@ -44,10 +51,12 @@ import {
 } from '@shared/types/assets';
 import type { ModelEntry, ModelProvider } from '@shared/types/llm';
 import type { AgentDispatchTask } from '@shared/types/mentions';
+import { parseWindowsLocalShell } from '@shared/windowsLocalShell';
 import { app, type UtilityProcess, utilityProcess } from 'electron';
 import { ENSO_SYSTEM_PROMPT } from '../../agent/ensoPrompt';
 import agentWorkerPath from '../../agent/index?modulePath';
 import { readSettings } from '../ipc/settings';
+import { agentCommandDispatch } from './agentCommandDispatch';
 import { resolveGlobalInstruction } from './instructionStore';
 import { getMcpOAuthStore } from './mcpOAuthStore';
 import { pickSubagentModelRefs } from './subagentModels';
@@ -140,6 +149,7 @@ export function startAgentWorker(): void {
     const queued = commandsPending;
     commandsPending = [];
     for (const command of queued) child.postMessage(command);
+    pushApprovalReviewer();
   });
   child.on('message', (raw) => {
     const event = parseAgentWorkerEvent(raw);
@@ -185,12 +195,17 @@ export function isAgentWorkerRunning(): boolean {
 }
 
 export function sendAgentCommand(command: AgentCommand): { ok: boolean; error?: string } {
-  if (!worker) return { ok: false, error: 'agent worker not running' };
-  if (!workerReady) {
-    commandsPending.push(command);
+  const action = agentCommandDispatch({
+    hasWorker: worker !== null,
+    workerReady,
+    workerExited,
+  });
+  if (action === 'restart-then-queue') startAgentWorker();
+  if (action === 'post' && worker) {
+    worker.postMessage(command);
     return { ok: true };
   }
-  worker.postMessage(command);
+  commandsPending.push(command);
   return { ok: true };
 }
 
@@ -317,8 +332,18 @@ export function resolveAgentTypeSpawnConfig(
     expectedModel: selectedModel.ref,
     expectedToolIds:
       definition.tools === 'readonly'
-        ? ['read', 'grep', 'find', 'ls', 'message_main_agent']
-        : ['read', 'grep', 'find', 'ls', 'bash', 'edit', 'write', 'message_main_agent'],
+        ? ['read', 'grep', 'find', 'ls', 'message_main_agent', 'message_coworker']
+        : [
+            'read',
+            'grep',
+            'find',
+            'ls',
+            'bash',
+            'edit',
+            'write',
+            'message_main_agent',
+            'message_coworker',
+          ],
   };
 }
 
@@ -338,6 +363,14 @@ export function spawnSession(
     authenticatedAccountKeys
   );
   if (!resolved.ok) return { ok: false, error: resolved.error };
+  const reviewer = resolveApprovalReviewer(authenticatedAccountKeys);
+  if (!reviewer.ok) {
+    if (request.approvalMode === 'assistant') return { ok: false, error: reviewer.error };
+  }
+  if (request.approvalMode === 'assistant' && (!reviewer.ok || !reviewer.selection)) {
+    return { ok: false, error: 'Select an assistant approval model in Settings first.' };
+  }
+  const approvalReviewerConfig = reviewer.ok ? reviewer.selection?.config : undefined;
   const preset = resolvePreset(request.presetId);
   const instruction = resolveGlobalInstruction(
     preset ? { instructionId: preset.instructionId } : undefined
@@ -351,6 +384,23 @@ export function spawnSession(
     ? state.disabledBuiltinTools.filter((id): id is string => typeof id === 'string')
     : [];
   const loadHarnessAssets = state?.loadHarnessAssets === true;
+  const windowsLocalShell = parseWindowsLocalShell(state?.windowsLocalShell);
+  const exploreFoldEnabled = state?.exploreFoldEnabled === true;
+  const bashInterceptEnabled = state?.bashInterceptEnabled === true;
+  const smartCompactEnabled = state?.smartCompactEnabled === true;
+  const smartCompactRef = asModelRef(state?.smartCompactModel);
+  const smartCompactSummary =
+    smartCompactEnabled && smartCompactRef
+      ? resolveModelSelection(
+          smartCompactRef.providerId,
+          smartCompactRef.modelId,
+          authenticatedAccountKeys
+        )
+      : undefined;
+  const smartCompactSummaryModel = smartCompactSummary?.ok
+    ? smartCompactSummary.selection.config
+    : undefined;
+  const smartCompactMode = parseSmartCompactMode(state?.smartCompactMode) ?? undefined;
   // worker 崩溃/退出后不自动拉起的话，所有会话都只能靠重启 app 恢复；在 spawn 入口按需重建
   if (!worker && workerExited) startAgentWorker();
   return sendAgentCommand({
@@ -363,9 +413,16 @@ export function spawnSession(
     ...(request.thinkingLevel ? { thinkingLevel: request.thinkingLevel } : {}),
     ...(preset || request.loadLocalSkills === false ? { loadLocalSkills: false } : {}),
     ...(loadHarnessAssets ? { loadHarnessAssets: true } : {}),
+    ...(windowsLocalShell !== 'auto' ? { windowsLocalShell } : {}),
+    ...(exploreFoldEnabled ? { exploreFoldEnabled: true } : {}),
+    ...(bashInterceptEnabled ? { bashInterceptEnabled: true } : {}),
+    ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
+    ...(smartCompactSummaryModel ? { smartCompactSummaryModel } : {}),
+    ...(smartCompactMode ? { smartCompactMode } : {}),
     ...(skillPaths.length > 0 ? { skillPaths } : {}),
     ...(mcpServers.length > 0 ? { mcpServers } : {}),
     ...(request.approvalMode ? { approvalMode: request.approvalMode } : {}),
+    ...(approvalReviewerConfig ? { approvalReviewer: approvalReviewerConfig } : {}),
     ...(agentTypes.length > 0 ? { agentTypes } : {}),
     ...(subagentModels.length > 0 ? { subagentModels } : {}),
     ...(disabledTools.length > 0 ? { disabledTools } : {}),
@@ -540,10 +597,10 @@ export function steerSession(
 /** 标题总结：一次性补全命令，不绑会话身份；结果经 title-generated 事件回流 */
 export function summarizeConversationTitle(
   conversationId: string,
-  text: string,
+  input: TitleSummaryInput,
   model: SpawnModelConfig
 ): { ok: boolean; error?: string } {
-  return sendAgentCommand({ type: 'summarize-title', conversationId, text, model });
+  return sendAgentCommand({ type: 'summarize-title', conversationId, input, model });
 }
 
 export function abortSession(identity: SessionIdentity): { ok: boolean; error?: string } {
@@ -668,8 +725,17 @@ export function stopBackgroundTask(
 
 export function setSessionApprovalMode(
   identity: SessionIdentity,
-  mode: ApprovalMode
+  mode: ApprovalMode,
+  authenticatedAccountKeys: ReadonlySet<string> = new Set()
 ): { ok: boolean; error?: string } {
+  if (mode === 'assistant') {
+    const reviewer = resolveApprovalReviewer(authenticatedAccountKeys);
+    if (!reviewer.ok) return reviewer;
+    if (!reviewer.selection) {
+      return { ok: false, error: 'Select an assistant approval model in Settings first.' };
+    }
+    pushApprovalReviewer(authenticatedAccountKeys);
+  }
   return sendAgentCommand({ type: 'set-approval-mode', identity, mode });
 }
 
@@ -853,7 +919,38 @@ function toMcpSpawnConfig(server: McpServerEntry): McpServerSpawnConfig {
     ...(server.env && Object.keys(server.env).length > 0 ? { env: server.env } : {}),
     ...(server.url ? { url: server.url } : {}),
     ...(oauth ? { oauth } : {}),
+    ...mcpTimeoutsForSpawn(server),
   };
+}
+
+function asModelRef(value: unknown): DefaultModelRef | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as { providerId?: unknown; modelId?: unknown };
+  return typeof candidate.providerId === 'string' &&
+    candidate.providerId.trim() &&
+    typeof candidate.modelId === 'string' &&
+    candidate.modelId.trim()
+    ? { providerId: candidate.providerId, modelId: candidate.modelId }
+    : null;
+}
+
+export function resolveApprovalReviewer(
+  authenticatedAccountKeys: ReadonlySet<string>
+): ModelSelectionResult | { ok: true; selection: null } {
+  const ref = asModelRef(readSettingsState()?.approvalReviewer);
+  if (!ref) return { ok: true, selection: null };
+  return resolveModelSelection(ref.providerId, ref.modelId, authenticatedAccountKeys);
+}
+
+export function pushApprovalReviewer(authenticatedAccountKeys?: ReadonlySet<string>): void {
+  if (!worker || !workerReady) return;
+  const keys = authenticatedAccountKeys ?? new Set<string>();
+  const resolved = resolveApprovalReviewer(keys);
+  const model = resolved.ok ? resolved.selection?.config : undefined;
+  worker.postMessage({
+    type: 'set-approval-reviewer',
+    ...(model ? { model } : {}),
+  } satisfies AgentCommand);
 }
 
 export function readSettingsState(): Record<string, unknown> | undefined {

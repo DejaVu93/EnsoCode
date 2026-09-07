@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
+import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { foldTimeline, type TimelineItem } from '@/stores/sessions/timeline';
@@ -21,7 +22,7 @@ import { isCompactRow, TimelineRow } from './TimelineRow';
 
 /** 消息列/输入区共用的列：阶梯 max-w + 水平 padding。padding 必须在列上而不是 @container 上，否则两侧查询宽度差 2rem，会在断点附近上下错位。 */
 export const CHAT_COL =
-  'mx-auto w-full max-w-2xl px-4 @min-[56rem]:max-w-3xl @min-[72rem]:max-w-4xl @min-[96rem]:max-w-5xl';
+  'mx-auto w-full max-w-3xl px-4 @min-[56rem]:max-w-4xl @min-[72rem]:max-w-5xl @min-[96rem]:max-w-6xl';
 
 /** 贴底判定阈值（px）：与旧实现一致，离底 40px 内视为贴底 */
 const AT_BOTTOM_THRESHOLD = 40;
@@ -52,6 +53,8 @@ interface MessageTimelineProps {
   error?: string;
   /** 空态标题（项目名） */
   emptyTitle: string;
+  /** 空时间线且 resume 失败时：再走一遍 jsonl 回放 */
+  onRetryResume?: () => void;
   /**
    * 是否虚拟化。移动端置 false：真机实测 Virtuoso 在 WebKit 上跳转到底时，
    * 渲染范围切换的中间态列表变短会被浏览器钳位滚动位置，之后模型再也涨不回去，
@@ -81,6 +84,7 @@ export function MessageTimeline({
   lastOutputAt,
   error,
   emptyTitle,
+  onRetryResume,
   virtualize = true,
   onStartReached,
   searchQuery = '',
@@ -335,9 +339,29 @@ export function MessageTimeline({
       <div className="@container relative min-h-0 flex-1">
         <NavRail items={navItems} activeKey={activeNavKey} onJump={jumpTo} />
         {items.length === 0 && !busy ? (
-          <div className="flex h-full flex-col items-center justify-center gap-1 text-center">
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
             <p className="text-lg font-medium">{emptyTitle}</p>
-            <p className="text-sm text-muted-foreground">{t('Ask the agent…')}</p>
+            {error ? (
+              <>
+                <p className="max-w-md text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>
+                {onRetryResume && (
+                  <Button size="sm" variant="outline" onClick={onRetryResume}>
+                    {t('Retry resume')}
+                  </Button>
+                )}
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t('Ask the agent…')}</p>
+            )}
+          </div>
+        ) : items.length === 0 && error ? (
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+            <p className="max-w-md text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>
+            {onRetryResume && (
+              <Button size="sm" variant="outline" onClick={onRetryResume}>
+                {t('Retry resume')}
+              </Button>
+            )}
           </div>
         ) : items.length === 0 ? (
           // spawn/resume 期间（历史消息尚未回放）：明确的加载态，不留空白页

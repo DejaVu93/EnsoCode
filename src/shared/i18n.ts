@@ -63,6 +63,12 @@ export const zhTranslations: Record<string, string> = {
   'Already used by "{{label}}"': '已被「{{label}}」占用',
   'Reset to default': '恢复默认',
   Language: '语言',
+  'Windows local command shell': 'Windows 本地命令壳',
+  'Only the Windows local agent command tool. SSH and other platforms stay on bash. Takes effect on the next session.':
+    '只影响 Windows 本机 agent 命令工具。SSH 与其它平台仍用 bash。下次开会话生效。',
+  'Windows default (PowerShell)': 'Windows 默认（PowerShell）',
+  PowerShell: 'PowerShell',
+  'Git Bash': 'Git Bash',
   Light: '浅色',
   'No favorite themes yet. Click the heart icon to add favorites.':
     '暂无收藏主题。点击爱心图标添加收藏。',
@@ -123,6 +129,20 @@ export const zhTranslations: Record<string, string> = {
     'Agent 改文件后自动打开右侧 Changes',
   'Open in side panel': '在侧栏打开',
   'Compact read-only tool calls': '精简只读工具调用',
+  'Verified smart compaction': '验证式智能压缩',
+  'Use Enso verified summary for long-session compact. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.':
+    'Enso 自有验证式摘要做长会话 compact。失败回退默认压缩。可能更慢、更费 token。下一个会话生效。',
+  'Compaction mode': '压缩档位',
+  'Auto (by usage)': '自动（按占用）',
+  Fast: '快速',
+  Balanced: '均衡',
+  Thorough: '详尽',
+  'Mode changes summary budget and how much recent tail to keep. It does not decide whether compact runs.':
+    '档位只影响摘要细致和留多长尾巴，不决定是否压缩。',
+  'Follows the session model': '跟随当前会话模型',
+  'Follow session model': '改跟会话模型',
+  'Selected model is unavailable — falls back to the session model.':
+    '所选模型已不可用——将回退到当前会话模型。',
   'Show read/grep/find/ls as one-line rows and fold consecutive tool calls while the agent is still running':
     'read/grep/find/ls 显示为单行，agent 运行中也折叠连续的工具调用',
   'Stop if no output': '无输出则停止',
@@ -241,6 +261,7 @@ export const zhTranslations: Record<string, string> = {
   'Filter models...': '筛选模型...',
   'Filter skills...': '筛选技能...',
   'Filter MCP servers...': '筛选 MCP...',
+  'Filter projects...': '筛选项目...',
   'No models match': '没有匹配的模型',
   'Enable all': '全部启用',
   'Disable all': '全部禁用',
@@ -265,6 +286,9 @@ export const zhTranslations: Record<string, string> = {
   'Connected ({{ms}}ms)': '连接成功({{ms}}ms)',
   'Connection failed': '连接失败',
   Cancel: '取消',
+  'Confirm exit': '确认退出',
+  'Are you sure you want to exit the app?': '确定要退出应用吗？',
+  Exit: '退出',
   // Unified provider setup, default model, and Enso
   'Add a provider subscription or API Key, or import providers from local AI apps':
     '添加提供商订阅或 API Key，也可从本地 AI 应用导入模型服务',
@@ -326,7 +350,24 @@ export const zhTranslations: Record<string, string> = {
   'This file changed on disk.': '磁盘上的文件已更改。',
   Reload: '重新加载',
   'Send to conversation': '发送到对话',
+  'New File': '新文件',
+  'New Folder': '新建文件夹',
+  'Copy Path': '复制路径',
+  'Copy Relative Path': '复制相对路径',
+  'View File': '查看文件',
+  'Open in Browser': '在浏览器中打开',
+  'Open Markdown Preview': '打开 Markdown 预览',
+  'View Source': '查看源码',
+  'Reveal in Finder': '在访达中显示',
+  'Open Containing Folder': '打开所在文件夹',
+  'Reveal in File Explorer': '在资源管理器中显示',
+  'A file or folder with that name already exists.': '已存在同名文件或文件夹。',
+  'Invalid name.': '名称无效。',
+  'Could not complete the file action.': '无法完成该文件操作。',
+  'Delete {{name}} permanently?': '永久删除 {{name}}？',
   'Close others': '关闭其他',
+  'Close tabs to the right': '关闭右侧标签页',
+  'Close saved': '关闭已保存',
   'Close all': '关闭所有',
   'Force close others': '强制关闭其他',
   'Force close all': '强制关闭所有',
@@ -464,6 +505,8 @@ export const zhTranslations: Record<string, string> = {
   'Arguments (one per line)': '参数（每行一条）',
   'Environment variables (KEY=VALUE, one per line)': '环境变量（KEY=VALUE，每行一条）',
   URL: 'URL',
+  'Connection timeout (seconds)': '连接超时（秒）',
+  'Tool call timeout (seconds)': '工具调用超时（秒）',
   'This MCP server already exists': '该 MCP 服务器已存在',
   'Import MCP servers': '导入 MCP 服务器',
   'Scan local AI apps and register the entries you want to reuse.':
@@ -545,6 +588,17 @@ export const zhTranslations: Record<string, string> = {
   'View fullscreen': '全屏查看',
   'Exit fullscreen': '退出全屏',
   Projects: '项目',
+  All: '全部',
+  Ungrouped: '未分组',
+  'New group': '新建分组',
+  'Edit group': '编辑分组',
+  'Delete group': '删除分组',
+  'Project group': '项目组',
+  'Groups organize projects in the sidebar.': '用分组整理侧栏里的项目。',
+  'Move projects into this group': '选择要移入的项目',
+  'Move to ungrouped': '移到未分组',
+  'Move to {{name}}': '移到 {{name}}',
+  Emoji: '表情符号',
   'Add project': '添加项目',
   'Adding...': '正在添加...',
   'Add a project to start': '添加一个项目开始',
@@ -570,7 +624,7 @@ export const zhTranslations: Record<string, string> = {
   // 用量统计
   Usage: '用量',
   'Token usage across all local sessions; cost is estimated from catalog prices.':
-    '统计本机全部会话的 Token 用量；费用按模型目录单价估算。',
+    '统计本机全部会话的 Token 用量；费用按目录单价估算，可在下方覆盖。',
   Today: '今天',
   '7D': '7 天',
   '30D': '30 天',
@@ -602,9 +656,17 @@ export const zhTranslations: Record<string, string> = {
   'By project': '按项目',
   'No usage in this period': '该周期内没有用量',
   'Top {{count}} of {{total}}': '共 {{total}} 项，显示前 {{count}} 项',
+  '{{total}} items': '共 {{total}} 项',
   '(no project)': '（无项目）',
   'No catalog price for: {{models}}. Their cost is not included.':
     '以下模型无目录单价：{{models}}，其费用未计入。',
+  'Unit prices': '单价',
+  'Rates used for cost estimates ($/M tokens).': '费用估算用的单价（$/百万 tokens）。',
+  'Show all': '显示所有',
+  'No matching models': '没有匹配的模型',
+  'Model id': '模型 id',
+  'Enter a model id and non-negative rates.': '请填写模型 id 和非负单价。',
+  Reset: '重置',
   Refresh: '刷新',
   'Saved hosts for remote projects. Passwords stay in the system keychain.':
     '远程项目用的主机。密码保存在系统钥匙串。',
@@ -695,6 +757,11 @@ export const zhTranslations: Record<string, string> = {
   '(no log available)': '(暂无日志)',
   'Context compacted': '上下文已压缩',
   'Context compacted ({{tokens}} tokens before)': '上下文已压缩（压缩前 {{tokens}} tokens）',
+  'Verified context compacted': '验证式压缩完成',
+  'Verified context compacted ({{tokens}} tokens before)':
+    '验证式压缩完成（压缩前 {{tokens}} tokens）',
+  'Verified summary from smart compaction. Messages above are no longer in the model context.':
+    '这次用了验证式摘要。此线之上的历史已不在模型上下文中。',
   'Messages above are no longer in the model context; only this summary is.':
     '以上消息已不在模型上下文中，模型只看到这份摘要。',
   'Latest compaction summary — expand to read what the model kept.':
@@ -728,6 +795,7 @@ export const zhTranslations: Record<string, string> = {
   Other: '其他',
   Archive: '归档',
   Unarchive: '取消归档',
+  Active: '活跃中',
   Pinned: '已置顶',
   'Drop here to pin': '拖到此处置顶',
   Pin: '置顶',
@@ -768,6 +836,9 @@ export const zhTranslations: Record<string, string> = {
   'Hire coworker': '雇佣 coworker',
   'Set a session goal (/goal <objective> · pause · resume · clear)':
     '设定会话目标(/goal <目标> · pause · resume · clear)',
+  'Pause the current session goal': '暂停当前会话目标',
+  'Resume a paused session goal': '继续已暂停的会话目标',
+  'Clear the session goal': '清除会话目标',
   working: '推进中',
   paused: '已暂停',
   waiting: '等待中',
@@ -796,8 +867,19 @@ export const zhTranslations: Record<string, string> = {
   'Edits run freely; commands and MCP still ask': '文件编辑直接执行,命令与 MCP 仍需确认',
   'Full access': '完全放行',
   'Run everything without asking': '所有操作不经确认直接执行',
+  'Assistant approval': '助手代审',
+  'Assistant reviewing…': '代审中…',
+  'A configured model reviews each action first': '由设置中的模型先审每一步操作',
+  'Select an assistant approval model in Settings first': '请先在设置里选择助手代审模型',
+  'Assistant approval model': '助手代审模型',
+  'Required before Assistant approval can be selected. Does not fall back to the chat model.':
+    '选好后新会话默认走助手代审；未选则该档不可用，不会回退到当前会话模型。',
+  'No assistant approval model selected': '尚未选择助手代审模型',
+  'Selected model is unavailable': '所选模型不可用',
+  Clear: '清除',
   'No conversations yet': '暂无对话',
-  'Preparing session…': '正在恢复会话…',
+  'Preparing session…': '正在读取历史…',
+  'Retry resume': '重新恢复',
   Todos: '任务清单',
   '{{count}} tool calls': '{{count}} 个工具调用',
   'ran {{count}} commands': '跑了 {{count}} 条命令',
@@ -861,6 +943,12 @@ export const zhTranslations: Record<string, string> = {
     '{{skills}} 个技能 · {{mcp}} 个 MCP · {{instruction}} 份指令',
   'Let the agent auto-discover skills under .agents/skills and .pi/skills':
     '让 agent 自动发现 .agents/skills、.pi/skills 下的 skill',
+  'Explore fold': '探后折叠',
+  'Let the agent mark exploratory reads and keep only a short report in later model context. Timeline stays intact.':
+    '让模型在探仓库前打点，探完只把报告留在后续模型上下文里；时间线仍完整。',
+  'Force read/find tools': '强制走 read/find 工具',
+  'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.':
+    '拦截 shell 里的 cat/head/grep/sed -i，要求改用专用文件工具。默认关。下次开会话生效。',
   'Load project harness assets': '加载项目内其它工具目录',
   'Also load skills from .claude/.codex/.cursor and rule files (.cursorrules, .cursor/rules, .claude/rules) in the project':
     '同时加载项目内 .claude/.codex/.cursor 下的 skills，以及规则文件（.cursorrules、.cursor/rules、.claude/rules）',
@@ -895,7 +983,6 @@ export const zhTranslations: Record<string, string> = {
   'Tool definitions': '工具定义',
   Conversation: '对话正文',
   'Compaction summary': '压缩摘要',
-  'Project memory': '项目记忆',
   Reminders: '续跑提示',
   '{{count}} older messages are folded into the summary': '{{count}} 条旧消息已不在窗口，只留摘要',
   'Current summary was produced by another model family': '当前摘要由另一模型生成',
@@ -990,6 +1077,112 @@ export const zhTranslations: Record<string, string> = {
   'Each connecting computer needs its own pairing code from the other desktop.':
     '每台要连入的电脑都需要对方桌面单独生成一个配对码。',
   Disconnect: '断开',
+  // 设置 → 配置迁移
+  'Configuration transfer': '配置迁移',
+  'Move models, presets, agent types, skills, MCP servers and instruction files between devices.':
+    '在设备之间迁移模型、预设、子代理类型、技能、MCP 服务和指令文件。',
+  'Portable Enso configuration': '可移植 Enso 配置',
+  'Export a package or preview one before importing it.': '导出配置包，或在导入前预览配置包。',
+  'Import configuration': '导入配置',
+  'Export configuration': '导出配置',
+  Export: '导出',
+  'OAuth login sessions are never transferred. Skill and instruction contents require an encrypted export.':
+    'OAuth 登录态不会迁移。技能和指令内容需要使用加密导出。',
+  'Create a portable .enso-config package for another device.':
+    '创建可在另一台设备使用的 .enso-config 配置包。',
+  'File contents can be private': '文件内容可能包含私密信息',
+  'Skill and instruction file contents may contain private data, so configurations containing them can only be exported with encryption.':
+    '技能和指令文件内容可能包含私密信息，因此包含这些文件的配置只能使用加密导出。',
+  'Include sensitive configuration': '包含敏感配置',
+  'Encrypt the entire package with a password. OAuth login sessions are still excluded.':
+    '使用密码加密整个配置包。OAuth 登录态仍不会包含在内。',
+  'API keys, provider account links, MCP arguments and environment values, plus credentials and private URL parts in MCP endpoints, will be omitted. Configurations containing skill or instruction files require encryption.':
+    'API Key、模型服务账号关联、MCP 参数和环境变量，以及 MCP 地址中的凭据和私密 URL 部分都会被省略。包含技能或指令文件的配置需要加密导出。',
+  'Encryption password': '加密密码',
+  'Confirm password': '确认密码',
+  'Use at least 8 characters. This password cannot be recovered.':
+    '请使用至少 8 个字符。此密码无法恢复。',
+  'Password must be at least 8 characters.': '密码至少需要 8 个字符。',
+  'Passwords do not match.': '两次输入的密码不一致。',
+  'Configuration exported': '配置已导出',
+  'Saved package:': '配置包已保存至：',
+  'Export cancelled.': '导出已取消。',
+  'Exporting…': '正在导出…',
+  'Could not export configuration.': '无法导出配置。',
+  'Encrypted configuration package': '加密配置包',
+  'Enter the export password to decrypt and preview this package.':
+    '请输入导出时设置的密码，以解密并预览此配置包。',
+  'Review {{fileName}} before changing this device.': '修改此设备前，请预览 {{fileName}}。',
+  'Import mode': '导入模式',
+  Merge: '合并',
+  'Add and update matching items while keeping items only on this device.':
+    '新增并更新匹配条目，同时保留此设备独有的条目。',
+  Replace: '替换',
+  'Replace transferred item categories, removing local-only items in them.':
+    '替换迁移的条目类别，并删除其中此设备独有的条目。',
+  'Preparing preview…': '正在准备预览…',
+  Category: '类别',
+  Added: '新增',
+  'Subagent Models': '子代理模型',
+  'Scalar settings': '标量设置',
+  'Portable settings changed:': '变更的可移植设置：',
+  Updated: '更新',
+  Skipped: '跳过',
+  Removed: '删除',
+  'Local-only configuration will be deleted': '此设备独有的配置将被删除',
+  'Items in transferred collections that exist only on this device will be removed. Removed counts are shown above. Included portable preferences are overwritten. A complete backup is created first.':
+    '迁移集合中仅存在于此设备的条目将被删除。上方会显示删除数量。包含的可移植偏好会被覆盖，并会先创建完整备份。',
+  'Only import packages you trust': '只导入你信任的配置包',
+  'An imported package can change portable preferences and configuration. Skills and MCP servers may also run commands later when you use them. Previewing does not execute them; continue only if you trust the package.':
+    '导入的配置包可以修改可移植偏好和配置。技能和 MCP 服务在之后使用时也可能运行命令。预览过程不会执行它们；请仅在信任配置包时继续。',
+  'Confirm configuration import': '确认导入配置',
+  'This package can change portable preferences and configuration. Continue only if you trust this package.':
+    '此配置包可以修改可移植偏好和配置。请仅在信任此配置包时继续。',
+  'It includes skills or MCP servers that may execute commands when you use them.':
+    '它包含在使用时可能执行命令的技能或 MCP 服务。',
+  'Replace mode removes local-only items from transferred collections and overwrites included portable preferences. A complete backup will be created first.':
+    '替换模式会删除迁移集合中此设备独有的条目，并覆盖包中包含的可移植偏好。替换前会先创建完整备份。',
+  'Do you want to continue with this import?': '要继续导入吗？',
+  'Confirm import': '确认导入',
+  'Sensitive provider or MCP values were omitted; existing local values were preserved when available.':
+    '敏感的模型服务或 MCP 配置值已省略；如本机已有对应值，则会保留。',
+  'OAuth login state is not included; sign in again after import.':
+    '配置包不包含 OAuth 登录态；导入后请重新登录。',
+  'Imported MCP servers may require external commands, packages, or paths.':
+    '导入的 MCP 服务可能依赖外部命令、软件包或本机路径。',
+  'Refresh preview': '刷新预览',
+  'Importing…': '正在导入…',
+  'Could not open configuration package.': '无法打开配置包。',
+  'Could not preview configuration package.': '无法预览配置包。',
+  'Could not import configuration.': '无法导入配置。',
+  'Invalid export options': '导出选项无效。',
+  'Invalid export request.': '导出请求无效。',
+  'Export password is too short.': '导出密码太短。',
+  'Configuration package is too large.': '配置包过大。',
+  'Unable to export configuration.': '无法导出配置。',
+  'Skill and instruction contents require an encrypted export.': '技能和指令内容需要使用加密导出。',
+  'Invalid import request.': '导入请求无效。',
+  'Invalid configuration package.': '配置包无效。',
+  'Unable to read configuration package.': '无法读取配置包。',
+  'Invalid import preview request.': '导入预览请求无效。',
+  'Import session expired.': '导入会话已过期。',
+  'Import password is required.': '请输入导入密码。',
+  'Invalid import commit request.': '导入提交请求无效。',
+  'Import must be previewed before commit.': '提交导入前必须先预览。',
+  'Unable to commit configuration.': '无法提交配置。',
+  'Settings changed since preview; preview again.': '预览后设置发生了变化，请重新预览。',
+  'Unable to flush pending settings writes.': '无法刷新待写入的设置。',
+  'Unable to create settings backup.': '无法创建设置备份。',
+  'Unable to write settings.': '无法写入设置。',
+  'Import cancelled.': '导入已取消。',
+  'Configuration imported': '配置已导入',
+  'This window has been refreshed with the imported settings.': '此窗口已刷新为导入后的设置。',
+  'Configuration was imported, but this window could not refresh automatically.':
+    '配置已导入，但此窗口无法自动刷新。',
+  'Reopen Settings to load the imported configuration in this window.':
+    '请重新打开设置，以在此窗口载入导入后的配置。',
+  'Import complete': '导入完成',
+  'Backup of previous settings:': '之前设置的备份位置：',
 };
 
 export function normalizeLocale(input?: string): Locale {

@@ -1,4 +1,5 @@
 import type { PhoneToHost } from '@enso/pair';
+import { takeSnapshotTail } from '@shared/snapshotTail';
 import { THINKING_LEVELS } from '@shared/types/agent';
 
 /**
@@ -199,15 +200,15 @@ const SESSION_SCOPED = new Set(['message-upsert']);
  * 直接丢弃且不通知发送方，长对话的全量快照会静默消失——手机端表现为
  * 「历史加载不出、新消息却正常」。更早的消息由 history 命令分页拉取。
  */
-export const SNAPSHOT_TAIL_MESSAGES = 60;
-/** 加密封帧还会膨胀（base64 图片已在消息体内），预算须显著低于中继 1MB 上限 */
-const SNAPSHOT_BYTE_BUDGET = 600_000;
+export { SNAPSHOT_TAIL_MESSAGES } from '@shared/snapshotTail';
 
 interface SnapshotSession {
   /** 旧格式扁平 id；worker 新格式嵌在 identity 里，归一化后两者都有 */
   sessionId?: string;
   identity?: { sessionId?: string; generation?: string };
   messages?: unknown[];
+  /** worker 带 skills 描述；下发手机前剥掉 */
+  commands?: unknown;
 }
 
 /** worker 事件的会话归属：新格式在 identity.sessionId，旧格式在顶层 sessionId */
@@ -216,23 +217,6 @@ function sessionIdOf(value: {
   identity?: { sessionId?: string; generation?: string };
 }): string | undefined {
   return value.identity?.sessionId ?? value.sessionId;
-}
-
-/** 从尾部往前取，直到条数或字节预算耗尽；至少保 1 条（单条超预算也发，交给中继裁决） */
-function takeTail(
-  messages: unknown[],
-  endIndex: number
-): { messages: unknown[]; baseIndex: number } {
-  let bytes = 0;
-  let start = endIndex;
-  while (start > 0 && endIndex - start < SNAPSHOT_TAIL_MESSAGES) {
-    const size = JSON.stringify(messages[start - 1]).length;
-    if (bytes + size > SNAPSHOT_BYTE_BUDGET && start < endIndex) break;
-    bytes += size;
-    start--;
-    if (bytes > SNAPSHOT_BYTE_BUDGET) break;
-  }
-  return { messages: messages.slice(start, endIndex), baseIndex: start };
 }
 
 export function narrowSnapshot(
@@ -245,9 +229,11 @@ export function narrowSnapshot(
     .filter((s) => sessionIdOf(s) === subscribedId)
     .map((s) => {
       // 手机端按扁平 sessionId 消费（线上 PWA 不随桌面版同步发布），归一化补上
-      const base = { ...s, sessionId: subscribedId };
+      // commands（skills 描述）手机不用，原样展开会把尾窗帧撑到几十 KB
+      const { commands: _commands, ...rest } = s;
+      const base = { ...rest, sessionId: subscribedId };
       if (!Array.isArray(s.messages)) return { ...base, baseIndex: 0 };
-      const tail = takeTail(s.messages, s.messages.length);
+      const tail = takeSnapshotTail(s.messages, s.messages.length);
       return { ...base, messages: tail.messages, baseIndex: tail.baseIndex };
     });
   return sessions.length > 0 ? { type: 'snapshot', sessions } : null;
@@ -260,7 +246,7 @@ export function sliceHistory(
 ): { messages: unknown[]; baseIndex: number } {
   const end = Math.max(0, Math.min(beforeIndex, messages.length));
   if (end === 0) return { messages: [], baseIndex: 0 };
-  return takeTail(messages, end);
+  return takeSnapshotTail(messages, end);
 }
 
 /**

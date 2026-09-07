@@ -10,6 +10,23 @@ import {
 
 const identity = (generation = 'g1') => ({ sessionId: 's1', generation });
 const base: SessionProjection = { ...emptyProjection };
+type TailProjection = SessionProjection & { historyBaseIndex?: number };
+const assistant = (text: string): SessionProjection['messages'][number] => ({
+  role: 'assistant',
+  content: [{ type: 'text', text }],
+});
+const tail = (messages: SessionProjection['messages'] = []): TailProjection => ({
+  ...base,
+  messages,
+  historyBaseIndex: 40,
+});
+const snapshot = (baseIndex?: number): SessionSnapshot => ({
+  identity: identity(),
+  status: 'idle',
+  messages: [],
+  commands: [],
+  ...(baseIndex === undefined ? {} : { baseIndex }),
+});
 const status = (
   seq: number,
   value: 'idle' | 'running' | 'failed',
@@ -279,6 +296,42 @@ describe('applyAgentEvent', () => {
     expect(updated.messages[0].content).toEqual([{ type: 'text', text: 'hi!' }]);
   });
 
+  it('message-upsert maps an absolute worker index into the tail window', () => {
+    const next = applyAgentEvent(tail([assistant('old')]), 's1', {
+      type: 'message-upsert',
+      identity: identity(),
+      seq: 1,
+      index: 40,
+      message: assistant('updated'),
+    });
+    expect(next.messages[0]).toEqual(assistant('updated'));
+  });
+
+  it('message-upsert appends at the absolute tail-window end', () => {
+    const next = applyAgentEvent(tail([assistant('m40')]), 's1', {
+      type: 'message-upsert',
+      identity: identity(),
+      seq: 1,
+      index: 41,
+      message: assistant('m41'),
+    });
+    expect(next.messages).toEqual([assistant('m40'), assistant('m41')]);
+  });
+
+  it('message-upsert before the tail base drops the body but advances seq', () => {
+    expect(upsertOutOfRange([], 39, 40)).toBe(true);
+    expect(upsertOutOfRange([], 40, 40)).toBe(false);
+    const next = applyAgentEvent(tail(), 's1', {
+      type: 'message-upsert',
+      identity: identity(),
+      seq: 7,
+      index: 39,
+      message: assistant('old'),
+    });
+    expect(next.messages).toEqual([]);
+    expect(next.lastSeq).toBe(7);
+  });
+
   it('message-upsert beyond the known tail never leaves holes (cold-evicted body awaiting snapshot)', () => {
     // 复现：冷会话正文被清空后重新查看，snapshot 回来前流式 upsert 以原 index 到达，
     // 直接按 index 写会产生稀疏空洞 → 后续 .optimistic / .role 读 undefined 崩溃
@@ -316,6 +369,33 @@ describe('applyAgentEvent', () => {
     expect(next.lastSeq).toBe(9);
   });
 
+  it('tail snapshot records its absolute base and keeps the optimistic tail', () => {
+    const optimistic = {
+      ...assistant('in flight'),
+      role: 'user' as const,
+      optimistic: true as const,
+    };
+    const next = applyAgentEvent({ ...base, messages: [optimistic] }, 's1', {
+      type: 'snapshot',
+      sessions: [snapshot(40)],
+    }) as TailProjection;
+    expect(next.messages).toEqual([optimistic]);
+    expect(next.historyBaseIndex).toBe(40);
+  });
+
+  it('full snapshot clears an earlier tail base when baseIndex is missing or zero', () => {
+    const tailed = applyAgentEvent(base, 's1', { type: 'snapshot', sessions: [snapshot(40)] });
+    expect((tailed as TailProjection).historyBaseIndex).toBe(40);
+    const missing = applyAgentEvent(tailed, 's1', { type: 'snapshot', sessions: [snapshot()] });
+    const zero = applyAgentEvent(tailed, 's1', { type: 'snapshot', sessions: [snapshot(0)] });
+    expect((missing as TailProjection).historyBaseIndex).toBeUndefined();
+    expect((zero as TailProjection).historyBaseIndex).toBeUndefined();
+    // patch 是浅合并：缺 key 会把尾巴 base 留下，全量 800 条后 upsert 写到本地 60。
+    expect(Object.hasOwn(missing, 'historyBaseIndex')).toBe(true);
+    expect(Object.hasOwn(zero, 'historyBaseIndex')).toBe(true);
+    expect({ ...tailed, ...zero }.historyBaseIndex).toBeUndefined();
+  });
+
   it('snapshot keeps optimistic echoes the worker has not delivered yet', () => {
     const withEcho: SessionProjection = {
       ...base,
@@ -342,6 +422,39 @@ describe('applyAgentEvent', () => {
       'in flight',
     ]);
     expect(next.messages[3]).toHaveProperty('optimistic', true);
+  });
+
+  it('snapshot 不因窗口里更早的同文 user 吃掉尚未送达的乐观回显', () => {
+    const withEcho: SessionProjection = {
+      ...base,
+      historyBaseIndex: 40,
+      messages: [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], optimistic: true },
+      ],
+    };
+    const next = applyAgentEvent(withEcho, 's1', {
+      type: 'snapshot',
+      sessions: [
+        {
+          identity: identity(),
+          status: 'running',
+          messages: [
+            { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+            { role: 'assistant', content: [{ type: 'text', text: 'hello' }] },
+          ],
+          commands: [],
+          baseIndex: 40,
+        },
+      ],
+    });
+    expect(next.messages.map((m) => (m.content[0] as { text: string }).text)).toEqual([
+      'hi',
+      'hello',
+      'hi',
+    ]);
+    expect(next.messages[2]).toHaveProperty('optimistic', true);
   });
 
   it('乐观尾巴不被同 index 的 assistant upsert 覆盖，同文本 user upsert 将其消费', () => {
@@ -621,6 +734,33 @@ describe('applyAgentEvent', () => {
   });
 });
 
+describe('applyAgentEvent approval-request reviewing', () => {
+  it('reviewing 进入 pendingApprovals，resolved 后清掉', () => {
+    const request = {
+      requestId: 'apr-1',
+      tool: 'write',
+      kind: 'file-write' as const,
+      summary: '/tmp/x',
+      toolCallId: 't1',
+      phase: 'reviewing' as const,
+    };
+    const reviewing = applyAgentEvent(base, 's1', {
+      type: 'approval-request',
+      identity: identity(),
+      seq: 1,
+      request,
+    });
+    expect(reviewing.pendingApprovals).toEqual([request]);
+    const resolved = applyAgentEvent(reviewing, 's1', {
+      type: 'approval-resolved',
+      identity: identity(),
+      seq: 2,
+      requestId: 'apr-1',
+    });
+    expect(resolved.pendingApprovals).toEqual([]);
+  });
+});
+
 describe('applyAgentEvent tool-output', () => {
   const toolOutput = (seq: number, output: string): RendererAgentEvent => ({
     type: 'tool-output',
@@ -634,6 +774,7 @@ describe('applyAgentEvent tool-output', () => {
     const first = applyAgentEvent(base, 's1', toolOutput(1, 'line 1'));
     const second = applyAgentEvent(first, 's1', toolOutput(2, 'line 1\nline 2'));
     expect(second.toolOutputs).toEqual({ t1: 'line 1\nline 2' });
+    expect(second.lastOutputAt).toBeDefined();
   });
 
   it('轮次收口后清空增量快照，避免残留与无限增长', () => {

@@ -45,8 +45,8 @@ export function ConfirmDialog({
             variant="destructive"
             size="sm"
             onClick={() => {
-              onOpenChange(false);
               onConfirm();
+              onOpenChange(false);
             }}
           >
             {confirmLabel}

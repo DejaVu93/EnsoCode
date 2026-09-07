@@ -24,6 +24,7 @@ class AutoUpdaterService {
   private initialCheckTimer: NodeJS.Timeout | null = null;
   private lastCheckTime = 0;
   private onFocusHandler: (() => void) | null = null;
+  private quittingForUpdate = false;
 
   init(window: BrowserWindow, autoUpdateEnabled = true): void {
     this.mainWindow = window;
@@ -110,8 +111,14 @@ class AutoUpdaterService {
     }
   }
 
+  isQuittingForUpdate(): boolean {
+    return this.quittingForUpdate;
+  }
+
   quitAndInstall(): void {
-    if (this.updateDownloaded) autoUpdater.quitAndInstall();
+    if (!this.updateDownloaded) return;
+    this.quittingForUpdate = true;
+    autoUpdater.quitAndInstall();
   }
 
   setAutoUpdateEnabled(enabled: boolean): void {

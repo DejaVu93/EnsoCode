@@ -3,12 +3,15 @@ import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
 import { applyIncomingProviders } from '@shared/providerIdentity';
 import { normalizeProxyMode, type ProxyMode } from '@shared/proxy';
+import { parseSmartCompactMode } from '@shared/smartCompactMode';
 import {
   DEFAULT_STATUS_LINE_SEGMENTS,
   normalizeStatusLineSegments,
   type StatusLineSegmentId,
 } from '@shared/statusLine';
 import type { SourceAuthorityProjection } from '@shared/types/agent';
+import { parseUsageModelPricing } from '@shared/usage/pricing';
+import { parseWindowsLocalShell } from '@shared/windowsLocalShell';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import {
@@ -103,6 +106,12 @@ const initialState = {
   statusLineSegments: [...DEFAULT_STATUS_LINE_SEGMENTS] as StatusLineSegmentId[],
   loadLocalSkills: true,
   loadHarnessAssets: false,
+  windowsLocalShell: 'auto' as const,
+  exploreFoldEnabled: false,
+  bashInterceptEnabled: false,
+  smartCompactEnabled: false,
+  smartCompactModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  smartCompactMode: 'auto' as import('@shared/smartCompactMode').SmartCompactMode,
   autoUpdate: true,
   proxyMode: 'system' as ProxyMode,
   customProxyUrl: '',
@@ -128,6 +137,8 @@ const initialState = {
   defaultModel: null,
   titleSummaryEnabled: false,
   titleSummaryModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  approvalReviewer: null as import('@shared/defaultModel').DefaultModelRef | null,
+  lastApprovalMode: null as import('@shared/types/agent').ApprovalMode | null,
   defaultReasoningEnabled: true,
   defaultThinkingLevel: 'medium' as import('@shared/types/agent').ThinkingLevel,
   skills: [] as import('@shared/types').SkillEntry[],
@@ -143,6 +154,8 @@ const initialState = {
   onboarded: false,
   keybindings: {} as Record<string, string>,
   projects: [] as import('@shared/types').Project[],
+  projectGroups: [] as import('@shared/types').ProjectGroup[],
+  usageModelPricing: {} as import('@shared/usage/pricing').PricingTable,
 };
 interface DefaultModelRevalidationState {
   latest: DefaultModelRevalidation | null;
@@ -207,6 +220,16 @@ export const useSettingsStore = create<SettingsState>()(
 
       setLoadLocalSkills: (loadLocalSkills) => set({ loadLocalSkills }),
       setLoadHarnessAssets: (loadHarnessAssets) => set({ loadHarnessAssets }),
+      setWindowsLocalShell: (windowsLocalShell) =>
+        set({ windowsLocalShell: parseWindowsLocalShell(windowsLocalShell) }),
+      setExploreFoldEnabled: (exploreFoldEnabled) => set({ exploreFoldEnabled }),
+      setBashInterceptEnabled: (bashInterceptEnabled) => set({ bashInterceptEnabled }),
+      setSmartCompactEnabled: (smartCompactEnabled) => set({ smartCompactEnabled }),
+      setSmartCompactModel: (smartCompactModel) => set({ smartCompactModel }),
+      setSmartCompactMode: (smartCompactMode) =>
+        set({
+          smartCompactMode: parseSmartCompactMode(smartCompactMode) ?? 'auto',
+        }),
       setAutoUpdate: (autoUpdate) => set({ autoUpdate }),
       setProxyMode: (proxyMode) => set({ proxyMode: normalizeProxyMode(proxyMode) }),
       setCustomProxyUrl: (customProxyUrl) => set({ customProxyUrl }),
@@ -281,6 +304,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       setTitleSummaryEnabled: (titleSummaryEnabled) => set({ titleSummaryEnabled }),
       setTitleSummaryModel: (titleSummaryModel) => set({ titleSummaryModel }),
+      setApprovalReviewer: (approvalReviewer) => set({ approvalReviewer }),
+      setLastApprovalMode: (lastApprovalMode) => set({ lastApprovalMode }),
 
       revalidateDefaultModel: (snapshot: OauthCredentialSnapshot) => {
         const defaultModel = get().defaultModel;
@@ -517,7 +542,7 @@ export const useSettingsStore = create<SettingsState>()(
         }),
 
       // Project execution authority is created/removed only through the dedicated Main registry.
-      addProject: async (path, remote) => {
+      addProject: async (path, remote, groupId) => {
         const projection = await window.electronAPI.sourceAuthority.read();
         const existing = projection.projects.find((project) => {
           if (project.state !== 'active' || project.canonicalPath !== path) return false;
@@ -545,6 +570,7 @@ export const useSettingsStore = create<SettingsState>()(
             result.value.canonicalPath.split('/').filter(Boolean).pop() ??
             result.value.canonicalPath,
           path: result.value.canonicalPath,
+          ...(groupId ? { groupId } : {}),
           ...(result.value.kind === 'ssh'
             ? {
                 kind: 'ssh' as const,
@@ -554,10 +580,102 @@ export const useSettingsStore = create<SettingsState>()(
               }
             : {}),
         };
+        set((state) => {
+          const previous = state.projects.find((candidate) => candidate.id === project.id);
+          const nextProject = {
+            ...project,
+            ...(project.groupId
+              ? { groupId: project.groupId }
+              : previous?.groupId
+                ? { groupId: previous.groupId }
+                : {}),
+          };
+          return {
+            projects: [
+              ...state.projects.filter((candidate) => candidate.id !== project.id),
+              nextProject,
+            ],
+          };
+        });
+        return get().projects.find((candidate) => candidate.id === project.id) ?? project;
+      },
+
+      createProjectGroup: (input) => {
+        const name = input.name.trim();
+        const group = {
+          id: crypto.randomUUID(),
+          name: name || 'Untitled',
+          order: Math.max(-1, ...get().projectGroups.map((item) => item.order)) + 1,
+          ...(input.emoji ? { emoji: input.emoji } : {}),
+          ...(input.color ? { color: input.color } : {}),
+        };
+        set((state) => ({ projectGroups: [...state.projectGroups, group] }));
+        return group;
+      },
+      updateProjectGroup: (id, patch) => {
         set((state) => ({
-          projects: [...state.projects.filter((candidate) => candidate.id !== project.id), project],
+          projectGroups: state.projectGroups.map((group) => {
+            if (group.id !== id) return group;
+            return {
+              ...group,
+              ...(patch.name !== undefined ? { name: patch.name.trim() || group.name } : {}),
+              ...(patch.emoji !== undefined
+                ? patch.emoji
+                  ? { emoji: patch.emoji }
+                  : { emoji: undefined }
+                : {}),
+              ...(patch.color !== undefined
+                ? patch.color
+                  ? { color: patch.color }
+                  : { color: undefined }
+                : {}),
+            };
+          }),
         }));
-        return project;
+      },
+      removeProjectGroup: (id) => {
+        set((state) => ({
+          projectGroups: state.projectGroups.filter((group) => group.id !== id),
+          projects: state.projects.map((project) => {
+            if (project.groupId !== id) return project;
+            const { groupId: _removed, ...rest } = project;
+            return rest;
+          }),
+        }));
+      },
+      reorderProjectGroups: (activeId, overId) => {
+        if (activeId === overId) return;
+        set((state) => {
+          const ids = state.projectGroups
+            .slice()
+            .sort((a, b) => a.order - b.order)
+            .map((group) => group.id);
+          const from = ids.indexOf(activeId);
+          const to = ids.indexOf(overId);
+          if (from < 0 || to < 0) return state;
+          const next = [...ids];
+          const [moved] = next.splice(from, 1);
+          next.splice(to, 0, moved);
+          const order = new Map(next.map((id, index) => [id, index]));
+          return {
+            projectGroups: state.projectGroups.map((group) => ({
+              ...group,
+              order: order.get(group.id) ?? group.order,
+            })),
+          };
+        });
+      },
+      setProjectGroupId: (projectId, groupId) => {
+        set((state) => ({
+          projects: state.projects.map((project) => {
+            if (project.id !== projectId) return project;
+            if (!groupId) {
+              const { groupId: _removed, ...rest } = project;
+              return rest;
+            }
+            return { ...project, groupId };
+          }),
+        }));
       },
 
       removeProject: async (id) => {
@@ -578,6 +696,23 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => ({ projects: state.projects.filter((candidate) => candidate.id !== id) }));
         return true;
       },
+
+      setUsageModelPricing: (modelId, pricing) => {
+        const parsed = parseUsageModelPricing({ [modelId]: pricing });
+        const [id, next] = Object.entries(parsed)[0] ?? [];
+        if (!id || !next) return false;
+        set((state) => ({ usageModelPricing: { ...state.usageModelPricing, [id]: next } }));
+        return true;
+      },
+      removeUsageModelPricing: (modelId) => {
+        const id = modelId.trim();
+        if (!id) return;
+        set((state) => {
+          if (!(id in state.usageModelPricing)) return state;
+          const { [id]: _removed, ...rest } = state.usageModelPricing;
+          return { usageModelPricing: rest };
+        });
+      },
     }),
     {
       name: 'enso-settings',
@@ -590,6 +725,14 @@ export const useSettingsStore = create<SettingsState>()(
         const s = state ?? useSettingsStore.getState();
         applySettings(s);
         // 持久化数据可能被外部污染；非法值会让设置弹层渲染 undefined 图标而白屏
+        const windowsLocalShell = parseWindowsLocalShell(s.windowsLocalShell);
+        if (windowsLocalShell !== s.windowsLocalShell) {
+          useSettingsStore.setState({ windowsLocalShell });
+        }
+        const smartCompactMode = parseSmartCompactMode(s.smartCompactMode) ?? 'auto';
+        if (smartCompactMode !== s.smartCompactMode) {
+          useSettingsStore.setState({ smartCompactMode });
+        }
         const segments = normalizeStatusLineSegments(s.statusLineSegments);
         if (
           segments.length !== s.statusLineSegments?.length ||
@@ -618,21 +761,28 @@ export const useSettingsStore = create<SettingsState>()(
 );
 
 function applyProjectAuthorityProjection(projection: SourceAuthorityProjection): void {
+  const previousById = new Map(
+    useSettingsStore.getState().projects.map((project) => [project.id, project])
+  );
   const next = projection.projects
     .filter((project) => project.state === 'active')
-    .map((project) => ({
-      id: project.projectId,
-      name: project.canonicalPath.split('/').filter(Boolean).pop() ?? project.canonicalPath,
-      path: project.canonicalPath,
-      ...(project.kind === 'ssh'
-        ? {
-            kind: 'ssh' as const,
-            sshHost: project.sshHost,
-            sshConnectionId: project.sshConnectionId,
-            sshConnectionName: project.sshConnectionName,
-          }
-        : {}),
-    }));
+    .map((project) => {
+      const previous = previousById.get(project.projectId);
+      return {
+        id: project.projectId,
+        name: project.canonicalPath.split('/').filter(Boolean).pop() ?? project.canonicalPath,
+        path: project.canonicalPath,
+        ...(previous?.groupId ? { groupId: previous.groupId } : {}),
+        ...(project.kind === 'ssh'
+          ? {
+              kind: 'ssh' as const,
+              sshHost: project.sshHost,
+              sshConnectionId: project.sshConnectionId,
+              sshConnectionName: project.sshConnectionName,
+            }
+          : {}),
+      };
+    });
   // 投影未变时必须不写 state：persist 的每次 setState 都会落盘并广播 SETTINGS_CHANGED，
   // 而收到广播的窗口 rehydrate 后又会重投影。无条件写会让两个窗口互相广播成死循环
   // （单窗口不复现，因为广播 exclude-sender）。
@@ -654,7 +804,8 @@ function sameProjectProjection(
       project.kind === candidate.kind &&
       project.sshHost === candidate.sshHost &&
       project.sshConnectionId === candidate.sshConnectionId &&
-      project.sshConnectionName === candidate.sshConnectionName
+      project.sshConnectionName === candidate.sshConnectionName &&
+      project.groupId === candidate.groupId
     );
   });
 }

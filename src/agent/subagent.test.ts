@@ -15,7 +15,7 @@ function fakeSession(reply: string): AgentSession {
   return {
     messages: [{ role: 'assistant', content: [{ type: 'text', text: reply }] }],
     subscribe: () => () => {},
-    prompt: async () => {},
+    prompt: vi.fn(async () => {}),
     abort: async () => {},
     dispose: () => {},
   } as unknown as AgentSession;
@@ -96,7 +96,7 @@ describe('subagent tool model 参数', () => {
     const text = (result.content[0] as { text: string }).text;
     expect(text.startsWith('report body')).toBe(true);
     expect(text).toContain('read 1');
-    expect(text).toContain('bash 0');
+    expect(text).toContain('shell 0');
     expect(text).toContain('parent-model');
   });
 
@@ -134,6 +134,35 @@ describe('subagent tool model 参数', () => {
     expect(guidelines?.join('\n')).toMatch(/independent.*same message/i);
     expect(guidelines?.join('\n')).toMatch(/scout.*worker.*reviewer/s);
     expect(createSubagentTool(makeDeps()).promptGuidelines?.join('\n')).not.toMatch(/scout/);
+  });
+
+  it('存在必须自选的 agent_type 时，guidelines 提前要求带 model，避免漏填重试', () => {
+    const text =
+      createSubagentTool(
+        makeDeps({
+          agentTypes: [
+            {
+              name: 'scout',
+              description: 'recon',
+              systemPrompt: '',
+              tools: 'readonly',
+              allowModelOverride: true,
+            },
+          ],
+        })
+      ).promptGuidelines?.join('\n') ?? '';
+    expect(text).toMatch(/\[custom model required\]/);
+    expect(text).toMatch(/always pass model/i);
+    expect(text).toMatch(/OpenAI\/gpt-cheap/);
+    expect(
+      createSubagentTool(
+        makeDeps({
+          agentTypes: [
+            { name: 'scout', description: 'recon', systemPrompt: '', tools: 'readonly' },
+          ],
+        })
+      ).promptGuidelines?.join('\n')
+    ).not.toMatch(/always pass model/i);
   });
 
   it('类型选型按类型逐个拼接，关掉一个不影响其余', () => {
@@ -183,6 +212,31 @@ describe('subagent tool model 参数', () => {
         {} as never
       )
     ).rejects.toThrow(/does not allow custom model selection/i);
+  });
+
+  it('当 agent_type 设为必须自选（allowModelOverride === true）时，不填 model 拒绝继承', async () => {
+    const deps = makeDeps({
+      agentTypes: [
+        {
+          name: 'scout',
+          description: 'scout',
+          systemPrompt: '',
+          tools: 'readonly',
+          allowModelOverride: true,
+        },
+      ],
+    });
+    const tool = createSubagentTool(deps);
+    await expect(
+      tool.execute(
+        't1',
+        { description: 'x', prompt: 'do', agent_type: 'scout' },
+        undefined,
+        undefined,
+        {} as never
+      )
+    ).rejects.toThrow(/requires a model/i);
+    expect(deps.createSubSession).not.toHaveBeenCalled();
   });
 
   it('当 agent_type 设为必须自选（allowModelOverride === true）时，允许指定 model', async () => {
@@ -265,5 +319,48 @@ describe('subagent tool model 参数', () => {
         {} as never
       )
     ).rejects.toThrow(/xhigh/);
+  });
+});
+
+describe('subagent structured yield', () => {
+  const schema = {
+    type: 'object',
+    required: ['ok'],
+    properties: { ok: { type: 'boolean' } },
+  };
+
+  it('stores valid JSON and mentions the schema in the child prompt', async () => {
+    const session = fakeSession('{"ok":true}');
+    const storeYield = vi.fn();
+    const deps = makeDeps({ createSubSession: vi.fn(async () => session), storeYield });
+    const tool = createSubagentTool(deps);
+    await tool.execute(
+      't1',
+      { description: 'x', prompt: 'do', schema },
+      undefined,
+      undefined,
+      {} as never
+    );
+    expect(session.prompt).toHaveBeenCalledWith(expect.stringContaining('"ok"'));
+    expect(storeYield).toHaveBeenCalledWith(expect.stringMatching(/^agent-/), { ok: true });
+  });
+
+  it('nudges then fails if JSON never matches', async () => {
+    const session = {
+      ...fakeSession('nope'),
+      prompt: vi.fn(async () => {}),
+    } as unknown as AgentSession;
+    const deps = makeDeps({ createSubSession: vi.fn(async () => session) });
+    const tool = createSubagentTool(deps);
+    await expect(
+      tool.execute(
+        't1',
+        { description: 'x', prompt: 'do', schema },
+        undefined,
+        undefined,
+        {} as never
+      )
+    ).rejects.toThrow(/structured yield/);
+    expect(session.prompt).toHaveBeenCalledTimes(3);
   });
 });

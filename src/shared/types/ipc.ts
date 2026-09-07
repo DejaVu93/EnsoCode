@@ -5,6 +5,13 @@ export const IPC_CHANNELS = {
   SETTINGS_WRITE_KEY: 'settings:write-key',
   SETTINGS_CHANGED: 'settings:changed',
 
+  // Portable configuration sync
+  CONFIG_SYNC_EXPORT: 'config-sync:export',
+  CONFIG_SYNC_OPEN_IMPORT: 'config-sync:open-import',
+  CONFIG_SYNC_PREVIEW_IMPORT: 'config-sync:preview-import',
+  CONFIG_SYNC_COMMIT_IMPORT: 'config-sync:commit-import',
+  CONFIG_SYNC_CANCEL_IMPORT: 'config-sync:cancel-import',
+
   // Window controls
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
@@ -19,6 +26,8 @@ export const IPC_CHANNELS = {
   SETTINGS_DEEP_LINK: 'settings:deep-link',
   SETTINGS_DEEP_LINK_CONSUME: 'settings:deep-link-consume',
   WINDOW_POPUP_MENU: 'window:popup-menu',
+  APP_CLOSE_REQUEST: 'app:close-request',
+  APP_CLOSE_RESPONSE: 'app:close-response',
 
   // Local provider scan/import
   PROVIDERS_SCAN_LOCAL: 'providers:scan-local',
@@ -75,6 +84,8 @@ export const IPC_CHANNELS = {
   AGENT_SNAPSHOT: 'agent:snapshot',
   /** 已结束 child 的 safe journal 只读回放（路径由 Main 推导，请求只带 conversationId） */
   AGENT_CHILD_HISTORY_READ: 'agent:child-history-read',
+  /** 父会话 jsonl 尾窗只读（不 spawn）；路径由 Main 从已登记 sessionFile 推导 */
+  AGENT_PARENT_HISTORY_TAIL: 'agent:parent-history-tail',
   AGENT_SUMMARIZE_TITLE: 'agent:summarize-title',
   /** 已启动会话就地换模型；worker 换完回报，Main 据此更新已启动模型记录 */
   AGENT_SET_MODEL: 'agent:set-model',
@@ -149,10 +160,22 @@ export const IPC_CHANNELS = {
   FILES_LIST_MEDIA: 'files:list-media',
   FILES_LIST_DIR: 'files:list-dir',
   FILES_READ_REL: 'files:read-rel',
+  /** Markdown 预览相对图片：返回 data URL，不开放任意文件读取 */
+  FILES_READ_IMAGE: 'files:read-image',
+  /** Markdown 预览远程图片：主进程带 SSRF 防护代理读取，返回 data URL */
+  FILES_FETCH_REMOTE_IMAGE: 'files:fetch-remote-image',
   FILES_WRITE: 'files:write',
   FILES_WATCH_START: 'files:watch-start',
   FILES_WATCH_STOP: 'files:watch-stop',
   FILES_WATCH_EVENT: 'files:watch-event',
+  FILES_MKDIR: 'files:mkdir',
+  FILES_CREATE: 'files:create-file',
+  FILES_RENAME: 'files:rename',
+  FILES_REMOVE: 'files:remove',
+  FILES_ABS: 'files:abs-path',
+  FILES_COPY_PATH: 'files:copy-path',
+  FILES_COPY_FILE: 'files:copy-file',
+  FILES_REVEAL: 'files:reveal',
 
   GIT_DIFF_HEAD: 'git:diff-head',
 
@@ -213,6 +236,7 @@ export const IPC_CHANNELS = {
   PAIR_START: 'pair:start',
   PAIR_CANCEL: 'pair:cancel',
   PAIR_REVOKE: 'pair:revoke',
+  PAIR_RENAME: 'pair:rename',
   PAIR_STATUS: 'pair:status',
   PAIR_SET_RELAY: 'pair:set-relay',
   PAIR_CATALOG: 'pair:catalog',

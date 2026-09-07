@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  activeConversationIds,
   archivedConversationGroups,
   archivedConversationIds,
   pinnedConversationIds,
@@ -236,5 +237,80 @@ describe('pinnedConversationIds', () => {
   it('手动序里已取消置顶/已归档的不回流', () => {
     // withArchived 里 b 归档了:手动序含 b 也不应出现
     expect(pinnedConversationIds(order, withArchived, ['b', 'c'])).toEqual(['c', 'e']);
+  });
+});
+
+describe('activeConversationIds', () => {
+  const live = {
+    run: {
+      ...conv('p1', 1, 40),
+      status: 'running',
+      spawning: false,
+    },
+    wait: {
+      ...conv('p1', 2, 30),
+      status: 'idle',
+      spawning: false,
+      pendingAsks: [{ requestId: 'a1' }],
+    },
+    fail: {
+      ...conv('p2', 3, 50),
+      status: 'failed',
+      spawning: false,
+    },
+    idle: {
+      ...conv('p1', 4, 80),
+      status: 'idle',
+      spawning: false,
+      unread: true,
+    },
+    spawn: {
+      ...conv('p1', 5, 20),
+      status: 'idle',
+      spawning: true,
+    },
+    childParent: {
+      ...conv('p1', 6, 10),
+      status: 'idle',
+      spawning: false,
+      coworkerIds: ['kid'],
+    },
+    kid: {
+      ...conv('p1', 7, 9),
+      status: 'running',
+      spawning: false,
+    },
+    archivedFail: {
+      ...conv('p1', 8, 90),
+      status: 'failed',
+      spawning: false,
+      archived: true,
+    },
+  };
+  const liveOrder = ['run', 'wait', 'fail', 'idle', 'spawn', 'childParent', 'archivedFail'];
+
+  it('只收蓝绿红活跃态(含未读绿点),按最后活跃时间倒序', () => {
+    expect(activeConversationIds(liveOrder, live)).toEqual([
+      'idle',
+      'fail',
+      'run',
+      'wait',
+      'spawn',
+      'childParent',
+    ]);
+  });
+
+  it('归档会话与归档项目不进活跃栏', () => {
+    expect(activeConversationIds(liveOrder, live, ['p2'])).toEqual([
+      'idle',
+      'run',
+      'wait',
+      'spawn',
+      'childParent',
+    ]);
+  });
+
+  it('order 之外的 coworker 不进栏', () => {
+    expect(activeConversationIds(liveOrder, live)).not.toContain('kid');
   });
 });

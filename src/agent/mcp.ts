@@ -13,6 +13,11 @@ import type {
   OAuthClientMetadata,
   OAuthTokens,
 } from '@modelcontextprotocol/sdk/shared/auth.js';
+import {
+  DEFAULT_MCP_CALL_TIMEOUT_MS,
+  DEFAULT_MCP_CONNECT_TIMEOUT_MS,
+  mcpTimeoutMsOrDefault,
+} from '@shared/mcpTimeout';
 import type {
   McpConnectionState,
   McpOAuthTokens,
@@ -20,11 +25,6 @@ import type {
   McpWorkerEvent,
 } from '@shared/types/agent';
 import { parseMcpOAuthTokens } from '@shared/types/agent';
-
-/** 连接与 listTools 的整体超时；慢/坏 server 不能卡住 spawn */
-const CONNECT_TIMEOUT_MS = 10_000;
-/** 单次工具调用超时 */
-const CALL_TIMEOUT_MS = 120_000;
 
 interface Connection {
   client: Client;
@@ -124,6 +124,37 @@ const isUnauthorized = (error: unknown): boolean =>
   error instanceof InteractiveAuthRequiredError ||
   /\b401\b|unauthorized/i.test(errorMessage(error));
 
+const RETRIABLE_CONNECTION_PATTERNS = [
+  'not connected',
+  'transport not connected',
+  'transport closed',
+  'econnrefused',
+  'econnreset',
+  'epipe',
+  'enetunreach',
+  'ehostunreach',
+  'fetch failed',
+  'network error',
+];
+
+/** 死连接 / 过期 session：值得清缓存并重试一次。业务错误和 401 不走这条。 */
+export function isRetriableMcpConnectionError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  if (/^http (404|502|503):/.test(message)) return true;
+  return RETRIABLE_CONNECTION_PATTERNS.some((pattern) => message.includes(pattern));
+}
+
+const connectionKey = (server: McpServerSpawnConfig): string =>
+  JSON.stringify([
+    server.id,
+    server.transport,
+    server.command,
+    server.args,
+    server.env,
+    server.url,
+  ]);
+
 /** token 指纹：token 明文不入内存索引，只用 hash 前缀判断「Main 是否换了下发的 token」 */
 export const oauthFingerprint = (tokens: McpOAuthTokens | undefined): string =>
   tokens?.access_token
@@ -131,6 +162,38 @@ export const oauthFingerprint = (tokens: McpOAuthTokens | undefined): string =>
     : '';
 
 const slug = (name: string): string => name.replace(/[^\w-]+/g, '-').replace(/^-+|-+$/g, '');
+
+function mapToolResult(
+  result: unknown,
+  name: string
+): {
+  content: Array<
+    { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }
+  >;
+  details: undefined;
+} {
+  const payload =
+    result && typeof result === 'object'
+      ? (result as { content?: unknown; isError?: boolean })
+      : {};
+  const content = (Array.isArray(payload.content) ? payload.content : []).map(
+    (part: { type: string; text?: string; data?: string; mimeType?: string }) => {
+      if (part.type === 'text') return { type: 'text' as const, text: part.text ?? '' };
+      if (part.type === 'image' && part.data && part.mimeType) {
+        return { type: 'image' as const, data: part.data, mimeType: part.mimeType };
+      }
+      return { type: 'text' as const, text: JSON.stringify(part) };
+    }
+  );
+  if (payload.isError) {
+    const text = content.map((part) => (part.type === 'text' ? part.text : '[image]')).join('\n');
+    throw new Error(text || `MCP tool ${name} failed`);
+  }
+  return {
+    content: content.length > 0 ? content : [{ type: 'text' as const, text: '' }],
+    details: undefined,
+  };
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -152,10 +215,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * MCP 连接管理：worker 级共享，按配置签名缓存（同配置只建一条连接，多会话复用）。
  * 连接保活到 worker 退出（closeAll）；不做引用计数，泄漏面由 worker 生命周期兜底。
  */
+const MCP_FAIL_TTL_MS = 15_000;
+
 export class McpManager {
   private readonly connections = new Map<string, Promise<Connection | null>>();
   /** 每条连接最近一次被下发的 token 指纹，用来区分「换了凭据」与「回传了旧凭据」 */
   private readonly dispatched = new Map<string, string>();
+  /** 同 server 并发 stale 调用合并成一次重连 */
+  private readonly reconnecting = new Map<string, Promise<Connection | null>>();
+  /** 失败短时负缓存：同凭据在 TTL 内不再打连接 */
+  private readonly failedUntil = new Map<string, { until: number; fingerprint: string }>();
 
   constructor(private readonly options: McpManagerOptions = { emit: () => {} }) {}
 
@@ -179,14 +248,11 @@ export class McpManager {
   }
 
   private connectionFor(server: McpServerSpawnConfig): Promise<Connection | null> {
-    const key = JSON.stringify([
-      server.id,
-      server.transport,
-      server.command,
-      server.args,
-      server.env,
-      server.url,
-    ]);
+    const key = connectionKey(server);
+    const fingerprint = oauthFingerprint(server.oauth);
+    const failed = this.failedUntil.get(key);
+    if (failed && failed.fingerprint !== fingerprint) this.failedUntil.delete(key);
+    else if (failed && Date.now() < failed.until) return Promise.resolve(null);
     let pending = this.connections.get(key);
     if (pending) pending = this.applyDispatchedTokens(key, server, pending);
     if (!pending) {
@@ -195,14 +261,41 @@ export class McpManager {
         this.emitStatus(server, isUnauthorized(error) ? 'unauthorized' : 'error', {
           error: errorMessage(error),
         });
-        // 失败结果不缓存：下次 spawn 重试
         this.connections.delete(key);
+        this.failedUntil.set(key, { until: Date.now() + MCP_FAIL_TTL_MS, fingerprint });
         return null;
       });
       this.connections.set(key, pending);
     }
-    this.dispatched.set(key, oauthFingerprint(server.oauth));
+    this.dispatched.set(key, fingerprint);
     return pending;
+  }
+
+  private reconnect(server: McpServerSpawnConfig, stale: Client): Promise<Connection | null> {
+    const key = connectionKey(server);
+    const pending = this.reconnecting.get(key);
+    if (pending) return pending;
+    const attempt = this.doReconnect(key, server, stale).finally(() => {
+      this.reconnecting.delete(key);
+    });
+    this.reconnecting.set(key, attempt);
+    return attempt;
+  }
+
+  private async doReconnect(
+    key: string,
+    server: McpServerSpawnConfig,
+    stale: Client
+  ): Promise<Connection | null> {
+    const current = this.connections.get(key);
+    if (current) {
+      const resolved = await current;
+      if (resolved && resolved.client !== stale) return resolved;
+    }
+    this.connections.delete(key);
+    this.dispatched.delete(key);
+    await stale.close().catch(() => {});
+    return this.connectionFor(server);
   }
 
   /**
@@ -220,9 +313,11 @@ export class McpManager {
     if (previous === undefined || previous === fingerprint) return pending;
     if (!server.oauth) {
       this.connections.delete(key);
+      this.failedUntil.delete(key);
       void pending.then((connection) => connection?.client.close().catch(() => {}));
       return undefined;
     }
+    this.failedUntil.delete(key);
     const tokens = server.oauth;
     void pending.then((connection) => connection?.provider?.updateTokens(tokens));
     return pending;
@@ -250,15 +345,20 @@ export class McpManager {
         ? undefined
         : new WorkerOAuthProvider(server, (event) => this.options.emit(event));
     let tools: Awaited<ReturnType<Client['listTools']>>['tools'];
+    const connectTimeoutMs = mcpTimeoutMsOrDefault(
+      server.connectTimeoutMs,
+      DEFAULT_MCP_CONNECT_TIMEOUT_MS
+    );
+    const callTimeoutMs = mcpTimeoutMsOrDefault(server.callTimeoutMs, DEFAULT_MCP_CALL_TIMEOUT_MS);
     try {
       await withTimeout(
         client.connect(this.createTransport(server, provider)),
-        CONNECT_TIMEOUT_MS,
+        connectTimeoutMs,
         `connect ${server.name}`
       );
       ({ tools } = await withTimeout(
         client.listTools(),
-        CONNECT_TIMEOUT_MS,
+        connectTimeoutMs,
         `listTools ${server.name}`
       ));
     } catch (error) {
@@ -270,7 +370,7 @@ export class McpManager {
     return {
       client,
       provider,
-      tools: tools.map((tool) => this.toToolDefinition(client, server.name, tool)),
+      tools: tools.map((tool) => this.toToolDefinition(client, server, tool, callTimeoutMs)),
     };
   }
 
@@ -302,45 +402,37 @@ export class McpManager {
 
   private toToolDefinition(
     client: Client,
-    serverName: string,
-    tool: { name: string; description?: string; inputSchema: unknown }
+    server: McpServerSpawnConfig,
+    tool: { name: string; description?: string; inputSchema: unknown },
+    callTimeoutMs: number
   ): ToolDefinition {
-    const name = `mcp__${slug(serverName)}__${tool.name}`;
+    const name = `mcp__${slug(server.name)}__${tool.name}`;
+    let active = client;
+    const invoke = (target: Client, params: unknown) =>
+      withTimeout(
+        target.callTool({
+          name: tool.name,
+          arguments: (params ?? {}) as Record<string, unknown>,
+        }),
+        callTimeoutMs,
+        `callTool ${name}`
+      );
     return {
       name,
-      label: `${serverName}: ${tool.name}`,
-      description: tool.description ?? `MCP tool ${tool.name} from ${serverName}`,
+      label: `${server.name}: ${tool.name}`,
+      description: tool.description ?? `MCP tool ${tool.name} from ${server.name}`,
       // MCP inputSchema 是标准 JSON Schema，TypeBox 的 TSchema 结构同源，直接透传
       parameters: tool.inputSchema as ToolDefinition['parameters'],
-      async execute(_toolCallId, params) {
-        const result = await withTimeout(
-          client.callTool({
-            name: tool.name,
-            arguments: (params ?? {}) as Record<string, unknown>,
-          }),
-          CALL_TIMEOUT_MS,
-          `callTool ${name}`
-        );
-        const content = (Array.isArray(result.content) ? result.content : []).map(
-          (part: { type: string; text?: string; data?: string; mimeType?: string }) => {
-            if (part.type === 'text') return { type: 'text' as const, text: part.text ?? '' };
-            if (part.type === 'image' && part.data && part.mimeType) {
-              return { type: 'image' as const, data: part.data, mimeType: part.mimeType };
-            }
-            // resource/audio 等其它类型收敛为 JSON 文本
-            return { type: 'text' as const, text: JSON.stringify(part) };
-          }
-        );
-        if (result.isError) {
-          const text = content
-            .map((part) => (part.type === 'text' ? part.text : '[image]'))
-            .join('\n');
-          throw new Error(text || `MCP tool ${name} failed`);
+      execute: async (_toolCallId, params) => {
+        try {
+          return mapToolResult(await invoke(active, params), name);
+        } catch (error) {
+          if (!isRetriableMcpConnectionError(error)) throw error;
+          const next = await this.reconnect(server, active);
+          if (!next) throw error;
+          active = next.client;
+          return mapToolResult(await invoke(active, params), name);
         }
-        return {
-          content: content.length > 0 ? content : [{ type: 'text' as const, text: '' }],
-          details: undefined,
-        };
       },
     };
   }

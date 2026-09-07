@@ -2,6 +2,7 @@ import {
   type CatalogEntry,
   type PairedDevice,
   type ProjectEntry,
+  type ProjectGroupEntry,
   type ProviderEntry,
   revokePairing,
 } from '@enso/pair';
@@ -88,6 +89,7 @@ export function App() {
   /** 桌面置顶组的手动拖拽顺序（旧桌面不下发，空 = 按活跃倒序） */
   const [pinnedOrder, setPinnedOrder] = useState<string[]>([]);
   const [projects, setProjects] = useState<ProjectEntry[]>([]);
+  const [projectGroups, setProjectGroups] = useState<ProjectGroupEntry[]>([]);
   const [providers, setProviders] = useState<ProviderEntry[]>([]);
   const [activeId, setActiveId] = useState<string | null>(() => {
     const initial = pickActive(loadDevices(), loadActiveDeviceId());
@@ -145,7 +147,10 @@ export function App() {
         setCatalog(entries);
         setPinnedOrder(order ?? []);
       },
-      onProjects: setProjects,
+      onProjects: (next, groups) => {
+        setProjects(next);
+        setProjectGroups(groups ?? []);
+      },
       onProviders: setProviders,
       onSession: (id, next) => {
         setView((prev) => (id === activeIdRef.current ? next : prev));
@@ -273,6 +278,7 @@ export function App() {
   const resetHostState = (nextActiveId: string | null) => {
     setCatalog([]);
     setProjects([]);
+    setProjectGroups([]);
     setProviders([]);
     setView(null);
     setSyncing(false);
@@ -422,6 +428,7 @@ export function App() {
       <SessionDrawer
         open={drawerOpen}
         projects={projects}
+        groups={projectGroups}
         catalog={catalog}
         pinnedOrder={pinnedOrder}
         activeId={activeId}

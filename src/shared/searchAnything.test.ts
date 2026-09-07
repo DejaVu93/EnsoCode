@@ -193,8 +193,10 @@ describe('searchSettingsEntries', () => {
 describe('buildSettingsCatalog', () => {
   const staticIds = [
     'general.language',
+    'general.windowsLocalShell',
     'general.openChangesOnFileEdit',
     'general.compactReadOnlyTools',
+    'general.smartCompactEnabled',
     'general.generationStallTimeout',
     'general.proxy',
     'general.updates',
@@ -204,6 +206,7 @@ describe('buildSettingsCatalog', () => {
     'presets.root',
     'agents.root',
     'tools.root',
+    'tools.bashInterceptEnabled',
     'skills.root',
     'mcp.root',
     'instructions.root',

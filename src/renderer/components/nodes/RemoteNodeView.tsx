@@ -51,6 +51,7 @@ export function RemoteNodeView({ nodeId, sidebarWidth }: RemoteNodeViewProps) {
         catalog={view.catalog}
         pinnedOrder={view.pinnedOrder}
         projects={view.projects}
+        groups={view.groups}
         activeId={activeId}
         canCreate={node.hostOnline && view.projects.length > 0}
         onSelect={(id) => selectSession(nodeId, id)}

@@ -28,3 +28,50 @@ Reviewed six branch commits, simplified provider identity and child thinking par
 ### Status
 
 [OK] **Completed**
+
+
+## Session 2: 补齐 Gemini 3.8 模型目录与用量价格
+
+**Date**: 2026-09-04
+**Task**: 补齐 Gemini 3.8 模型目录与用量价格
+**Branch**: `fix/model-catalog-google-38`
+
+### Summary
+
+补充 Antigravity Gemini 3.8 逻辑模型与档位路由；按 Google 官方时段补齐目录估价并保持上游优先；零 Token 导入记录不再触发缺价警告。类型检查、全量测试和隔离 CDP 验证通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5b853ea` | (see git log) |
+| `e0fdfba` | (see git log) |
+| `c2624b3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 3: Portable configuration coverage
+
+**Date**: 2026-09-06
+**Task**: Portable configuration coverage
+**Branch**: `feat/config-sync-upstream-audit`
+
+### Summary
+
+Completed latest persisted-setting coverage, secure merge/replace and independent review. 2241 tests passed, typecheck/lint/build passed; isolated Electron UI and IPC round trips verified. PR #57.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a429d69` | (see git log) |
+| `7a199bd` | (see git log) |
+| `2ed1539` | (see git log) |
+| `bd6d1df` | (see git log) |
+
+### Status
+
+[OK] **Completed**

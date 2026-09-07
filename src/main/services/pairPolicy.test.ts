@@ -293,6 +293,26 @@ describe('snapshot 裁剪（批事件，本身无 sessionId）', () => {
     expect(session.messages.at(-1)).toEqual({ role: 'user', text: 'm199' });
   });
 
+  it('去掉 commands，手机不用斜杠命令列表', () => {
+    const out = narrowSnapshot(
+      {
+        type: 'snapshot',
+        sessions: [
+          {
+            sessionId: 'a',
+            messages: [{ text: 'hi' }],
+            commands: [{ name: '/x', description: 'd' }],
+          },
+        ],
+      },
+      'a'
+    );
+    const session = out?.sessions[0] as { messages: unknown[]; commands?: unknown };
+    expect(session).toBeDefined();
+    expect(session).not.toHaveProperty('commands');
+    expect(session.messages).toEqual([{ text: 'hi' }]);
+  });
+
   it('短对话不裁剪，baseIndex 为 0', () => {
     const messages = [{ text: 'a' }, { text: 'b' }];
     const out = narrowSnapshot({ type: 'snapshot', sessions: [{ sessionId: 'a', messages }] }, 'a');
@@ -307,6 +327,16 @@ describe('snapshot 裁剪（批事件，本身无 sessionId）', () => {
     const out = narrowSnapshot({ type: 'snapshot', sessions: [{ sessionId: 'a', messages }] }, 'a');
     const session = out?.sessions[0] as { messages: unknown[]; baseIndex?: number };
     // 600KB 预算下 300KB 的消息最多装 2 条
+    expect(session.messages.length).toBeLessThanOrEqual(2);
+    expect(session.baseIndex).toBe(10 - session.messages.length);
+  });
+
+  it('字节预算按 UTF-8 计，中文不能按字符数低估', () => {
+    // 每条 100k 个汉字 = 300KB UTF-8；按字符数会误装 6 条（1.8MB）撑爆中继 1MB 上限
+    const zh = '中'.repeat(100_000);
+    const messages = Array.from({ length: 10 }, () => ({ text: zh }));
+    const out = narrowSnapshot({ type: 'snapshot', sessions: [{ sessionId: 'a', messages }] }, 'a');
+    const session = out?.sessions[0] as { messages: unknown[]; baseIndex?: number };
     expect(session.messages.length).toBeLessThanOrEqual(2);
     expect(session.baseIndex).toBe(10 - session.messages.length);
   });

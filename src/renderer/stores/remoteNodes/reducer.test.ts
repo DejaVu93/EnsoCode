@@ -36,6 +36,13 @@ describe('目录类帧', () => {
       projects: [{ id: 'p1', name: 'p', path: '/p' }],
     }).view;
     expect(v.projects).toHaveLength(1);
+    expect(v.groups).toEqual([]);
+    v = applyNodeMessage(emptyNodeView(), {
+      type: 'projects',
+      projects: [{ id: 'p1', name: 'p', path: '/p', groupId: 'g1' }],
+      groups: [{ id: 'g1', name: 'Work', order: 0 }],
+    }).view;
+    expect(v.groups).toEqual([{ id: 'g1', name: 'Work', order: 0 }]);
     v = applyNodeMessage(v, {
       type: 'providers',
       providers: [{ id: 'pr', name: 'PR', models: [{ id: 'm' }] }],

@@ -1,5 +1,6 @@
 import { isValidProxyUrl, type ProxyMode } from '@shared/proxy';
 import type { UpdateStatus } from '@shared/types/updater';
+import type { WindowsLocalShell } from '@shared/windowsLocalShell';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,8 @@ import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
 import { GENERATION_STALL_TIMEOUT_MINUTES } from '@/stores/sessions/stallTimeout';
 import { useSettingsStore } from '@/stores/settings';
+import { ConfigSyncSettings } from './ConfigSyncSettings';
+import { SmartCompactPicker } from './SmartCompactPicker';
 
 export function GeneralSettings() {
   const { language, setLanguage } = useSettingsStore();
@@ -26,10 +29,7 @@ export function GeneralSettings() {
         <p className="text-sm text-muted-foreground">{t('General application settings')}</p>
       </div>
 
-      <div
-        className="grid grid-cols-[140px_1fr] items-center gap-4"
-        data-settings-row="general.language"
-      >
+      <div className="flex items-center gap-3" data-settings-row="general.language">
         <span className="text-sm font-medium">{t('Language')}</span>
         <Select
           items={{ en: 'English', zh: '简体中文' }}
@@ -47,7 +47,10 @@ export function GeneralSettings() {
       </div>
 
       <SidePanelSection />
+      <SmartCompactPicker />
+      <WindowsLocalShellSection />
       <ProxySection />
+      <ConfigSyncSettings />
       <UpdateSection />
     </div>
   );
@@ -115,6 +118,48 @@ function SidePanelSection() {
           </SelectPopup>
         </Select>
       </div>
+    </div>
+  );
+}
+
+function WindowsLocalShellSection() {
+  const { t } = useI18n();
+  const windowsLocalShell = useSettingsStore((s) => s.windowsLocalShell);
+  const setWindowsLocalShell = useSettingsStore((s) => s.setWindowsLocalShell);
+  const labels: Record<WindowsLocalShell, string> = {
+    auto: t('Windows default (PowerShell)'),
+    powershell: t('PowerShell'),
+    bash: t('Git Bash'),
+  };
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+      data-settings-row="general.windowsLocalShell"
+    >
+      <div className="min-w-0">
+        <p className="text-sm">{t('Windows local command shell')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'Only the Windows local agent command tool. SSH and other platforms stay on bash. Takes effect on the next session.'
+          )}
+        </p>
+      </div>
+      <Select
+        items={labels}
+        value={windowsLocalShell}
+        onValueChange={(value) => setWindowsLocalShell(value as WindowsLocalShell)}
+      >
+        <SelectTrigger className="w-56">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectPopup>
+          {(Object.keys(labels) as WindowsLocalShell[]).map((value) => (
+            <SelectItem key={value} value={value}>
+              {labels[value]}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
     </div>
   );
 }
@@ -187,7 +232,7 @@ function ProxySection() {
           {t('Used by model requests, the built-in browser, and agent tools')}
         </p>
       </div>
-      <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+      <div className="flex items-center gap-3">
         <span className="text-sm font-medium">{t('Proxy mode')}</span>
         <Select
           items={{
@@ -209,7 +254,7 @@ function ProxySection() {
         </Select>
       </div>
       {proxyMode === 'custom' && (
-        <div className="grid grid-cols-[140px_1fr] items-start gap-4">
+        <div className="flex items-start gap-3">
           <span className="pt-1.5 text-sm font-medium">{t('Proxy URL')}</span>
           <div className="min-w-0 space-y-1">
             <Input

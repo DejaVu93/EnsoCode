@@ -9,6 +9,7 @@ import {
   type PairedDevice,
   type PhoneToHost,
   type ProjectEntry,
+  type ProjectGroupEntry,
   type ProviderEntry,
   sealFrame,
   toWebSocketUrl,
@@ -46,7 +47,7 @@ export type SessionView = GuestSessionView;
 export interface ClientEvents {
   onState(state: ConnState): void;
   onCatalog(entries: CatalogEntry[], pinnedOrder?: string[]): void;
-  onProjects(projects: ProjectEntry[]): void;
+  onProjects(projects: ProjectEntry[], groups?: ProjectGroupEntry[]): void;
   onProviders(providers: ProviderEntry[]): void;
   onSession(sessionId: string, view: SessionView): void;
   /** 桌面下发 VAPID 公钥：有它才能 pushManager.subscribe */
@@ -206,7 +207,7 @@ export class PairClient {
         break;
       }
       case 'projects':
-        this.events.onProjects(payload.projects);
+        this.events.onProjects(payload.projects, payload.groups);
         break;
       case 'providers':
         this.events.onProviders(payload.providers);

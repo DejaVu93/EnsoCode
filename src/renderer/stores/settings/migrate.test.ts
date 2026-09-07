@@ -49,6 +49,8 @@ describe('设置持久化迁移', () => {
       defaultModel: null,
       titleSummaryEnabled: false,
       titleSummaryModel: null,
+      approvalReviewer: null,
+      lastApprovalMode: null,
     });
   });
 
@@ -79,7 +81,48 @@ describe('设置持久化迁移', () => {
       ...v2,
       titleSummaryEnabled: false,
       titleSummaryModel: null,
+      approvalReviewer: null,
+      lastApprovalMode: null,
     });
+  });
+
+  it('v3 → v4 新增助手代审模型缺省未选', () => {
+    const v3 = {
+      theme: 'dark',
+      titleSummaryEnabled: false,
+      titleSummaryModel: null,
+    };
+    expect(migrateSettings(v3, 3)).toEqual({
+      ...v3,
+      approvalReviewer: null,
+      lastApprovalMode: null,
+    });
+  });
+
+  it('v4 → v5 补 lastApprovalMode 缺省未选，不冒充用户上次档', () => {
+    const v4 = { theme: 'dark', approvalReviewer: { providerId: 'p', modelId: 'm' } };
+    expect(migrateSettings(v4, 4)).toEqual({
+      ...v4,
+      lastApprovalMode: null,
+    });
+  });
+
+  it.each([5, 6])('v%s 移除记忆配置，保留模型、审批与其它设置且不修改输入', (version) => {
+    const preserved = {
+      theme: 'dark',
+      providers: [legacyProvider],
+      lastApprovalMode: 'full',
+      customFutureKey: { kept: true },
+    };
+    const previous = {
+      ...preserved,
+      localMemoryEnabled: true,
+      memoryModel: { providerId: 'p', modelId: 'm' },
+      memoryConcurrency: 4,
+    };
+    expect(SETTINGS_VERSION).toBeGreaterThan(6);
+    expect(migrateSettings(previous, version)).toEqual(preserved);
+    expect(previous.localMemoryEnabled).toBe(true);
   });
 
   it('v0 数据一路迁到当前版本，标题总结字段同样补齐', () => {
@@ -88,6 +131,8 @@ describe('设置持久化迁移', () => {
       defaultModel: null,
       titleSummaryEnabled: false,
       titleSummaryModel: null,
+      approvalReviewer: null,
+      lastApprovalMode: null,
     });
   });
 
@@ -104,6 +149,8 @@ describe('设置持久化迁移', () => {
       defaultModel: null,
       titleSummaryEnabled: false,
       titleSummaryModel: null,
+      approvalReviewer: null,
+      lastApprovalMode: null,
     });
   });
 

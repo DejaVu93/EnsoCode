@@ -10,7 +10,7 @@ export interface AttachedImage {
   mimeType: string;
 }
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-export type ApprovalMode = 'supervised' | 'auto-edits' | 'full';
+export type ApprovalMode = 'supervised' | 'auto-edits' | 'full' | 'assistant';
 export type ApprovalDecision = 'allow' | 'allowSession' | 'deny';
 
 // ── 中继明文控制帧（中继可见，不加密）──────────────────────────────────
@@ -140,6 +140,17 @@ export interface ProjectEntry {
   sshHost?: string;
   /** 桌面侧栏已归档该项目：其全部会话归到手机归档栏，会话自身 archived 标记不动 */
   archived?: true;
+  /** 所属项目组；缺省或未知 id = 未分组 */
+  groupId?: string;
+}
+
+/** 桌面扁平项目组，随 projects 帧下发 */
+export interface ProjectGroupEntry {
+  id: string;
+  name: string;
+  emoji?: string;
+  color?: string;
+  order: number;
 }
 /** provider 剥密后下发，只够手机做 provider/model 选择 */
 export interface ProviderEntry {
@@ -192,7 +203,7 @@ export type HostToPhone =
       /** 桌面置顶组的手动拖拽顺序；缺省（旧桌面）时手机按活跃倒序 */
       pinnedOrder?: string[];
     }
-  | { type: 'projects'; projects: ProjectEntry[] }
+  | { type: 'projects'; projects: ProjectEntry[]; groups?: ProjectGroupEntry[] }
   | { type: 'providers'; providers: ProviderEntry[] }
   | {
       type: 'appearance';

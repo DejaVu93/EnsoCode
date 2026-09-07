@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { type Conversation, useSessionsStore } from '@/stores/sessions';
+import { selectSidebarConversations } from '@/stores/sessions/sidebarDirectory';
 import { useSettingsStore } from '@/stores/settings';
 
 /**
@@ -38,7 +39,9 @@ export function CoworkerTabs({
   trailing?: React.ReactNode;
 }) {
   const { t } = useI18n();
-  const conversations = useSessionsStore((state) => state.conversations);
+  const conversations = useSessionsStore((state) =>
+    selectSidebarConversations(state.conversations)
+  );
   const [hiring, setHiring] = React.useState(false);
   const coworkers = (parent.coworkerIds ?? [])
     .map((id) => conversations[id])
@@ -46,7 +49,7 @@ export function CoworkerTabs({
 
   const tabClass = (active: boolean) =>
     cn(
-      'flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+      'flex min-w-0 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
       active ? 'bg-muted font-medium' : 'text-muted-foreground hover:bg-muted/50'
     );
 

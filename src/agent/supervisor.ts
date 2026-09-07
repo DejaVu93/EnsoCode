@@ -1,11 +1,10 @@
 import { execFile } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
   type AgentSession,
   createAgentSession,
-  createBashToolDefinition,
   createFindToolDefinition,
   createGrepToolDefinition,
   createLsToolDefinition,
@@ -13,6 +12,7 @@ import {
   createWriteToolDefinition,
   DefaultResourceLoader,
   estimateTokens,
+  type InlineExtension,
   ModelRuntime,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
@@ -30,6 +30,7 @@ import {
 import { ensureAccountProvider } from '@shared/piAccounts';
 import { resolvePiProviderBaseUrl } from '@shared/providerCatalog';
 import { ANTIGRAVITY_PROVIDER_ID, antigravityProviderConfig } from '@shared/providers/antigravity';
+import type { SmartCompactMode } from '@shared/smartCompactMode';
 import { buildSshShellCommand, shellQuote } from '@shared/ssh';
 import type {
   AgentCommand,
@@ -55,8 +56,16 @@ import type {
 } from '@shared/types/agent';
 import { parseAgentSessionCustomEntry } from '@shared/types/agent';
 import { providerIdOfAccountKey } from '@shared/types/oauthProviders';
+import type { WindowsLocalShell } from '@shared/windowsLocalShell';
 import { version } from '../../package.json';
 import { ApprovalGate, withApproval } from './approval';
+import {
+  APPROVAL_REVIEW_TIMEOUT_MS,
+  buildApprovalReviewSystemPrompt,
+  buildApprovalReviewUserPrompt,
+  computeApprovalActionHash,
+  normalizeReviewDecision,
+} from './approvalReview';
 import { AskManager, createAskTool } from './ask';
 import { ensureAssistantUsage } from './assistantUsage';
 import {
@@ -65,6 +74,7 @@ import {
   withBackground,
   withTaskReminders,
 } from './backgroundTasks';
+import { withBashInterception } from './bashInterceptor';
 import { CheckpointManager, withCheckpoint } from './checkpoint/manager';
 import { createRemoteCheckpointHost } from './checkpoint/remoteHost';
 import {
@@ -77,26 +87,36 @@ import {
   type OccupancyBranchEntry,
   type OccupancySkill,
 } from './contextOccupancy';
+import {
+  type AnchorMessage,
+  type ContextUsageTracker,
+  ContextUsageTracker as UsageTracker,
+} from './contextUsage';
 import { createCoworkerTool } from './coworker';
 import { CURSOR_PROVIDER_ID, loadCursorProvider } from './cursor/loadProvider';
 import { attachCursorBridgeToSession, isCursorModel } from './cursor/sessionBridge';
-import { createLenientEditTool } from './editTool';
+import { createNormalizedEditTool } from './editTool';
 import { ENSO_SYSTEM_PROMPT } from './ensoPrompt';
 import { EnsoSafeJournal } from './ensoSafeJournal';
+import { createExploreFoldState, createExploreFoldTools } from './exploreFold';
 import { OperationGate } from './gate';
 import { createGoalTools } from './goal';
 import { readHarnessRuleFiles, resolveHarnessSkillRoots } from './harnessAssets';
 import { McpManager } from './mcp';
+import { createMessageCoworkerTool } from './messageCoworker';
 import { createMessageMainTool } from './messageMain';
 import { ParentNotifier } from './notify';
 import { projectMessage } from './projection';
 import { applyWorkerProxyEnv } from './proxyEnv';
+import { projectMessages, projectResumeTail } from './resumeSnapshots';
 import {
   EVICTION_SWEEP_INTERVAL_MS,
   type EvictionCandidate,
   selectEvictable,
 } from './sessionEviction';
 import { branchSessionFromPersistedFile, resolveForkLeafId } from './sessionFork';
+import { createSessionCommandTool } from './sessionShell';
+import { providerKeyFor, smartCompactInlineExtension } from './smartCompact';
 import {
   createSshExecutor,
   resolveSshControlPath,
@@ -105,8 +125,21 @@ import {
 } from './ssh/executor';
 import { createRemoteGrepToolDefinition } from './ssh/remoteGrep';
 import { createRemoteOperations } from './ssh/remoteOperations';
+import {
+  appendYieldJson,
+  parseJsonFromAssistant,
+  validateAgainstSchema,
+  withAgentRead,
+} from './structuredYield';
 import { createSubagentTool, lastAssistantText } from './subagent';
-import { buildTitleUserText, extractTitle, TITLE_SYSTEM_PROMPT } from './titleSummary';
+import {
+  buildRollingTitleUserText,
+  buildTitleUserText,
+  buildTurnDigest,
+  extractTitle,
+  ROLLING_TITLE_SYSTEM_PROMPT,
+  TITLE_SYSTEM_PROMPT,
+} from './titleSummary';
 import { createTodoTool } from './todo';
 import { BrowserInvoker, createBrowserTools, withNavigateApproval } from './tools/browser';
 import { createEnsoAppTool, EnsoAppInvoker } from './tools/ensoApp';
@@ -163,6 +196,8 @@ interface ManagedSession {
   proofToolIds: string[];
   safeJournal?: EnsoSafeJournal;
   currentTurnId?: string;
+  /** 上一轮结束时 messages.length：本轮消息从这里开始，供 agent_end 切本轮摘要 */
+  turnStartIndex: number;
   promptedRequestIds: Set<string>;
   ensoApp?: EnsoAppInvoker;
   browser?: BrowserInvoker;
@@ -199,8 +234,10 @@ interface ManagedSession {
   roundPending?: boolean;
   checkpoints?: CheckpointManager;
   coworkers: Map<string, CoworkerInfo>;
+  pendingYieldSchema?: unknown;
   /** 最近一次收到命令或产生事件；闲置回收的计时起点 */
   lastActivityAt: number;
+  contextUsage: ContextUsageTracker;
   unsubscribe: () => void;
 }
 
@@ -216,7 +253,7 @@ export interface SupervisorOptions {
 function sessionAgentsFilesOverride(
   agentDir: string,
   instruction?: { path: string; content: string },
-  harnessRuleFiles: Array<{ path: string; content: string }> = []
+  extraFiles: Array<{ path: string; content: string }> = []
 ) {
   const resolvedAgentDir = path.resolve(agentDir);
   return (current: { agentsFiles: Array<{ path: string; content: string }> }) => ({
@@ -225,7 +262,7 @@ function sessionAgentsFilesOverride(
       ...current.agentsFiles.filter(
         (file) => path.resolve(path.dirname(file.path)) !== resolvedAgentDir
       ),
-      ...harnessRuleFiles,
+      ...extraFiles,
     ],
   });
 }
@@ -242,6 +279,11 @@ function createSessionResourceLoader(options: {
   remoteAgentsFiles?: Array<{ path: string; content: string }>;
   /** 加载项目内 .claude/.codex/.cursor 的 skills 与规则文件；远程会话不适用（cwd 不在本机） */
   loadHarnessAssets?: boolean;
+  exploreFold?: ReturnType<typeof createExploreFoldState>;
+  /** 仅父会话：加载 Enso compact hook 作为 compact 摘要后端 */
+  smartCompactEnabled?: boolean;
+  smartCompactSummaryModel?: SpawnModelConfig;
+  smartCompactMode?: SmartCompactMode;
 }): DefaultResourceLoader {
   const harness = options.loadHarnessAssets && !options.remoteAgentsFiles;
   const skillPaths = harness
@@ -253,6 +295,35 @@ function createSessionResourceLoader(options: {
     noSkills: options.noSkills,
     ...(options.noExtensions ? { noExtensions: true } : {}),
     ...(skillPaths.length > 0 ? { additionalSkillPaths: skillPaths } : {}),
+    ...(!options.noExtensions && (options.exploreFold || options.smartCompactEnabled)
+      ? {
+          extensionFactories: [
+            ...(options.exploreFold
+              ? [
+                  {
+                    name: 'explore-fold',
+                    hidden: true,
+                    factory: (pi) => {
+                      pi.on('context', (event) => ({
+                        messages: options.exploreFold!.apply(
+                          event.messages as never
+                        ) as typeof event.messages,
+                      }));
+                    },
+                  } satisfies InlineExtension,
+                ]
+              : []),
+            ...(options.smartCompactEnabled
+              ? [
+                  smartCompactInlineExtension({
+                    summaryModel: options.smartCompactSummaryModel,
+                    mode: options.smartCompactMode,
+                  }),
+                ]
+              : []),
+          ],
+        }
+      : {}),
     agentsFilesOverride: options.remoteAgentsFiles
       ? () => ({
           agentsFiles: [
@@ -260,11 +331,9 @@ function createSessionResourceLoader(options: {
             ...(options.remoteAgentsFiles ?? []),
           ],
         })
-      : sessionAgentsFilesOverride(
-          options.agentDir,
-          options.instruction,
-          harness ? readHarnessRuleFiles(options.cwd) : []
-        ),
+      : sessionAgentsFilesOverride(options.agentDir, options.instruction, [
+          ...(harness ? readHarnessRuleFiles(options.cwd) : []),
+        ]),
   });
 }
 
@@ -367,6 +436,7 @@ export class SessionSupervisor {
   /** 不可回收的会话（桌面正在查看 / 手机订阅），由 Main 全量下发 */
   private pinned: ReadonlySet<string> = new Set();
   private readonly evictionTimer: ReturnType<typeof setInterval>;
+  private approvalReviewer: SpawnModelConfig | undefined;
   /** 父会话通知(合并投递):闲则注入合成提示唤醒,忙则挂 pending 搭下次工具结果 */
   private readonly notifier = new ParentNotifier((sessionId, text) => {
     this.deliverNotification(sessionId, text);
@@ -551,6 +621,10 @@ export class SessionSupervisor {
       applyWorkerProxyEnv(command.env);
       return;
     }
+    if (command.type === 'set-approval-reviewer') {
+      this.approvalReviewer = command.model;
+      return;
+    }
     const identity =
       command.type === 'capability-result'
         ? command.child
@@ -626,12 +700,19 @@ export class SessionSupervisor {
           command.skillPaths,
           command.mcpServers,
           command.approvalMode,
+          command.approvalReviewer,
           command.agentTypes,
           command.disabledTools,
           command.instruction,
           command.subagentModels,
           command.remote,
-          command.loadHarnessAssets
+          command.loadHarnessAssets,
+          command.windowsLocalShell,
+          command.exploreFoldEnabled,
+          command.bashInterceptEnabled,
+          command.smartCompactEnabled,
+          command.smartCompactSummaryModel,
+          command.smartCompactMode
         );
         return;
       case 'spawn-child':
@@ -812,6 +893,9 @@ export class SessionSupervisor {
         return;
       case 'set-approval-mode':
         this.must(command.identity).gate.mode = command.mode;
+        return;
+      case 'set-approval-reviewer':
+        this.approvalReviewer = command.model;
         return;
       case 'ask-respond':
         this.must(command.identity).asks.respond(command.requestId, command.answer);
@@ -997,12 +1081,19 @@ export class SessionSupervisor {
     skillPaths: string[] = [],
     mcpServers: McpServerSpawnConfig[] = [],
     approvalMode: ApprovalMode = 'full',
+    approvalReviewer?: SpawnModelConfig,
     agentTypes: AgentTypeSpawnConfig[] = [],
     disabledTools: string[] = [],
     instruction?: { path: string; content: string },
     subagentModels: SubagentModelOption[] = [],
     remote?: AgentRemoteConfig,
-    loadHarnessAssets = false
+    loadHarnessAssets = false,
+    windowsLocalShell?: WindowsLocalShell,
+    exploreFoldEnabled = false,
+    bashInterceptEnabled = false,
+    smartCompactEnabled = false,
+    smartCompactSummaryModel?: SpawnModelConfig,
+    smartCompactMode?: SmartCompactMode
   ): Promise<void> {
     const sessionId = identity.sessionId;
     const toolEnabled = (id: string) => !disabledTools.includes(id);
@@ -1047,6 +1138,10 @@ export class SessionSupervisor {
           )
           .catch(() => [] as Array<{ path: string; content: string }>)
       : undefined;
+    const exploreFold = exploreFoldEnabled ? createExploreFoldState() : undefined;
+    if (smartCompactSummaryModel) {
+      await resolveBaseModelOrRefresh(runtime, smartCompactSummaryModel);
+    }
     const resourceLoader = createSessionResourceLoader({
       cwd,
       agentDir: this.options.agentDir,
@@ -1055,6 +1150,14 @@ export class SessionSupervisor {
       instruction,
       remoteAgentsFiles,
       loadHarnessAssets,
+      exploreFold,
+      ...(smartCompactEnabled
+        ? {
+            smartCompactEnabled: true,
+            smartCompactSummaryModel,
+            smartCompactMode,
+          }
+        : {}),
     });
     const toolsStart = Date.now();
     const [, mcpTools] = await Promise.all([
@@ -1062,6 +1165,7 @@ export class SessionSupervisor {
       mcpServers.length > 0 ? this.mcp.toolsFor(mcpServers, 3000) : Promise.resolve([]),
     ]);
     const toolsMs = Date.now() - toolsStart;
+    if (approvalReviewer) this.approvalReviewer = approvalReviewer;
 
     let managedRef: ManagedSession | undefined;
     const gate = new ApprovalGate(
@@ -1085,6 +1189,9 @@ export class SessionSupervisor {
             requestId,
           });
         }
+      },
+      {
+        review: (info, signal) => this.reviewApproval(info, signal),
       }
     );
     const checkpoints = new CheckpointManager(
@@ -1108,16 +1215,20 @@ export class SessionSupervisor {
     const takePendingReminders = () => managedRef?.pendingTaskReminders.splice(0) ?? [];
     // 只读探索四件套(read/grep/find/ls,免审):readonly 子代理的全部工具,也是 base 的底座。
     // 远程会话经 operations 注入落到 ssh(grep 无注入点,换整个定义)
+    const structuredById = new Map<string, unknown>();
+    const wrapRead = (definition: Def): Def => withAgentRead(definition, () => structuredById);
     const readOnlyTools = (): Def[] =>
       remoteOps && sshExecutor
         ? [
-            createReadToolDefinition(cwd, { operations: remoteOps.read }) as unknown as Def,
+            wrapRead(
+              createReadToolDefinition(cwd, { operations: remoteOps.read }) as unknown as Def
+            ),
             createRemoteGrepToolDefinition(cwd, sshExecutor) as unknown as Def,
             createFindToolDefinition(cwd, { operations: remoteOps.find }) as unknown as Def,
             createLsToolDefinition(cwd, { operations: remoteOps.ls }) as unknown as Def,
           ]
         : [
-            createReadToolDefinition(cwd) as unknown as Def,
+            wrapRead(createReadToolDefinition(cwd) as unknown as Def),
             createGrepToolDefinition(cwd) as unknown as Def,
             createFindToolDefinition(cwd) as unknown as Def,
             createLsToolDefinition(cwd) as unknown as Def,
@@ -1147,6 +1258,8 @@ export class SessionSupervisor {
           return { command: sshCommand, cwd: process.cwd() };
         }
       : undefined;
+    const maybeInterceptBash = (definition: Def): Def =>
+      bashInterceptEnabled ? withBashInterception(definition) : definition;
     const buildBaseTools = (
       toolGate: ApprovalGate,
       cp?: CheckpointManager,
@@ -1163,10 +1276,14 @@ export class SessionSupervisor {
           'command',
           guarded(
             withBackground(
-              createBashToolDefinition(
-                cwd,
-                remoteOps ? { operations: remoteOps.bash } : undefined
-              ) as unknown as Def,
+              maybeInterceptBash(
+                createSessionCommandTool({
+                  cwd,
+                  remote: Boolean(remoteOps),
+                  preference: windowsLocalShell,
+                  operations: remoteOps?.bash,
+                }) as unknown as Def
+              ),
               this.bgTasks,
               sessionId,
               cwd,
@@ -1176,7 +1293,7 @@ export class SessionSupervisor {
         ),
         scoped(
           'file-edit',
-          createLenientEditTool(cwd, remoteOps ? { operations: remoteOps.edit } : undefined)
+          createNormalizedEditTool(cwd, remoteOps ? { operations: remoteOps.edit } : undefined)
         ),
         scoped(
           'file-write',
@@ -1306,7 +1423,7 @@ export class SessionSupervisor {
             ? SessionManager.open(childResume, this.options.sessionDir, cwd)
             : SessionManager.create(cwd, this.options.sessionDir);
         if (safeJournal && childResume) {
-          for (const record of EnsoSafeJournal.restore(childResume).records) {
+          for (const record of (await EnsoSafeJournal.restore(childResume)).records) {
             if (record.type === 'safe-user-text') {
               sessionManager.appendMessage({
                 role: 'user',
@@ -1357,6 +1474,9 @@ export class SessionSupervisor {
         ).session,
       runGate: (gateCommand) => runGateCommand(cwd, gateCommand, sshExecutor),
       notify: (text, urgent) => this.notifier.notify(sessionId, text, { urgent }),
+      storeYield: (id, value) => {
+        structuredById.set(id, value);
+      },
       emitUpdate: (agent) => {
         const managed = managedRef ?? this.sessions.get(sessionId);
         if (!managed) return;
@@ -1399,6 +1519,12 @@ export class SessionSupervisor {
       },
       send: (name, message, opts) =>
         withCoworker(name, (info) => this.coworkerSend(info.id, message, opts)),
+      message: (from, to, text) =>
+        withCoworker(from, () => {
+          const target = this.mustCoworker(identity, to);
+          this.notifier.notify(target.id, `Message from coworker "${from}":\n${text}`);
+          return `(delivered to coworker "${to}" — async; any reply arrives later, continue your own work)`;
+        }),
       list: () => {
         const parent = this.must(identity);
         return [...parent.coworkers.values()].map((info) => ({
@@ -1445,6 +1571,7 @@ export class SessionSupervisor {
       ...(toolEnabled('ask_user') ? [createAskTool(askManager)] : []),
       ...(toolEnabled('subagent') ? [taskTool] : []),
       ...(toolEnabled('coworker') ? [coworkerTool] : []),
+      ...(exploreFold ? createExploreFoldTools(exploreFold) : []),
       ...(toolEnabled('background_tasks') ? createTaskTools(this.bgTasks) : []),
       ...(toolEnabled('goal')
         ? createGoalTools((kind, note) => {
@@ -1559,6 +1686,7 @@ export class SessionSupervisor {
       status: 'idle',
       seq: 0,
       messages: [],
+      turnStartIndex: 0,
       customEntries,
       commands: collectSlashCommands(session),
       modelId,
@@ -1578,6 +1706,7 @@ export class SessionSupervisor {
       subagents: new Map(),
       coworkers: new Map(),
       lastActivityAt: Date.now(),
+      contextUsage: new UsageTracker(),
       ...(opts.factory ? { factory: opts.factory } : {}),
       ...(opts.parentId ? { parentId: opts.parentId } : {}),
       ...(opts.coworkerName ? { coworkerName: opts.coworkerName } : {}),
@@ -1588,6 +1717,38 @@ export class SessionSupervisor {
       this.onSessionEvent(managed, event);
     });
     this.sessions.set(identity.sessionId, managed);
+    if (opts.resumeFile) {
+      const raw = this.transcript(managed);
+      const { immediate, deferFull } = projectResumeTail(raw);
+      const emitResumeSnapshot = (payload: { messages: ProjectedMessage[]; baseIndex: number }) => {
+        this.options.emit({
+          type: 'snapshot',
+          partial: true,
+          sessions: [
+            {
+              identity,
+              status: managed.status,
+              messages: payload.messages,
+              ...(payload.baseIndex > 0 ? { baseIndex: payload.baseIndex } : {}),
+              commands: managed.commands,
+              ...(managed.childMetadata ? { child: managed.childMetadata } : {}),
+              ...(managed.customEntries.length > 0 ? { customEntries: managed.customEntries } : {}),
+            },
+          ],
+        });
+      };
+      managed.messages = immediate.messages;
+      emitResumeSnapshot(immediate);
+      if (deferFull) {
+        queueMicrotask(() => {
+          if (this.sessions.get(identity.sessionId) !== managed) return;
+          const full = { messages: projectMessages(raw), baseIndex: 0 };
+          managed.messages = full.messages;
+          emitResumeSnapshot(full);
+        });
+      }
+      managed.turnStartIndex = managed.messages.length;
+    }
     this.emitStatus(managed);
     this.options.emit({
       type: 'commands',
@@ -1595,25 +1756,12 @@ export class SessionSupervisor {
       seq: ++managed.seq,
       commands: managed.commands,
     });
-    this.emitSessionMeta(managed);
     if (opts.resumeFile) {
-      managed.messages = this.transcript(managed)
-        .map(projectMessage)
-        .filter((message): message is ProjectedMessage => message !== null);
-      this.options.emit({
-        type: 'snapshot',
-        partial: true,
-        sessions: [
-          {
-            identity,
-            status: managed.status,
-            messages: managed.messages,
-            commands: managed.commands,
-            ...(managed.childMetadata ? { child: managed.childMetadata } : {}),
-            ...(managed.customEntries.length > 0 ? { customEntries: managed.customEntries } : {}),
-          },
-        ],
+      queueMicrotask(() => {
+        if (this.sessions.get(identity.sessionId) === managed) this.emitSessionMeta(managed);
       });
+    } else {
+      this.emitSessionMeta(managed);
     }
     return managed;
   }
@@ -1709,6 +1857,7 @@ export class SessionSupervisor {
                 (text, urgent) => this.notifier.notify(identity.parent.sessionId, text, { urgent }),
                 identity.instanceName
               ),
+              this.createPeerMessageTool(identity.parent.sessionId, identity.instanceName),
             ],
           }),
     });
@@ -1836,6 +1985,7 @@ export class SessionSupervisor {
           name,
           () => this.sessions.get(coworkerId)?.parentWaiting === true
         ),
+        this.createPeerMessageTool(parentId, name),
       ],
     });
     const info: CoworkerInfo = {
@@ -1920,9 +2070,10 @@ export class SessionSupervisor {
   private async coworkerSend(
     coworkerId: string,
     text: string,
-    opts: { signal?: AbortSignal; wait?: boolean; gate?: string } = {}
+    opts: { signal?: AbortSignal; wait?: boolean; gate?: string; schema?: unknown } = {}
   ): Promise<string> {
     const managed = this.mustCurrent(coworkerId);
+    if (opts.schema) managed.pendingYieldSchema = opts.schema;
     const { signal } = opts;
     // 先登记等待再启动,防终态竞态;终态由 settleRound 统一判定(含重试耗尽/abort/销毁)
     const done = this.waitRoundEnd(managed, signal);
@@ -2018,6 +2169,21 @@ export class SessionSupervisor {
     return `${await this.coworkerRoundSummary(managed, opts.gate)}\n\n${COWORKER_FOLLOW_UP_HINT}`;
   }
 
+  private createPeerMessageTool(parentId: string, from: string) {
+    return createMessageCoworkerTool({
+      from,
+      peers: () => {
+        const parent = this.sessions.get(parentId);
+        if (!parent) return [];
+        return [...parent.coworkers.keys()].filter((name) => name !== from);
+      },
+      notify: (to, text) => {
+        const target = this.sessions.get(parentId)?.coworkers.get(to);
+        if (target) this.notifier.notify(target.id, text);
+      },
+    });
+  }
+
   private mustCoworker(identity: SessionIdentity, name: string): CoworkerInfo {
     const parent = this.must(identity);
     const info = parent.coworkers.get(name);
@@ -2083,7 +2249,9 @@ export class SessionSupervisor {
         managed.currentTurnId ??= randomUUID();
         managed.status = 'running';
         managed.checkpoints?.resetTurn();
+        this.armPendingContextUsage(managed);
         this.emitStatus(managed);
+        this.emitSessionMeta(managed);
         return;
       case 'message_start': {
         const index = managed.messages.length;
@@ -2128,6 +2296,7 @@ export class SessionSupervisor {
         const index = managed.messages.length - 1;
         const timing = managed.timings[index];
         if (timing) timing.completedMs = Date.now();
+        this.stampContextSnapshot(managed, event.message);
         const projected = projectMessage(event.message);
         this.replaceLastMessage(managed, projected);
         if (projected?.role === 'assistant') {
@@ -2140,6 +2309,7 @@ export class SessionSupervisor {
             .join('\\n');
           if (text) managed.safeJournal?.appendAssistantText(text);
         }
+        this.emitSessionMeta(managed);
         return;
       }
       case 'auto_retry_start':
@@ -2210,6 +2380,7 @@ export class SessionSupervisor {
       case 'compaction_end':
         // 自动压缩在 agent_end 之后异步完成：context 视图换了形，重新按完整记录对齐（历史不丢，summary 行入列）
         this.reconcileMessages(managed, this.transcript(managed));
+        this.rebaseContextUsage(managed);
         managed.compaction = undefined;
         // 锚点必须在对齐之后取：否则摘要消息未入列，与 guest 事件口径 maxIndex+1 差 1
         if (!event.errorMessage) managed.compactionNoticeAt = managed.messages.length;
@@ -2255,12 +2426,17 @@ export class SessionSupervisor {
         managed.currentTurnId = undefined;
         managed.status = 'idle';
         this.emitStatus(managed);
+        managed.contextUsage.setPendingSnapshot(undefined);
         this.emitSessionMeta(managed);
+        // 本轮摘要随 turn-completed 下发：renderer 冷会话没有正文，只能由 worker 切
+        const digest = buildTurnDigest(managed.messages, managed.turnStartIndex);
+        managed.turnStartIndex = managed.messages.length;
         this.options.emit({
           type: 'turn-completed',
           identity: managed.identity,
           seq: ++managed.seq,
           turnId,
+          ...(digest ? { digest } : {}),
         });
         if (managed.pendingCompact) {
           const queued = managed.pendingCompact;
@@ -2308,6 +2484,8 @@ export class SessionSupervisor {
     const lastUser = [...managed.messages].reverse().find((message) => message.role === 'user');
     const text = lastUser?.content.find((part) => part.type === 'text')?.text;
     if (!text) return false;
+    // 重发同一请求：本轮摘要从重发点起算，避免失败的首次尝试重复计入
+    managed.turnStartIndex = managed.messages.length;
     void managed.session.prompt(text).catch((error) => {
       this.failTurn(managed, toErrorMessage(error));
     });
@@ -2414,7 +2592,10 @@ export class SessionSupervisor {
   private failTurn(managed: ManagedSession, error: string, undelivered = false): void {
     const turnId = managed.currentTurnId ?? randomUUID();
     managed.currentTurnId = undefined;
+    managed.contextUsage.setPendingSnapshot(undefined);
     managed.status = 'failed';
+    // 失败轮不总结，但下一轮的起点仍要往前推，否则失败轮的消息会混进下一轮摘要
+    managed.turnStartIndex = managed.messages.length;
     this.emitStatus(managed, error);
     this.options.emit({
       type: 'turn-failed',
@@ -2446,7 +2627,17 @@ export class SessionSupervisor {
     const ran =
       managed.status === 'failed' ||
       (managed.session.messages as { role?: string }[]).some((m) => m.role === 'assistant');
-    if (managed.coworkerName && ran) managed.lastRoundSummary = this.roundBaseSummary(managed);
+    if (managed.coworkerName && ran) {
+      managed.lastRoundSummary = this.roundBaseSummary(managed);
+      const schema = managed.pendingYieldSchema;
+      managed.pendingYieldSchema = undefined;
+      if (schema && typeof schema === 'object') {
+        const parsed = parseJsonFromAssistant(lastAssistantText(managed.session));
+        if (parsed !== undefined && validateAgainstSchema(parsed, schema).ok) {
+          managed.lastRoundSummary = appendYieldJson(managed.lastRoundSummary, parsed);
+        }
+      }
+    }
     managed.roundPending = false;
     const waiters = [...managed.roundWaiters];
     managed.roundWaiters.clear();
@@ -2469,10 +2660,14 @@ export class SessionSupervisor {
   /** 执行一次手动压缩。进度/收束由 pi 的 compaction_start / compaction_end 事件推给渲染层；
    *  这里只兵底 compact() 直接抛错（未走到 compaction_end）的情况，否则 UI 会卡在「压缩中」。 */
   private async runCompaction(managed: ManagedSession, instructions?: string): Promise<void> {
+    // 先标 running：compact() 同步抛错时 compaction 仍是 undefined，catch 才能区分「没走过 end」
+    managed.compaction = 'running';
     try {
       await managed.session.compact(instructions);
     } catch (error) {
       console.error('[compact] failed:', toErrorMessage(error));
+      // compaction_end 已把进度清掉并上报过：再 emit 会叠两条「压缩失败」toast
+      if (managed.compaction === undefined) return;
       // 未走到 compaction_end：不清的话快照会让手机永远卡在「压缩中」
       managed.compaction = undefined;
       this.options.emit({
@@ -2485,11 +2680,165 @@ export class SessionSupervisor {
     }
   }
 
+  private estimateSessionMessage(message: unknown): number {
+    try {
+      return estimateTokens(message as never);
+    } catch {
+      return 0;
+    }
+  }
+
+  private occupancyInputs(managed: ManagedSession) {
+    const loader = managed.session.resourceLoader as {
+      getAgentsFiles?: () => { agentsFiles?: ReadonlyArray<{ path: string; content: string }> };
+      getSkills?: () => { skills?: OccupancySkill[] };
+    };
+    const sessionManager = managed.session.sessionManager as {
+      buildSessionContext?: () => { messages?: unknown[] };
+      getBranch?: () => OccupancyBranchEntry[];
+    };
+    return {
+      systemPrompt: managed.session.systemPrompt ?? '',
+      agentsFiles: loader.getAgentsFiles?.().agentsFiles ?? [],
+      skills: loader.getSkills?.().skills ?? [],
+      tools: typeof managed.session.getAllTools === 'function' ? managed.session.getAllTools() : [],
+      contextMessages: sessionManager.buildSessionContext?.().messages ?? [],
+      branch: sessionManager.getBranch?.() ?? [],
+      pendingTaskReminders: managed.pendingTaskReminders,
+    };
+  }
+
+  private currentNonMessageTokens(managed: ManagedSession): {
+    current: number;
+    category: number;
+    compactionIndex: number;
+  } {
+    const occupancy = occupancyFromManaged(managed, undefined, (message) =>
+      this.estimateSessionMessage(message)
+    );
+    const buckets = occupancy.buckets;
+    const category =
+      buckets.system +
+      buckets.instructions +
+      buckets.skills +
+      buckets.tools +
+      buckets.projectMemory +
+      buckets.reminders;
+    const compactionIndex = occupancy.compactionEntryId
+      ? this.occupancyInputs(managed).branch.findIndex(
+          (entry) => entry.id === occupancy.compactionEntryId
+        )
+      : -1;
+    return { current: category + buckets.compaction, category, compactionIndex };
+  }
+
+  private toAnchorMessages(
+    messages: readonly unknown[],
+    tracker?: ContextUsageTracker
+  ): AnchorMessage[] {
+    return messages.map((raw) => {
+      const record = (raw ?? {}) as Record<string, unknown>;
+      const usageRaw = record.usage;
+      const usage =
+        usageRaw && typeof usageRaw === 'object'
+          ? {
+              input: Number((usageRaw as { input?: number }).input ?? 0),
+              output: Number((usageRaw as { output?: number }).output ?? 0),
+              cacheRead: Number((usageRaw as { cacheRead?: number }).cacheRead ?? 0),
+              cacheWrite: Number((usageRaw as { cacheWrite?: number }).cacheWrite ?? 0),
+              ...((usageRaw as { contextTokens?: number }).contextTokens !== undefined
+                ? { contextTokens: Number((usageRaw as { contextTokens?: number }).contextTokens) }
+                : {}),
+              ...((usageRaw as { totalTokens?: number }).totalTokens !== undefined
+                ? { totalTokens: Number((usageRaw as { totalTokens?: number }).totalTokens) }
+                : {}),
+            }
+          : undefined;
+      const timestamp = typeof record.timestamp === 'number' ? record.timestamp : undefined;
+      const message: AnchorMessage = {
+        role: typeof record.role === 'string' ? record.role : '',
+        ...(typeof record.stopReason === 'string' ? { stopReason: record.stopReason } : {}),
+        ...(usage ? { usage } : {}),
+        ...(timestamp !== undefined ? { timestamp } : {}),
+      };
+      const snapshot = tracker?.snapshotFor(message);
+      if (snapshot) message.contextSnapshot = snapshot;
+      return message;
+    });
+  }
+
+  private armPendingContextUsage(managed: ManagedSession): void {
+    const nonMessage = this.currentNonMessageTokens(managed);
+    const contextMessages = this.occupancyInputs(managed).contextMessages;
+    const estimate = (message: unknown) => this.estimateSessionMessage(message);
+    const breakdown = managed.contextUsage.getBreakdown({
+      activeMessages: this.toAnchorMessages(contextMessages, managed.contextUsage),
+      compactionIndex: nonMessage.compactionIndex,
+      currentNonMessageTokens: nonMessage.current,
+      categoryNonMessageTokens: nonMessage.category,
+      estimateMessageTokens: estimate,
+    });
+    managed.contextUsage.setPendingSnapshot({
+      promptTokens: breakdown.usedTokens,
+      nonMessageTokens: nonMessage.current,
+      cutoffCount: contextMessages.length,
+    });
+  }
+
+  private rebaseContextUsage(managed: ManagedSession): void {
+    const nonMessage = this.currentNonMessageTokens(managed);
+    const contextMessages = this.occupancyInputs(managed).contextMessages;
+    const estimate = (message: unknown) => this.estimateSessionMessage(message);
+    const used =
+      nonMessage.current +
+      contextMessages.reduce((sum: number, message) => sum + Math.max(0, estimate(message)), 0);
+    managed.contextUsage.rebaseAfterCompaction({
+      promptTokens: used,
+      nonMessageTokens: nonMessage.current,
+      cutoffCount: contextMessages.length,
+    });
+  }
+
+  private stampContextSnapshot(managed: ManagedSession, raw: unknown): void {
+    const [anchor] = this.toAnchorMessages([raw]);
+    if (!anchor) return;
+    const nonMessage = this.currentNonMessageTokens(managed);
+    managed.contextUsage.stampSettledAnchor(anchor, nonMessage.current);
+  }
+
   private emitSessionMeta(managed: ManagedSession): void {
     const contextWindow = positiveContextWindow(managed.session.model);
     let occupancy: ReturnType<typeof collectContextOccupancy> | undefined;
     try {
-      occupancy = occupancyFromManaged(managed, contextWindow);
+      const baseline = occupancyFromManaged(managed, contextWindow, (message) =>
+        this.estimateSessionMessage(message)
+      );
+      occupancy = baseline;
+      const nonMessage = this.currentNonMessageTokens(managed);
+      const inputs = this.occupancyInputs(managed);
+      const breakdown = managed.contextUsage.getBreakdown({
+        contextWindow,
+        activeMessages: this.toAnchorMessages(inputs.contextMessages, managed.contextUsage),
+        compactionIndex: nonMessage.compactionIndex,
+        currentNonMessageTokens: nonMessage.current,
+        categoryNonMessageTokens: nonMessage.category,
+        estimateMessageTokens: (message) => this.estimateSessionMessage(message),
+      });
+      occupancy = {
+        ...baseline,
+        used: breakdown.usedTokens,
+        estimated: !breakdown.anchored,
+        buckets: {
+          ...baseline.buckets,
+          conversation: Math.max(
+            0,
+            breakdown.usedTokens - (baseline.used - baseline.buckets.conversation)
+          ),
+        },
+        ...(contextWindow !== undefined
+          ? { percent: Math.min(100, Math.round((breakdown.usedTokens / contextWindow) * 100)) }
+          : {}),
+      };
     } catch {
       occupancy = undefined;
     }
@@ -2559,6 +2908,79 @@ export class SessionSupervisor {
     return this.runtimePromise;
   }
 
+  private async reviewApproval(
+    info: import('@shared/types/agent').ApprovalRequestInfo,
+    signal: AbortSignal | undefined
+  ): Promise<{ decision: 'auto_allow' | 'ask_user' | 'block'; rationale?: string }> {
+    const reviewer = this.approvalReviewer;
+    if (!reviewer) {
+      return { decision: 'ask_user', rationale: 'No approval reviewer model is configured.' };
+    }
+    const actionHash = computeApprovalActionHash({
+      version: 1,
+      kind: 'enso_tool_permission_review',
+      tool: info.tool,
+      approvalKind: info.kind,
+      summary: info.summary,
+    });
+    const runtime = await this.getRuntime();
+    const model = await resolveBaseModelOrRefresh(runtime, reviewer);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), APPROVAL_REVIEW_TIMEOUT_MS);
+    const onParentAbort = () => controller.abort();
+    signal?.addEventListener('abort', onParentAbort, { once: true });
+    try {
+      if (signal?.aborted) {
+        const error = new Error('Aborted');
+        error.name = 'AbortError';
+        throw error;
+      }
+      const recentMessages =
+        [...this.sessions.values()]
+          .find((session) =>
+            session.gate.snapshot().some((item) => item.requestId === info.requestId)
+          )
+          ?.messages.slice(-8)
+          .map((message) => ({
+            role: message.role,
+            content: message.content
+              .map((part) => (part.type === 'text' ? part.text : ''))
+              .join('\n'),
+          })) ?? [];
+      const message = await runtime.completeSimple(
+        model,
+        {
+          systemPrompt: buildApprovalReviewSystemPrompt(),
+          messages: [
+            {
+              role: 'user',
+              content: buildApprovalReviewUserPrompt({
+                actionHash,
+                tool: info.tool,
+                kind: info.kind,
+                summary: info.summary,
+                recentMessages,
+              }),
+              timestamp: Date.now(),
+            },
+          ],
+        },
+        { signal: controller.signal }
+      );
+      const raw = Array.isArray((message as { content?: unknown }).content)
+        ? ((message as { content: Array<{ type?: string; text?: string }> }).content ?? [])
+            .map((part) => (part.type === 'text' ? (part.text ?? '') : ''))
+            .join('')
+        : '';
+      return normalizeReviewDecision(raw, actionHash);
+    } catch {
+      return { decision: 'ask_user', rationale: 'Auto-review failed.' };
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', onParentAbort);
+    }
+  }
+
   /** 会话标题总结：一次性补全，不建 AgentSession、不落盘；成功才回事件，失败静默 */
   private async summarizeTitle(
     command: Extract<AgentCommand, { type: 'summarize-title' }>
@@ -2568,14 +2990,18 @@ export class SessionSupervisor {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TITLE_SUMMARY_TIMEOUT_MS);
     try {
+      const rolling = command.input.kind === 'rolling';
       const message = await runtime.completeSimple(
         model,
         {
-          systemPrompt: TITLE_SYSTEM_PROMPT,
+          systemPrompt: rolling ? ROLLING_TITLE_SYSTEM_PROMPT : TITLE_SYSTEM_PROMPT,
           messages: [
             {
               role: 'user',
-              content: buildTitleUserText(command.text),
+              content:
+                command.input.kind === 'rolling'
+                  ? buildRollingTitleUserText(command.input)
+                  : buildTitleUserText(command.input.text),
               timestamp: Date.now(),
             },
           ],
@@ -2669,13 +3095,6 @@ const slugify = (value: string): string =>
 const toErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-/** provider 注册 id：掺 apiKey 指纹——同一中转 baseUrl 下多个 provider 条目(不同 key)
- *  不能共用注册槽,否则后 spawn 会话覆盖 apiKey 导致请求串账号 */
-function providerKeyFor(model: { api: string; baseUrl: string; apiKey: string }): string {
-  const keyFp = createHash('sha256').update(model.apiKey).digest('hex').slice(0, 8);
-  return `enso-${model.api}-${model.baseUrl}-${keyFp}`;
-}
-
 /**
  * worker 的 ModelRuntime 按进程常驻，订阅清单只在首次建 runtime 时联网拉一次。之后用户
  * 才登录 / 后端上新（如 `gemini-3.8-flash-tiered` 这种不在兜底表里的 wire id），Main 侧
@@ -2757,7 +3176,8 @@ export function supportsAdaptiveThinking(modelId: string): boolean {
 
 function occupancyFromManaged(
   managed: ManagedSession,
-  contextWindow: number | undefined
+  contextWindow: number | undefined,
+  estimateMessageTokens?: (message: unknown) => number
 ): ReturnType<typeof collectContextOccupancy> {
   const loader = managed.session.resourceLoader as {
     getAgentsFiles?: () => { agentsFiles?: ReadonlyArray<{ path: string; content: string }> };
@@ -2779,13 +3199,15 @@ function occupancyFromManaged(
     compactionModelFamily: compactionModelFamilyOf(branch),
     contextWindow,
     pendingTaskReminders: managed.pendingTaskReminders,
-    estimateMessageTokens: (message) => {
-      try {
-        return estimateTokens(message as never);
-      } catch {
-        return 0;
-      }
-    },
+    estimateMessageTokens:
+      estimateMessageTokens ??
+      ((message) => {
+        try {
+          return estimateTokens(message as never);
+        } catch {
+          return 0;
+        }
+      }),
   });
 }
 

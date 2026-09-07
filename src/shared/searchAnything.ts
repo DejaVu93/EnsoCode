@@ -120,6 +120,12 @@ export function searchSettingsEntries(
 const STATIC_CATALOG: SettingsSearchEntry[] = [
   { id: 'general.language', category: 'general', title: 'Language' },
   {
+    id: 'general.windowsLocalShell',
+    category: 'general',
+    title: 'Windows local command shell',
+    description: 'PowerShell or Git Bash for the local Windows agent',
+  },
+  {
     id: 'general.openChangesOnFileEdit',
     category: 'general',
     title: 'Open Changes when files are edited',
@@ -128,6 +134,13 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
     id: 'general.compactReadOnlyTools',
     category: 'general',
     title: 'Compact read-only tool calls',
+  },
+  {
+    id: 'general.smartCompactEnabled',
+    category: 'general',
+    title: 'Verified smart compaction',
+    description:
+      'Use Enso verified summary for long-session compact. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session. Choose Auto/Fast/Balanced/Thorough (budget and tail) and a dedicated summary model or follow the session model.',
   },
   {
     id: 'general.generationStallTimeout',
@@ -147,6 +160,13 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
   { id: 'presets.root', category: 'presets', title: 'Presets' },
   { id: 'agents.root', category: 'agents', title: 'Agent types' },
   { id: 'tools.root', category: 'tools', title: 'Built-in tools' },
+  {
+    id: 'tools.bashInterceptEnabled',
+    category: 'tools',
+    title: 'Force read/find tools',
+    description:
+      'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.',
+  },
   { id: 'skills.root', category: 'skills', title: 'Skills' },
   { id: 'mcp.root', category: 'mcp', title: 'MCP Servers' },
   { id: 'instructions.root', category: 'instructions', title: 'Instruction Files' },
