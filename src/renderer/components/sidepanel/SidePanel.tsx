@@ -36,6 +36,7 @@ import { useSidePanelStore } from '@/stores/sidePanel';
 import { BrowserView } from './BrowserView';
 import { ChangesView } from './ChangesView';
 import { FilesView } from './FilesView';
+import { shouldSkipSidePanelWidthAnim } from './sidePanelWidthAnim';
 import { TerminalView } from './TerminalView';
 import { idsToClose, type TabCloseKind } from './tabCloseActions';
 import 'dockview-react/dist/styles/dockview.css';
@@ -481,6 +482,13 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
   const [cover, setCover] = useState(fullscreen);
   const [workspaceW, setWorkspaceW] = useState(0);
   const asideRef = useRef<HTMLElement>(null);
+  const [widthAnim, setWidthAnim] = useState({
+    id: conversation?.id,
+    from: conversation?.id,
+  });
+  if (conversation?.id !== widthAnim.id) {
+    setWidthAnim({ id: conversation?.id, from: widthAnim.id });
+  }
   if (fullscreen && !cover) setCover(true);
   useEffect(() => {
     const parent = asideRef.current?.parentElement;
@@ -491,8 +499,10 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
     ro.observe(parent);
     return () => ro.disconnect();
   }, []);
-  const skipWidthAnim = resizing;
-  const targetW = fullscreen ? workspaceW || width : open ? width : 0;
+  useEffect(() => {
+    if (widthAnim.from === widthAnim.id) return;
+    setWidthAnim((s) => (s.from === s.id ? s : { ...s, from: s.id }));
+  }, [widthAnim.from, widthAnim.id]);
   /**
    * 内容层固定为目标宽度、左对齐，而不是 w-full 跟随 aside：
    * dockview 的 resize 回调在 ResizeObserver 里又套了一层 rAF，至少滞后一帧；
@@ -502,6 +512,12 @@ export function SidePanel({ width, resizing = false }: { width: number; resizing
    */
   const contentW = cover ? undefined : Math.max(0, width - (open ? 1 : 0));
   const activeId = conversation?.id;
+  const skipWidthAnim = shouldSkipSidePanelWidthAnim({
+    resizing,
+    conversationId: widthAnim.id,
+    previousConversationId: widthAnim.from,
+  });
+  const targetW = fullscreen ? workspaceW || width : open ? width : 0;
   if (activeId && !mountedIds.includes(activeId)) {
     setMountedIds((ids) => (ids.includes(activeId) ? ids : [...ids, activeId]));
   }
