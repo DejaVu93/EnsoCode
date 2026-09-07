@@ -46,6 +46,7 @@ export function GeneralSettings() {
         </Select>
       </div>
 
+      <NotificationSection />
       <SidePanelSection />
       <SmartCompactPicker />
       <WindowsLocalShellSection />
@@ -53,6 +54,23 @@ export function GeneralSettings() {
       <ConfigSyncSettings />
       <UpdateSection />
     </div>
+  );
+}
+
+function NotificationSection() {
+  const { t } = useI18n();
+  const notifyMainAgentOnly = useSettingsStore((s) => s.notifyMainAgentOnly);
+  const setNotifyMainAgentOnly = useSettingsStore((s) => s.setNotifyMainAgentOnly);
+  return (
+    <SwitchRow
+      rowId="general.notifyMainAgentOnly"
+      title={t('Notify only for the main agent')}
+      description={t(
+        'Skip coworker completion and failure notifications on this computer and the paired phone. Questions and approvals still notify.'
+      )}
+      checked={notifyMainAgentOnly}
+      onChange={setNotifyMainAgentOnly}
+    />
   );
 }
 

@@ -52,6 +52,7 @@ export const SETTINGS_STATE_FIELDS = [
   'customProxyUrl',
   'openChangesOnFileEdit',
   'compactReadOnlyTools',
+  'notifyMainAgentOnly',
   'generationStallTimeoutMin',
   'backgroundImageEnabled',
   'backgroundSourceType',

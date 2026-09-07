@@ -128,6 +128,8 @@ export interface SettingsState {
   openChangesOnFileEdit: boolean;
   /** 只读工具（read/grep/find/ls）一行化 + 进行中的轮也折组；缺省 true */
   compactReadOnlyTools: boolean;
+  /** 仅主 agent 发送完成/失败通知；coworker 提问/审批仍提醒；缺省 true */
+  notifyMainAgentOnly: boolean;
   /** 无 token/工具结果超过此时长则中止；0 = 永不；单位分钟 */
   generationStallTimeoutMin: number;
 
@@ -237,6 +239,7 @@ export interface SettingsState {
   setCustomProxyUrl: (url: string) => void;
   setOpenChangesOnFileEdit: (value: boolean) => void;
   setCompactReadOnlyTools: (value: boolean) => void;
+  setNotifyMainAgentOnly: (value: boolean) => void;
   setGenerationStallTimeoutMin: (minutes: number) => void;
 
   // Background image actions（数值 setter 内部 clamp，非法值落回缺省）

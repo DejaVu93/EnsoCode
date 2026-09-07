@@ -116,6 +116,7 @@ export interface ConfigSyncState {
   hashlineEditEnabled?: boolean;
   openChangesOnFileEdit?: boolean;
   compactReadOnlyTools?: boolean;
+  notifyMainAgentOnly?: boolean;
   generationStallTimeoutMin?: number;
   backgroundRandomInterval?: number;
   backgroundOpacity?: number;

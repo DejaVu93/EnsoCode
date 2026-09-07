@@ -58,6 +58,9 @@ export const SETTINGS_DATA_COVERAGE = {
   customProxyUrl: surfaces('general.custom-proxy-url'),
   openChangesOnFileEdit: excluded('Renderer side-panel preference; not an Enso capability.'),
   compactReadOnlyTools: excluded('Renderer timeline density preference; not an Enso capability.'),
+  notifyMainAgentOnly: excluded(
+    'Desktop/phone completion notification preference; not an Enso capability.'
+  ),
   generationStallTimeoutMin: excluded('Renderer stall-abort preference; not an Enso capability.'),
   providers: surfaces('providers.list'),
   defaultModel: surfaces('providers.default-model'),
@@ -139,6 +142,9 @@ export const SETTINGS_ACTION_COVERAGE = {
   setOpenChangesOnFileEdit: excluded('Renderer side-panel preference; not an Enso capability.'),
   setCompactReadOnlyTools: excluded(
     'Renderer timeline density preference; not an Enso capability.'
+  ),
+  setNotifyMainAgentOnly: excluded(
+    'Desktop/phone completion notification preference; not an Enso capability.'
   ),
   setGenerationStallTimeoutMin: excluded(
     'Renderer stall-abort preference; not an Enso capability.'

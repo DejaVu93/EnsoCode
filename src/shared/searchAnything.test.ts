@@ -196,6 +196,7 @@ describe('buildSettingsCatalog', () => {
     'general.windowsLocalShell',
     'general.openChangesOnFileEdit',
     'general.compactReadOnlyTools',
+    'general.notifyMainAgentOnly',
     'general.smartCompactEnabled',
     'general.generationStallTimeout',
     'general.proxy',

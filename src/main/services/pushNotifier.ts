@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { PushSubscriptionJson } from '@enso/pair';
+import { shouldMuteCoworkerCompletionNotification } from '@shared/coworkerNotification';
 import { app, safeStorage } from 'electron';
 import webPush from 'web-push';
 import { isSecureStorageAvailable } from './pairStore';
@@ -30,8 +31,10 @@ const PUSH_TITLES: Record<string, string> = {
  */
 export function buildPushPayload(
   event: { type: string; sessionId?: string; identity?: { sessionId?: string } },
-  sessionTitle: string | undefined
+  sessionTitle: string | undefined,
+  notifyMainAgentOnly = true
 ): PushPayload | null {
+  if (shouldMuteCoworkerCompletionNotification(event, notifyMainAgentOnly)) return null;
   const title = PUSH_TITLES[event.type];
   if (!title) return null;
   const sessionId = event.identity?.sessionId ?? event.sessionId;

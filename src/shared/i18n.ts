@@ -145,6 +145,9 @@ export const zhTranslations: Record<string, string> = {
     '所选模型已不可用——将回退到当前会话模型。',
   'Show read/grep/find/ls as one-line rows and fold consecutive tool calls while the agent is still running':
     'read/grep/find/ls 显示为单行，agent 运行中也折叠连续的工具调用',
+  'Notify only for the main agent': '仅主 agent 发送完成通知',
+  'Skip coworker completion and failure notifications on this computer and the paired phone. Questions and approvals still notify.':
+    'coworker 的回合完成和失败不弹桌面或手机通知。提问和审批仍会提醒。',
   'Stop if no output': '无输出则停止',
   'Abort and retry the run when no tokens or tool results arrive for this long. Thinking counts as output.':
     '超过此时长没有 token 或工具结果就中止并重试。思考输出也算有输出。',

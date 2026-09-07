@@ -31,4 +31,24 @@ describe('buildPushPayload', () => {
       sessionId: 's2',
     });
   });
+
+  it('默认静音 coworker 完成/失败，提问仍推送', () => {
+    const coworker = { sessionId: 's1::cw-bob', generation: 'g1' };
+    expect(buildPushPayload({ type: 'turn-completed', identity: coworker }, '修复登录')).toBeNull();
+    expect(buildPushPayload({ type: 'turn-failed', identity: coworker }, '修复登录')).toBeNull();
+    expect(buildPushPayload({ type: 'ask-request', identity: coworker }, '修复登录')?.title).toBe(
+      '等待你的回答'
+    );
+  });
+
+  it('关闭「仅主 agent」后 coworker 完成会推送', () => {
+    const coworker = { sessionId: 's1::cw-bob', generation: 'g1' };
+    expect(
+      buildPushPayload({ type: 'turn-completed', identity: coworker }, '修复登录', false)
+    ).toEqual({
+      title: '回合已完成',
+      body: '修复登录',
+      sessionId: 's1::cw-bob',
+    });
+  });
 });

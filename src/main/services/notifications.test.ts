@@ -1,11 +1,12 @@
 import type { RendererAgentEvent } from '@shared/types/agent';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { notifications, windows, execFileCalls, appState } = vi.hoisted(() => ({
+const { notifications, windows, execFileCalls, appState, settingsState } = vi.hoisted(() => ({
   notifications: [] as { title: string; body: string }[],
   windows: [] as { isFocused: () => boolean }[],
   execFileCalls: [] as unknown[][],
   appState: { isPackaged: true },
+  settingsState: { current: undefined as Record<string, unknown> | undefined },
 }));
 
 vi.mock('node:child_process', () => ({
@@ -38,7 +39,7 @@ vi.mock('electron', () => {
   };
 });
 
-vi.mock('../ipc/settings', () => ({ readSettings: () => undefined }));
+vi.mock('../ipc/settings', () => ({ readSettings: () => settingsState.current }));
 
 import { maybeNotify, setViewedSession } from './notifications';
 
@@ -58,6 +59,7 @@ describe('maybeNotify', () => {
     windows.length = 0; // 缺省无聚焦窗口 = 用户不在
     execFileCalls.length = 0;
     appState.isPackaged = true;
+    settingsState.current = undefined;
     setViewedSession(null);
   });
 
@@ -115,12 +117,41 @@ describe('maybeNotify', () => {
     } as unknown as RendererAgentEvent);
     expect(notifications).toHaveLength(0);
     maybeNotify({
+      type: 'status',
+      identity: coworker,
+      seq: 3,
+      status: 'failed',
+      error: 'coworker crashed',
+    } as unknown as RendererAgentEvent);
+    expect(notifications).toHaveLength(0);
+    maybeNotify({
       type: 'ask-request',
       identity: coworker,
       seq: 4,
       ask: { requestId: 'r3', question: '选哪个方案?' },
     } as unknown as RendererAgentEvent);
     expect(notifications).toHaveLength(1);
+  });
+
+  it('关闭「仅主 agent」后 coworker 完成和失败会弹', () => {
+    settingsState.current = {
+      'enso-settings': { state: { notifyMainAgentOnly: false } },
+    };
+    const coworker = { sessionId: 'conversation-1::cw-bob', generation: 'g' } as const;
+    maybeNotify({
+      type: 'turn-completed',
+      identity: coworker,
+      seq: 6,
+    } as unknown as RendererAgentEvent);
+    expect(notifications).toHaveLength(1);
+    maybeNotify({
+      type: 'status',
+      identity: coworker,
+      seq: 7,
+      status: 'failed',
+      error: 'coworker crashed',
+    } as unknown as RendererAgentEvent);
+    expect(notifications).toHaveLength(2);
   });
 
   it('macOS 未打包(未签名)时直接走 osascript,不碰原生 Notification', () => {

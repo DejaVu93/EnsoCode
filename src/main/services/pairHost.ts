@@ -48,6 +48,7 @@ import { app, powerMonitor, powerSaveBlocker } from 'electron';
 // 会话命令一律走 agentBridge（身份解析留在 ipc/agent.ts），这里只留无需身份的 snapshot。
 import { requestSnapshot, setPinnedSessions } from './agentHost';
 import { MacosSystemSleepAssertion } from './macosSystemSleepAssertion';
+import { readNotifyMainAgentOnly } from './notifications';
 import { bumpPairMetaEpoch, flushChangedMeta, requestPairMeta } from './pairMetaFlush';
 import { startPairNetworkWatch } from './pairNetworkWatch';
 import {
@@ -797,7 +798,8 @@ export function forwardAgentEvent(event: RendererAgentEvent): void {
       if (hasPushSubscription(conn.device.pairId)) {
         const payload = buildPushPayload(
           e,
-          catalog.find((entry) => entry.id === flatSessionId)?.title
+          catalog.find((entry) => entry.id === flatSessionId)?.title,
+          readNotifyMainAgentOnly()
         );
         if (payload) void sendPush(conn.device.pairId, payload);
       }

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { shouldMuteCoworkerCompletionNotification } from '@shared/coworkerNotification';
 import { IPC_CHANNELS } from '@shared/types';
 import type { RendererAgentEvent } from '@shared/types/agent';
 import { app, BrowserWindow, Notification } from 'electron';
@@ -24,11 +25,22 @@ const TEXTS = {
   },
 } as const;
 
-const texts = (): Record<keyof (typeof TEXTS)['zh'], string> => {
-  const state = (readSettings()?.['enso-settings'] as { state?: { language?: string } } | undefined)
-    ?.state;
-  return (state?.language ?? 'zh').toLowerCase().startsWith('zh') ? TEXTS.zh : TEXTS.en;
+const settingsState = (): { language?: string; notifyMainAgentOnly?: boolean } => {
+  const state = (
+    readSettings()?.['enso-settings'] as
+      | { state?: { language?: string; notifyMainAgentOnly?: boolean } }
+      | undefined
+  )?.state;
+  return state ?? {};
 };
+
+const texts = (): Record<keyof (typeof TEXTS)['zh'], string> =>
+  (settingsState().language ?? 'zh').toLowerCase().startsWith('zh') ? TEXTS.zh : TEXTS.en;
+
+/** 缺省 true：只为主 agent 弹完成/失败通知 */
+export function readNotifyMainAgentOnly(): boolean {
+  return settingsState().notifyMainAgentOnly !== false;
+}
 
 const mainWindowFocused = (): boolean =>
   BrowserWindow.getAllWindows().some((win) => win.isFocused());
@@ -74,6 +86,7 @@ function notify(sessionId: string, title: string, body: string): void {
 export function maybeNotify(event: RendererAgentEvent): void {
   const sessionId = (event as { identity?: { sessionId?: string } }).identity?.sessionId;
   if (mainWindowFocused() && sessionId !== undefined && sessionId === viewedSessionId) return;
+  if (shouldMuteCoworkerCompletionNotification(event, readNotifyMainAgentOnly())) return;
   const t = texts();
   switch (event.type) {
     case 'ask-request':
@@ -88,8 +101,6 @@ export function maybeNotify(event: RendererAgentEvent): void {
       );
       return;
     case 'turn-completed':
-      // coworker 每轮完成不弹系统通知(主 agent/用户在 tab 内自会看到)
-      if (event.identity.sessionId.includes('::cw-')) return;
       notify(event.identity.sessionId, t.turnDone, t.turnDoneBody);
       return;
     case 'status':

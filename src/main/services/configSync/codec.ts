@@ -81,6 +81,7 @@ const STATE_KEYS = [
   'hashlineEditEnabled',
   'openChangesOnFileEdit',
   'compactReadOnlyTools',
+  'notifyMainAgentOnly',
   'generationStallTimeoutMin',
   'backgroundRandomInterval',
   'backgroundOpacity',
@@ -891,6 +892,7 @@ export function validateBundle(value: unknown): ConfigSyncBundle {
     'hashlineEditEnabled',
     'openChangesOnFileEdit',
     'compactReadOnlyTools',
+    'notifyMainAgentOnly',
   ])
     booleanField(state, key, 'state', false);
   numberField(state, 'generationStallTimeoutMin', 'state', 0, 120, true);

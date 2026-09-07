@@ -136,6 +136,13 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
     title: 'Compact read-only tool calls',
   },
   {
+    id: 'general.notifyMainAgentOnly',
+    category: 'general',
+    title: 'Notify only for the main agent',
+    description:
+      'Skip coworker completion and failure notifications on this computer and the paired phone. Questions and approvals still notify.',
+  },
+  {
     id: 'general.smartCompactEnabled',
     category: 'general',
     title: 'Verified smart compaction',
