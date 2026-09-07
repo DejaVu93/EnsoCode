@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/guides/pre-implementation-checklist.md", "reason": "跨层开关 + 新工具协议：动手前边界、TDD 角色分离、不扩 scope"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "settings → spawn-parent → supervisor 必须整条对齐，禁止只改一层"}
+{"file": ".trellis/spec/shared/types.md", "reason": "parseAgentCommand 白名单三方契约；漏字段会让全部会话起不来"}
+{"file": ".trellis/spec/main/settings-persistence.md", "reason": "新布尔进 settings.json；缺字段当默认开，不升 SETTINGS_VERSION"}
+{"file": ".trellis/spec/testing.md", "reason": "纯核心与解析器必须 Red-Green；大改动 coworker 分角色"}
+{"file": ".trellis/spec/renderer/index.md", "reason": "设置文案 t()、新开关无 applySettings 副作用"}
+{"file": ".trellis/tasks/archive/2026-09/09-04-omp-gap-research/research/tools.md", "reason": "Hashline 原调研：P1、可移植 TS、AST 要 natives"}
+{"file": ".trellis/tasks/09-07-hashline-edit/prd.md", "reason": "本任务需求：默认关、与拦截开关提示一起开、协议范围"}
+{"file": ".trellis/tasks/09-07-hashline-edit/design.md", "reason": "开关极性、vendor 替换点、工具名不变"}
+{"file": ".trellis/tasks/09-07-hashline-edit/implement.md", "reason": "切片顺序与 gate"}
