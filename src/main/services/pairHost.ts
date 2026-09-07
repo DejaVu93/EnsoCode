@@ -26,11 +26,13 @@ import {
 } from '@enso/pair';
 import {
   catalogSyncFingerprint,
+  changedMetaChannels,
   type PairMetaFingerprints,
   pairJsonFingerprint,
   shouldRelayPairSnapshot,
   slimCatalogForPhone,
   slimProjectsForPhone,
+  withholdRendererMeta,
 } from '@shared/pair/metaSync';
 import type {
   AgentSpawnRequest,
@@ -138,6 +140,11 @@ let onQueueAction: ((action: PairQueueAction) => void) | null = null;
 
 /** renderer 推上来的目录快照（会话标题/项目/provider 只在 renderer 有） */
 let catalog: CatalogEntry[] = [];
+/**
+ * renderer 是否已推过至少一次目录。为 false 时上面的空初值不是真目录，不得下发：
+ * host 重启时对端已在房里，peer-joined 先于 renderer 首次 push，空目录会让对端误判幽灵会话。
+ */
+let catalogReady = false;
 let pinnedOrder: string[] = [];
 let projects: ProjectEntry[] = [];
 let projectGroups: ProjectGroupEntry[] = [];
@@ -759,9 +766,15 @@ async function sendMeta(conn: Connection): Promise<void> {
     pushConfig: pairJsonFingerprint(vapidPublicKey),
     hostInfo: pairJsonFingerprint(hostInfo),
   };
+  // renderer 尚未推过目录时扣下 renderer-owned 通道（catalog/projects/providers/appearance）：
+  // host 重启后 guest 往往已在房里，peer-joined 先于 renderer 首推到达，空 catalog 当真目录发出去
+  // 会让 guest 把仍在订阅的会话误判为幽灵。被扣下的通道不进 next，flushChangedMeta 只记实际发出的。
+  const allowed = new Set(withholdRendererMeta(changedMetaChannels(conn.sentMeta, next), catalogReady));
+  const gated: PairMetaFingerprints = {};
+  for (const key of allowed) gated[key] = next[key];
   await flushChangedMeta(
     conn.sentMeta,
-    next,
+    gated,
     {
       catalog: () => send(conn, { type: 'catalog', entries: catalogEntries, pinnedOrder }),
       projects: () =>
@@ -776,8 +789,7 @@ async function sendMeta(conn: Connection): Promise<void> {
       hostInfo: () => send(conn, { type: 'host-info', ...hostInfo }),
     },
     conn
-  );
-}
+  );}
 
 /** agentHost 事件出口：按订阅过滤后加密发给每台在线手机 */
 export function forwardAgentEvent(event: RendererAgentEvent): void {
@@ -869,6 +881,7 @@ export function updatePairCatalog(payload: {
   compactReadOnlyTools?: boolean;
 }): void {
   catalog = payload.catalog;
+  catalogReady = true;
   pinnedOrder = payload.pinnedOrder ?? [];
   projects = payload.projects;
   projectGroups = payload.projectGroups ?? [];
