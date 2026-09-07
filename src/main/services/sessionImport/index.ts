@@ -9,6 +9,7 @@ import { listCodexSessions, readCodexSession } from './codex';
 import { listCursorSessions, readCursorSession } from './cursor';
 import { listFactorySessions, readFactorySession } from './factory';
 import { listGrokSessions, readGrokSession } from './grok';
+import { listOpencodeSessions, readOpencodeSession } from './opencode';
 import { listOhMyPiSessions, listPiSessions, readPiV3Session } from './pi';
 import { writePiSession } from './piJsonl';
 
@@ -37,6 +38,7 @@ const READERS: SessionReader[] = [
     read: readPiV3Session,
   },
   { sourceId: 'factory', sourceName: 'Factory', list: listFactorySessions, read: readFactorySession },
+  { sourceId: 'opencode', sourceName: 'OpenCode', list: listOpencodeSessions, read: readOpencodeSession },
 ];
 
 const readerOf = (sourceId: string): SessionReader | undefined =>

@@ -514,6 +514,145 @@ describe('Factory 会话', () => {
   });
 });
 
+const writeJsonFile = (file: string, data: unknown) => {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(data));
+};
+
+/** 铺一个 OpenCode 会话，返回 session 元数据 json 绝对路径 */
+const seedOpencodeSession = (
+  home: string,
+  opts: {
+    projectId: string;
+    worktree: string;
+    sessionId: string;
+    title: string;
+    parentID?: string;
+    turns?: { role: string; parts: { type: string; text?: string }[] }[];
+  }
+) => {
+  const storage = path.join(home, '.local', 'share', 'opencode', 'storage');
+  writeJsonFile(path.join(storage, 'project', `${opts.projectId}.json`), {
+    id: opts.projectId,
+    worktree: opts.worktree,
+  });
+  const sessionFile = path.join(storage, 'session', opts.projectId, `${opts.sessionId}.json`);
+  writeJsonFile(sessionFile, {
+    id: opts.sessionId,
+    directory: opts.worktree,
+    title: opts.title,
+    time: { updated: 1_700_000_000_000 },
+    ...(opts.parentID ? { parentID: opts.parentID } : {}),
+  });
+  (opts.turns ?? []).forEach((turn, i) => {
+    const messageId = `m${i + 1}`;
+    writeJsonFile(path.join(storage, 'message', opts.sessionId, `${messageId}.json`), {
+      id: messageId,
+      role: turn.role,
+      time: { created: 1_700_000_000_000 + i },
+    });
+    turn.parts.forEach((part, j) => {
+      writeJsonFile(path.join(storage, 'part', messageId, `p${j + 1}.json`), {
+        id: `p${j + 1}`,
+        ...part,
+      });
+    });
+  });
+  return sessionFile;
+};
+
+describe('OpenCode 会话', () => {
+  const projectPath = '/tmp/demo';
+
+  it('列出 worktree 匹配的会话，path 是 session 元数据 json', () => {
+    const sessionFile = seedOpencodeSession(tmp, {
+      projectId: 'prj1',
+      worktree: projectPath,
+      sessionId: 'ses1',
+      title: '排查构建失败',
+      turns: [{ role: 'user', parts: [{ type: 'text', text: 'hi' }] }],
+    });
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'opencode');
+    expect(source?.sourceName).toBe('OpenCode');
+    expect(source?.sessions.map((s) => s.path)).toEqual([sessionFile]);
+    expect(source?.sessions[0].title).toBe('排查构建失败');
+  });
+
+  it('读取时按 message 拼接其 text part，跳过非文本 part', () => {
+    const sessionFile = seedOpencodeSession(tmp, {
+      projectId: 'prj1',
+      worktree: projectPath,
+      sessionId: 'ses1',
+      title: 't',
+      turns: [
+        { role: 'user', parts: [{ type: 'text', text: '构建挂了' }] },
+        {
+          role: 'assistant',
+          parts: [
+            { type: 'step-start' },
+            { type: 'text', text: '已修复' },
+            { type: 'tool', text: '不该出现' },
+          ],
+        },
+      ],
+    });
+    expect(readExternalSession('opencode', sessionFile)).toEqual([
+      expect.objectContaining({ role: 'user', text: '构建挂了' }),
+      expect.objectContaining({ role: 'assistant', text: '已修复' }),
+    ]);
+  });
+
+  it('带 parentID 的子会话不出现在列表', () => {
+    const parent = seedOpencodeSession(tmp, {
+      projectId: 'prj1',
+      worktree: projectPath,
+      sessionId: 'ses1',
+      title: '父会话',
+      turns: [{ role: 'user', parts: [{ type: 'text', text: 'a' }] }],
+    });
+    seedOpencodeSession(tmp, {
+      projectId: 'prj1',
+      worktree: projectPath,
+      sessionId: 'ses2',
+      title: '子会话',
+      parentID: 'ses1',
+      turns: [{ role: 'user', parts: [{ type: 'text', text: 'b' }] }],
+    });
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'opencode');
+    expect(source?.sessions.map((s) => s.path)).toEqual([parent]);
+  });
+
+  it('另一个 worktree 的项目不出现', () => {
+    const mine = seedOpencodeSession(tmp, {
+      projectId: 'prj1',
+      worktree: projectPath,
+      sessionId: 'ses1',
+      title: '本项目',
+      turns: [{ role: 'user', parts: [{ type: 'text', text: 'a' }] }],
+    });
+    seedOpencodeSession(tmp, {
+      projectId: 'prj2',
+      worktree: '/tmp/other',
+      sessionId: 'ses9',
+      title: '其他项目',
+      turns: [{ role: 'user', parts: [{ type: 'text', text: 'b' }] }],
+    });
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'opencode');
+    expect(source?.sessions.map((s) => s.path)).toEqual([mine]);
+  });
+
+  it('损坏的 session json 与缺失文件都返回空消息且不抛错', () => {
+    const storage = path.join(tmp, '.local', 'share', 'opencode', 'storage');
+    const broken = path.join(storage, 'session', 'prj1', 'bad.json');
+    fs.mkdirSync(path.dirname(broken), { recursive: true });
+    fs.writeFileSync(broken, '{not json');
+    expect(readExternalSession('opencode', broken)).toEqual([]);
+    expect(readExternalSession('opencode', path.join(storage, 'session', 'prj1', 'x.json'))).toEqual(
+      []
+    );
+  });
+});
+
 describe('writePiSession', () => {
   it('产出 header + 消息链，parentId 依次串联', () => {
     const file = writePiSession(
