@@ -591,6 +591,7 @@ describe('标题总结命令与事件', () => {
     input: {
       kind: 'rolling',
       currentTitle: '修复登录 bug',
+      firstUserText: '帮我把登录页的 bug 修一下',
       userText: '这个修复有通用性吗',
       assistantText: '只影响登录路径',
     },
@@ -648,6 +649,7 @@ describe('标题总结命令与事件', () => {
         input: {
           kind: 'rolling',
           currentTitle: '',
+          firstUserText: 'f',
           userText: 'x',
           assistantText: 'y',
         },
@@ -655,11 +657,31 @@ describe('标题总结命令与事件', () => {
     ).toBeNull();
   });
 
+  it('summarize-title rolling 缺 firstUserText 键拒绝；firstUserText 允许为空串', () => {
+    expect(
+      parseAgentCommand({
+        ...summarizeRolling,
+        input: { kind: 'rolling', currentTitle: 't', userText: 'x', assistantText: 'y' },
+      })
+    ).toBeNull();
+    const emptyAnchor = {
+      ...summarizeRolling,
+      input: { kind: 'rolling', currentTitle: 't', firstUserText: '', userText: 'x', assistantText: 'y' },
+    };
+    expect(parseAgentCommand(emptyAnchor)).toEqual(emptyAnchor);
+  });
+
   it('summarize-title rolling 的 userText 与 assistantText 都为空串拒绝', () => {
     expect(
       parseAgentCommand({
         ...summarizeRolling,
-        input: { kind: 'rolling', currentTitle: 't', userText: '', assistantText: '' },
+        input: {
+          kind: 'rolling',
+          currentTitle: 't',
+          firstUserText: 'f',
+          userText: '',
+          assistantText: '',
+        },
       })
     ).toBeNull();
   });
@@ -685,10 +707,17 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: 't',
+        firstUserText: 'f',
         userText: 'u',
         assistantText: 'a',
       })
-    ).toEqual({ kind: 'rolling', currentTitle: 't', userText: 'u', assistantText: 'a' });
+    ).toEqual({
+      kind: 'rolling',
+      currentTitle: 't',
+      firstUserText: 'f',
+      userText: 'u',
+      assistantText: 'a',
+    });
   });
 
   it('parseTitleSummaryInput 直接单测：非法形状返回 null', () => {
@@ -700,6 +729,7 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: '',
+        firstUserText: 'f',
         userText: 'u',
         assistantText: 'a',
       })
@@ -708,6 +738,7 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: 't',
+        firstUserText: 'f',
         userText: '',
         assistantText: '',
       })
@@ -716,7 +747,17 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: 't',
+        firstUserText: 'f',
         userText: 1,
+        assistantText: 'a',
+      })
+    ).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        firstUserText: 1,
+        userText: 'u',
         assistantText: 'a',
       })
     ).toBeNull();
@@ -776,7 +817,18 @@ describe('标题总结命令与事件', () => {
       identity: parent,
       seq: 1,
       turnId: 'turn-1',
-      digest: { userText: '本轮请求', assistantText: '本轮结论' },
+      digest: { firstUserText: '开场请求', userText: '本轮请求', assistantText: '本轮结论' },
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+  });
+
+  it('turn-completed digest 的 firstUserText 允许空串（冷会话无首条）', () => {
+    const event = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+      digest: { firstUserText: '', userText: '本轮请求', assistantText: '本轮结论' },
     };
     expect(parseAgentWorkerEvent(event)).toEqual(event);
   });
@@ -789,12 +841,22 @@ describe('标题总结命令与事件', () => {
       turnId: 'turn-1',
     };
     expect(
-      parseAgentWorkerEvent({ ...base, digest: { userText: 1, assistantText: 'a' } })
+      parseAgentWorkerEvent({
+        ...base,
+        digest: { firstUserText: 'f', userText: 1, assistantText: 'a' },
+      })
     ).toBeNull();
-    expect(parseAgentWorkerEvent({ ...base, digest: { userText: 'u' } })).toBeNull();
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { firstUserText: 'f', userText: 'u' } })
+    ).toBeNull();
+    // 旧两键形状：缺 firstUserText 即拒绝，不做兼容层
+    expect(parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a' } })).toBeNull();
     expect(parseAgentWorkerEvent({ ...base, digest: 'nope' })).toBeNull();
     expect(
-      parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a', extra: 1 } })
+      parseAgentWorkerEvent({
+        ...base,
+        digest: { firstUserText: 'f', userText: 'u', assistantText: 'a', extra: 1 },
+      })
     ).toBeNull();
   });
 

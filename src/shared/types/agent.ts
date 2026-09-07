@@ -37,8 +37,10 @@ export { parseChildSessionIdentity, parseSessionIdentity } from '../builtinAgent
 /** 会话状态。waiting/done 属权限门与 subagent 刀，M1 不引入 */
 export type NodeStatus = 'idle' | 'running' | 'failed';
 
-/** 一轮结束时 worker 切出的压缩摘要；两段均已在 worker 侧按上限截断 */
+/** 一轮结束时 worker 切出的压缩摘要；三段均已在 worker 侧按上限截断 */
 export interface TurnDigest {
+  /** 会话首条 user 文本（清洗后截头）：滚动总结的主旨锚点，防止单轮动作劫持标题；无 user 时为空串 */
+  firstUserText: string;
   /** 本轮全部 user 文本（清洗后 '\n' 拼接，截头） */
   userText: string;
   /** 本轮最后一条含 text 的 assistant 文本（截尾） */
@@ -48,7 +50,14 @@ export interface TurnDigest {
 /** 标题总结输入：initial = 首条消息即时总结；rolling = 每轮结束后的滚动刷新 */
 export type TitleSummaryInput =
   | { kind: 'initial'; text: string }
-  | { kind: 'rolling'; currentTitle: string; userText: string; assistantText: string };
+  | {
+      kind: 'rolling';
+      currentTitle: string;
+      /** 会话首条请求，作为主旨锚点；允许空串（冷会话拿不到） */
+      firstUserText: string;
+      userText: string;
+      assistantText: string;
+    };
 
 /** 标题总结回退链最多候选数：标题模型 → 全局默认 → 会话模型 */
 export const TITLE_SUMMARY_MAX_CANDIDATES = 3;
@@ -1071,14 +1080,22 @@ export function parseMcpOAuthTokens(value: unknown): McpOAuthTokens | null {
   };
 }
 
-/** turn-completed.digest 的形状校验：两段必须是字符串（允许空），不允许多余键 */
+/** turn-completed.digest 的形状校验：三段必须是字符串（允许空），不允许多余键 */
 export function parseTurnDigest(value: unknown): TurnDigest | null {
-  if (!isRecord(value) || !hasExactKeys(value, ['userText', 'assistantText'])) return null;
-  if (typeof value.userText !== 'string' || typeof value.assistantText !== 'string') return null;
+  if (!isRecord(value) || !hasExactKeys(value, ['firstUserText', 'userText', 'assistantText'])) {
+    return null;
+  }
+  if (
+    typeof value.firstUserText !== 'string' ||
+    typeof value.userText !== 'string' ||
+    typeof value.assistantText !== 'string'
+  ) {
+    return null;
+  }
   return value as unknown as TurnDigest;
 }
 
-/** 标题总结输入校验：initial 要求 text 非空；rolling 要求 currentTitle 非空且两段至少一段非空 */
+/** 标题总结输入校验：initial 要求 text 非空；rolling 要求 currentTitle 非空、firstUserText 为字符串（可空）且本轮两段至少一段非空 */
 export function parseTitleSummaryInput(value: unknown): TitleSummaryInput | null {
   if (!isRecord(value)) return null;
   if (value.kind === 'initial') {
@@ -1089,8 +1106,15 @@ export function parseTitleSummaryInput(value: unknown): TitleSummaryInput | null
       : null;
   }
   if (value.kind === 'rolling') {
-    return hasExactKeys(value, ['kind', 'currentTitle', 'userText', 'assistantText']) &&
+    return hasExactKeys(value, [
+      'kind',
+      'currentTitle',
+      'firstUserText',
+      'userText',
+      'assistantText',
+    ]) &&
       isNonEmptyString(value.currentTitle) &&
+      typeof value.firstUserText === 'string' &&
       typeof value.userText === 'string' &&
       typeof value.assistantText === 'string' &&
       (value.userText.trim().length > 0 || value.assistantText.trim().length > 0)
