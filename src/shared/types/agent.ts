@@ -697,7 +697,7 @@ export interface ProjectedMessage {
   timing?: MessageTiming;
   /** todo 工具 toolResult 的清单快照 */
   todos?: TodoItem[];
-  /** 工具执行耗时（仅 toolResult 消息带；worker 按 tool_execution_start/end 打点） */
+  /** 工具执行耗时（仅 toolResult 消息带；worker 按 tool_execution_start/end 打点，不含排队） */
   toolDurationMs?: number;
   /** subagent 工具 toolResult 的执行元数据 */
   subagentMeta?: { modelId?: string; outputTokens?: number; steps?: number };
@@ -870,6 +870,8 @@ export type AgentWorkerEvent =
       seq: number;
       toolCallId: string;
       output: string;
+      /** 该工具真正开始执行的 wall clock；后续增量覆盖不改 */
+      startedAt?: number;
     }
   | { type: 'messages-truncated'; identity: SessionIdentity; seq: number; length: number }
   | {
@@ -2196,7 +2198,9 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'tool-output':
-      return isNonEmptyString(value.toolCallId) && typeof value.output === 'string'
+      return isNonEmptyString(value.toolCallId) &&
+        typeof value.output === 'string' &&
+        (value.startedAt === undefined || typeof value.startedAt === 'number')
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'task-started':

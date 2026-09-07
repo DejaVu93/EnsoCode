@@ -211,6 +211,7 @@ export function ChatView() {
           compaction: conversation?.compaction,
           compactionNoticeAt: conversation?.compactionNoticeAt,
           toolOutputs: conversation?.toolOutputs,
+          toolStartedAt: conversation?.toolStartedAt,
           pendingApprovals: conversation?.pendingApprovals,
         }
       ),
@@ -218,6 +219,7 @@ export function ChatView() {
       conversation?.compaction,
       conversation?.compactionNoticeAt,
       conversation?.toolOutputs,
+      conversation?.toolStartedAt,
       conversation?.pendingApprovals,
       conversation?.customEntries,
       conversation?.messages,

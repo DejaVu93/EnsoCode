@@ -113,6 +113,8 @@ export interface SessionProjection {
   retry?: { attempt: number; maxAttempts: number; delayMs: number; error: string; at: number };
   /** 运行中工具的输出快照（toolCallId → 全量文本）；轮次收口即清空，不持久化 */
   toolOutputs: Record<string, string>;
+  /** 工具真正开始执行的 wall clock；轮次收口即清空，不持久化 */
+  toolStartedAt?: Record<string, number>;
   /** 当前权威消息对应的 worker 绝对起点；全量快照缺省 */
   historyBaseIndex?: number;
 }
@@ -163,6 +165,7 @@ export function applyAgentEvent(
       : {
           ...rawState,
           toolOutputs: rawState.toolOutputs ?? {},
+          toolStartedAt: rawState.toolStartedAt ?? {},
           customEntries: rawState.customEntries ?? [],
           dispatchMainEvents: rawState.dispatchMainEvents ?? {},
           pendingApprovals: rawState.pendingApprovals ?? [],
@@ -220,6 +223,7 @@ export function applyAgentEvent(
       backgroundTasks: snapshot.backgroundTasks ?? [],
       subagents: snapshot.subagents ?? [],
       toolOutputs: {},
+      toolStartedAt: {},
       historyBaseIndex:
         snapshot.baseIndex && snapshot.baseIndex > 0 ? snapshot.baseIndex : undefined,
     };
@@ -419,18 +423,25 @@ export function applyAgentEvent(
         ),
         lastSeq: event.seq,
       };
-    case 'tool-output':
+    case 'tool-output': {
+      const startedAt = current.toolStartedAt?.[event.toolCallId] ?? event.startedAt;
       return {
         ...current,
         toolOutputs: { ...current.toolOutputs, [event.toolCallId]: event.output },
+        toolStartedAt:
+          startedAt === undefined
+            ? current.toolStartedAt
+            : { ...current.toolStartedAt, [event.toolCallId]: startedAt },
         lastOutputAt: now,
         lastSeq: event.seq,
       };
+    }
     case 'turn-completed':
       return {
         ...settleTiming(current, now),
         retry: undefined,
         toolOutputs: {},
+        toolStartedAt: {},
         lastSeq: event.seq,
       };
     case 'messages-truncated':
@@ -447,6 +458,7 @@ export function applyAgentEvent(
         error: event.error,
         retry: undefined,
         toolOutputs: {},
+        toolStartedAt: {},
         lastSeq: event.seq,
       };
     case 'session-custom-entry':

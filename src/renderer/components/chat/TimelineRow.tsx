@@ -103,6 +103,7 @@ function itemEqual(prev: TimelineRowProps, next: TimelineRowProps): boolean {
         a.writeContent === b.writeContent &&
         a.todos === b.todos &&
         a.durationMs === b.durationMs &&
+        a.startedAt === b.startedAt &&
         a.agentMeta === b.agentMeta
       );
     case 'tool-group':
@@ -1246,8 +1247,11 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
             <span className="shrink-0 text-[10px] text-muted-foreground">
               {t('Assistant reviewing…')}
             </span>
-          ) : item.state === 'running' ? (
-            <RunningElapsed itemKey={item.key} />
+          ) : item.state === 'running' && item.startedAt !== null ? (
+            <RunningElapsed
+              itemKey={item.key}
+              since={item.startedAt ?? undefined}
+            />
           ) : (
             (item.agentMeta || item.durationMs !== null) && (
               <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70 tabular-nums">

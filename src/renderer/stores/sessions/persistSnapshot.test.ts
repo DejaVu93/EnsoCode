@@ -35,6 +35,8 @@ describe('cachedPartializeSessions', () => {
     expect(first.conversations.a.messages).toEqual([]);
     expect(first.conversations.a.lastActiveAt).toBe(10);
     expect(first.conversations.a.status).toBe('idle');
+    expect(first.conversations.a.toolOutputs).toEqual({});
+    expect(first.conversations.a.toolStartedAt).toEqual({});
   });
 
   it('rebuilds when a persisted field changes', () => {

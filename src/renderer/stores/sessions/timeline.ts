@@ -49,6 +49,8 @@ export type TimelineItem =
       todos: TodoItem[] | null;
       /** 工具执行耗时（完成后显示）；未知为 null */
       durationMs: number | null;
+      /** 真正开始执行的 wall clock；null = 已跟踪但未开跑；缺省 = 这条链路不打点 */
+      startedAt?: number | null;
       /** subagent 工具的执行元数据（模型/token/步数）；非 subagent 为 null */
       agentMeta: { modelId?: string; outputTokens?: number; steps?: number } | null;
     }
@@ -247,7 +249,8 @@ function buildMessageTimeline(
   running: boolean,
   cwd?: string,
   toolOutputs?: Record<string, string>,
-  pendingApprovals?: readonly ApprovalRequestInfo[]
+  pendingApprovals?: readonly ApprovalRequestInfo[],
+  toolStartedAt?: Record<string, number>
 ): TimelineItem[] {
   const reviewingIds = reviewingToolCallIds(pendingApprovals);
   const results = new Map<
@@ -433,6 +436,9 @@ function buildMessageTimeline(
             todos: result?.todos ?? null,
             durationMs: result?.durationMs ?? null,
             agentMeta: result?.agentMeta ?? null,
+            ...(result || !toolStartedAt
+              ? {}
+              : { startedAt: toolStartedAt[part.id] ?? null }),
           });
           return;
         }
@@ -539,6 +545,7 @@ export function buildTimeline(
     /** 运行中工具的输出快照（toolCallId → 文本）；真实 toolResult 到位后优先用后者 */
     toolOutputs?: Record<string, string>;
     pendingApprovals?: readonly ApprovalRequestInfo[];
+    toolStartedAt?: Record<string, number>;
   }
 ): TimelineItem[] {
   const messageItems = buildMessageTimeline(
@@ -546,7 +553,8 @@ export function buildTimeline(
     running,
     cwd,
     options?.toolOutputs,
-    options?.pendingApprovals
+    options?.pendingApprovals,
+    options?.toolStartedAt
   );
   const merged =
     customEntries.length === 0
