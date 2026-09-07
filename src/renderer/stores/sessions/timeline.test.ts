@@ -1039,6 +1039,37 @@ describe('buildTimeline 运行中工具的增量输出', () => {
     expect(timeline[1]).toMatchObject({ kind: 'tool', state: 'running', output: 'PASS a\nPASS b' });
   });
 
+  it('未开始执行的同轮工具不跳表：无 startedAt，仍标 running', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'bash-1', name: 'bash', arguments: { command: 'sleep 5' } },
+            { type: 'toolCall', id: 'write-1', name: 'write', arguments: { path: 'a.ts' } },
+          ],
+        },
+      ],
+      true,
+      [],
+      undefined,
+      { toolStartedAt: { 'bash-1': 1_000 } }
+    );
+    expect(timeline[1]).toMatchObject({
+      kind: 'tool',
+      name: 'bash',
+      state: 'running',
+      startedAt: 1_000,
+    });
+    expect(timeline[2]).toMatchObject({
+      kind: 'tool',
+      name: 'write',
+      state: 'running',
+      startedAt: null,
+    });
+  });
+
   it('无增量时 running 工具 output 仍为 null（行不可展开）', () => {
     const timeline = buildTimeline(runningBash, true);
     expect(timeline[1]).toMatchObject({ kind: 'tool', state: 'running', output: null });

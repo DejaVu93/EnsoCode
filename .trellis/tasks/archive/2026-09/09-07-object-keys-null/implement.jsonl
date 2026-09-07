@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/renderer/state.md", "reason": "sessions persist 只存元数据；运行态集合不得当权威正文回写"}
+{"file": ".trellis/spec/main/settings-persistence.md", "reason": "改 persist 形状必须升 version 并走 migrate，禁止 onRehydrateStorage 读侧补丁"}
+{"file": ".trellis/spec/testing.md", "reason": "脏输入不崩；纯函数同目录 vitest；React hook 暂不强制测"}
+{"file": ".trellis/spec/guides/pre-implementation-checklist.md", "reason": "旧数据兼容与改动边界；本任务 inline TDD"}
+{"file": ".trellis/spec/renderer/index.md", "reason": "renderer 层入口与跨层约束"}

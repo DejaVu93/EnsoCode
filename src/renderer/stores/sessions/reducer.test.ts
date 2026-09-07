@@ -777,6 +777,17 @@ describe('applyAgentEvent tool-output', () => {
     expect(second.lastOutputAt).toBeDefined();
   });
 
+  it('startedAt 只在首次出现时记下，后续增量覆盖不改起点', () => {
+    const first = applyAgentEvent(base, 's1', {
+      ...toolOutput(1, ''),
+      startedAt: 1_000,
+    });
+    expect(first.toolStartedAt).toEqual({ t1: 1_000 });
+    const second = applyAgentEvent(first, 's1', toolOutput(2, 'line'));
+    expect(second.toolOutputs).toEqual({ t1: 'line' });
+    expect(second.toolStartedAt).toEqual({ t1: 1_000 });
+  });
+
   it('轮次收口后清空增量快照，避免残留与无限增长', () => {
     const withOutput = applyAgentEvent(base, 's1', toolOutput(1, 'partial'));
     const done = applyAgentEvent(withOutput, 's1', {
@@ -786,6 +797,7 @@ describe('applyAgentEvent tool-output', () => {
       turnId: 'turn-1',
     });
     expect(done.toolOutputs).toEqual({});
+    expect(done.toolStartedAt).toEqual({});
 
     const failed = applyAgentEvent(withOutput, 's1', {
       type: 'turn-failed',

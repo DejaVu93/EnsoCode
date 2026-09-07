@@ -46,4 +46,64 @@ describe('migrateSessions', () => {
     expect(migrateSessions('junk', 0)).toBe('junk');
     expect(migrateSessions({ conversations: 'junk' }, 0)).toEqual({ conversations: 'junk' });
   });
+
+  it('v1 → v2: fills missing runtime collections without wiping existing values', () => {
+    const persisted = {
+      conversations: {
+        missing: { id: 'missing', started: false, status: 'idle' },
+        nullish: {
+          id: 'nullish',
+          started: false,
+          status: 'idle',
+          toolOutputs: null,
+          pendingApprovals: null,
+        },
+        kept: {
+          id: 'kept',
+          started: false,
+          status: 'idle',
+          toolOutputs: { t1: 'out' },
+          toolStartedAt: { t1: 9 },
+          pendingApprovals: [{ id: 'a1' }],
+          pendingAsks: [{ id: 'q1' }],
+          backgroundTasks: [{ id: 'b1' }],
+          subagents: [{ id: 's1' }],
+          customEntries: [1],
+          dispatchMainEvents: { e1: { type: 'x' } },
+        },
+      },
+      order: ['missing', 'nullish', 'kept'],
+      activeId: 'missing',
+    };
+    const migrated = migrateSessions(persisted, 1) as typeof persisted & {
+      conversations: Record<string, Record<string, unknown>>;
+    };
+    expect(migrated.conversations.missing).toMatchObject({
+      status: 'idle',
+      toolOutputs: {},
+      toolStartedAt: {},
+      pendingApprovals: [],
+      pendingAsks: [],
+      backgroundTasks: [],
+      subagents: [],
+      customEntries: [],
+      dispatchMainEvents: {},
+    });
+    expect(migrated.conversations.nullish).toMatchObject({
+      status: 'idle',
+      toolOutputs: {},
+      pendingApprovals: [],
+    });
+    expect(migrated.conversations.kept).toMatchObject({
+      status: 'idle',
+      toolOutputs: { t1: 'out' },
+      toolStartedAt: { t1: 9 },
+      pendingApprovals: [{ id: 'a1' }],
+      pendingAsks: [{ id: 'q1' }],
+      backgroundTasks: [{ id: 'b1' }],
+      subagents: [{ id: 's1' }],
+      customEntries: [1],
+      dispatchMainEvents: { e1: { type: 'x' } },
+    });
+  });
 });

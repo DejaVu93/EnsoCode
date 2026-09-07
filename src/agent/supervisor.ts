@@ -2280,15 +2280,6 @@ export class SessionSupervisor {
             timing.thinkingEndMs = Date.now();
           }
         }
-        // 工具耗时起点 = toolCall part 首次流式出现（含模型生成参数的时间），
-        // 与渲染层运行中计时器（工具行出现即起表）口径一致，避免完成后骤降为 0s
-        if (projected?.role === 'assistant') {
-          for (const part of projected.content) {
-            if (part.type === 'toolCall' && !managed.toolStartAt.has(part.id)) {
-              managed.toolStartAt.set(part.id, Date.now());
-            }
-          }
-        }
         this.replaceLastMessage(managed, projected);
         return;
       }
@@ -2331,12 +2322,22 @@ export class SessionSupervisor {
         this.failTurn(managed, managed.lastRetryError ?? event.finalError ?? 'Auto-retry failed.');
         return;
       }
-      case 'tool_execution_start':
-        // message_update 已在生成阶段记过起点；这里兜底（如工具调用未经流式直接执行）
+      case 'tool_execution_start': {
+        // 耗时只从真正开始执行算：同轮后发工具不能把前面 bash 的排队算进去
         if (!managed.toolStartAt.has(event.toolCallId)) {
-          managed.toolStartAt.set(event.toolCallId, Date.now());
+          const startedAt = Date.now();
+          managed.toolStartAt.set(event.toolCallId, startedAt);
+          this.options.emit({
+            type: 'tool-output',
+            identity: managed.identity,
+            seq: ++managed.seq,
+            toolCallId: event.toolCallId,
+            output: '',
+            startedAt,
+          });
         }
         return;
+      }
       case 'tool_execution_update': {
         // pi 已按 BASH_UPDATE_THROTTLE_MS 节流下发全量快照，这里只做投影，不再二次节流
         const parts: unknown = event.partialResult?.content;

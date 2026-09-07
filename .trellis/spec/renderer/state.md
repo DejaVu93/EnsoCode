@@ -104,6 +104,16 @@ expect(store.getState().conversations.ended.messages).toHaveLength(before);
 [big-question/optimistic-echo-blocks-snapshot.md](../big-question/optimistic-echo-blocks-snapshot.md)）。
 同理，任何「本地是否已有数据、要不要去拉」的判断都要过滤 `optimistic` 条目。
 
+侧栏 Files 按会话常驻（`mountedIds` 只增不减）。`evictColdMessages` 会把隐藏会话的
+`messages` 置空；此时对时间线做「已见 write」占位，会把空数组当成权威历史。
+之后 snapshot / tail 回填会把每一条历史 write 当成新文件，整树展开。
+这类 seen-set / 时间线 diff **必须等权威正文再占位**，冷清空时把 seen 重置为
+`null`，不要写成空 `Set`。
+
+`buildTimeline` 的 tool `key` 是本地数组下标（`${messageIndex}-${partIndex}`）。
+`historyBaseIndex` 从 tail 切到全文 snapshot 时同一条 write 的 key 会变，seen
+必须随 `historyBaseIndex` 清掉重占位，否则会误刷新。
+
 ## 会话标题的自动总结守卫
 
 标题自动总结（首条即时 + 每轮 `turn-completed{digest}` 滚动）在 `sessions/index.ts` 里有两层守卫，缺一不可：
@@ -137,6 +147,21 @@ contextBridge 复制之前合并写入；不能在 `createJSONStorage` 后再排
 
 Zustand persist 即使收到 `set((state) => state)` 也会调用存储适配器。
 已知无需更新的后台事件应在调用 `set` 之前返回，保留无标题首条用户消息的标题提取。
+
+### persist 回灌不会补 `emptyProjection`
+
+会话 store 没有自定义 `merge`：persist 把磁盘对象整段盖进内存。`emptyProjection`
+只服务新建会话，旧盘（v1、`partialize` 补字段前）缺的运行态集合**不会**被默认值填上。
+`applyAgentEvent` 入口会归一这些字段，但卡死巡检、设置订阅这类读点**不经过 reducer**。
+
+因此形状变更必须同时做两件事：
+
+1. `SESSIONS_VERSION` +1，在 `migrateSessions` 里按 `emptyProjection` 补空集合
+   （缺或 `null` 才写空值，已有非空保持原样）。不要放 `onRehydrateStorage`，
+   原因见 [../main/settings-persistence.md](../main/settings-persistence.md)。
+2. 新读点对 `toolOutputs` / `pendingApprovals` / `pendingAsks` / `backgroundTasks` /
+   `subagents` 一律经可测纯函数容错（`stallLiveWorkFlags`），不要直接 `Object.keys` /
+   `.length` / `.some`。巡检不经 reducer，只靠 migrate 挡不住尚未回写的旧盘。
 
 ## 多窗口同步
 
