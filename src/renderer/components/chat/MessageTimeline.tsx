@@ -25,9 +25,9 @@ import { ChatSearchHighlightContext } from './highlightQuery';
 import { NavRail } from './NavRail';
 import { isCompactRow, TimelineRow } from './TimelineRow';
 
-/** 消息列/输入区共用的列：阶梯 max-w + 水平 padding。padding 必须在列上而不是 @container 上，否则两侧查询宽度差 2rem，会在断点附近上下错位。 */
+/** 消息列/输入区共用的列：阶梯 max-w + 水平 padding。padding 必须在列上而不是 @container 上，否则两侧查询宽度差 2rem，会在断点附近上下错位。默认到 4xl 保持原阅读宽度，更宽再逐级加档。 */
 export const CHAT_COL =
-  'mx-auto w-full max-w-3xl px-4 @min-[56rem]:max-w-4xl @min-[72rem]:max-w-5xl @min-[96rem]:max-w-6xl';
+  'mx-auto w-full max-w-2xl px-4 @min-[56rem]:max-w-3xl @min-[72rem]:max-w-4xl @min-[84rem]:max-w-5xl @min-[96rem]:max-w-6xl @min-[112rem]:max-w-7xl';
 
 /** 贴底判定阈值（px）：与旧实现一致，离底 40px 内视为贴底 */
 const AT_BOTTOM_THRESHOLD = 40;
