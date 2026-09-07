@@ -47,6 +47,41 @@ export function needsHistoryHydration(conversation: {
   );
 }
 
+/** 输入框 busy：有权威正文后不再因 spawn/读历史锁输入 */
+export function chatSurfaceBusy(conversation: {
+  started: boolean;
+  sessionFile?: string;
+  messages: readonly { optimistic?: boolean }[];
+  spawning: boolean;
+  status?: string;
+}): boolean {
+  if (conversation.status === 'running') return true;
+  if (hasAuthoritativeMessages(conversation.messages)) return false;
+  return needsHistoryHydration(conversation) || conversation.spawning;
+}
+
+/** 时间线脚点：空窗读历史 / spawn / 乐观未确认 / running 立刻出 loading */
+export function chatTimelineBusy(conversation: {
+  started?: boolean;
+  sessionFile?: string;
+  messages: readonly { optimistic?: boolean }[];
+  spawning: boolean;
+  status?: string;
+}): boolean {
+  return (
+    conversation.status === 'running' ||
+    conversation.spawning ||
+    conversation.messages.some((message) => message.optimistic) ||
+    needsHistoryHydration({
+      started: conversation.started === true,
+      sessionFile: conversation.sessionFile,
+      messages: conversation.messages,
+      spawning: conversation.spawning,
+      status: conversation.status,
+    })
+  );
+}
+
 export function isBulkyAgentEvent(type: string): boolean {
   return type === 'message-upsert' || type === 'session-custom-entry';
 }
@@ -67,4 +102,14 @@ export function evictColdMessages<T extends { messages: unknown[]; customEntries
     changed = true;
   }
   return changed ? next : conversations;
+}
+
+/** 已删会话的浏览/resync 时间戳不再占表 */
+export function pruneSessionClocks(
+  clocks: Record<string, number>,
+  knownIds: ReadonlySet<string>
+): void {
+  for (const id of Object.keys(clocks)) {
+    if (!knownIds.has(id)) delete clocks[id];
+  }
 }

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  chatSurfaceBusy,
+  chatTimelineBusy,
   evictColdMessages,
   isBulkyAgentEvent,
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
   needsHistoryHydration,
+  pruneSessionClocks,
   viewedConversationId,
 } from './messageCache';
 
@@ -36,6 +39,12 @@ describe('messageCache', () => {
     expect(next.hot).toBe(conversations.hot);
     expect(next.stale).toEqual({ messages: [], customEntries: [], historyBaseIndex: undefined });
     expect(next.empty).toBe(conversations.empty);
+  });
+
+  it('drops clocks for deleted conversations', () => {
+    const clocks = { keep: 1, gone: 2 };
+    pruneSessionClocks(clocks, new Set(['keep']));
+    expect(clocks).toEqual({ keep: 1 });
   });
 
   it('message-upsert and custom entries are bulky', () => {
@@ -101,6 +110,77 @@ describe('needsHistoryHydration', () => {
         messages: [],
         spawning: false,
         status: 'failed',
+      })
+    ).toBe(false);
+  });
+});
+
+describe('chatSurfaceBusy', () => {
+  it('尾巴上屏后不再锁输入，即使还在 spawn', () => {
+    expect(
+      chatSurfaceBusy({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        messages: [{}],
+        spawning: true,
+      })
+    ).toBe(false);
+    expect(
+      chatSurfaceBusy({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        messages: [],
+        spawning: true,
+      })
+    ).toBe(true);
+    expect(
+      chatSurfaceBusy({
+        started: true,
+        messages: [{}],
+        spawning: false,
+        status: 'running',
+      })
+    ).toBe(true);
+  });
+
+  it('尾巴上屏后 spawn 仍要在时间线出 loading', () => {
+    expect(
+      chatTimelineBusy({
+        messages: [{}],
+        spawning: true,
+        status: 'idle',
+      })
+    ).toBe(true);
+    expect(
+      chatTimelineBusy({
+        messages: [{ optimistic: true }],
+        spawning: false,
+        status: 'idle',
+      })
+    ).toBe(true);
+    expect(
+      chatTimelineBusy({
+        messages: [{}],
+        spawning: false,
+        status: 'idle',
+      })
+    ).toBe(false);
+  });
+
+  it('空窗等尾巴时时间线 busy，避免露出空聊天态', () => {
+    expect(
+      chatTimelineBusy({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        messages: [],
+        spawning: false,
+      })
+    ).toBe(true);
+    expect(
+      chatTimelineBusy({
+        started: false,
+        messages: [],
+        spawning: false,
       })
     ).toBe(false);
   });
