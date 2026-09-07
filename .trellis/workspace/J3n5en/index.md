@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
+- **Total Sessions**: 23
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~707 | Active |
+| `journal-1.md` | ~729 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-09-08 | 升级 pi-cursor 到 1.4.32 | `0c767cf9`, `2da9fd9b` | `dev` |
 | 22 | 2026-09-08 | 对齐 origin/dev 并收口未更新工作区 | `ac1ddadf`, `0c932262`, `9456e896` | `dev` |
 | 21 | 2026-09-08 | 切回半截回复时强制对齐 snapshot | `d516d52e`, `efbaf658` | `dev` |
 | 20 | 2026-09-07 | 上滑历史 loading 与到头提示 | `6dc34d3b`, `3deb31ce` | `dev` |

@@ -705,3 +705,25 @@ rebase 合入远端 Hashline #64 与 pair VPN 修复；短会话不上报到头�
 ### Next Steps
 
 - 本地 dev 仍超前 origin/dev 未 push
+
+
+## Session 23: 升级 pi-cursor 到 1.4.32
+
+**Date**: 2026-09-08
+**Task**: 升级 pi-cursor 到 1.4.32
+**Branch**: `dev`
+
+### Summary
+
+将 @rahularya01/pi-cursor 从 1.4.31 升到 1.4.32，按 minify 改名重打 hooks-only 补丁（xl/Tm），不再删除 modelDetails（上游 #23 已合入）。cursor 测试全绿。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c767cf9` | (see git log) |
+| `2da9fd9b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
