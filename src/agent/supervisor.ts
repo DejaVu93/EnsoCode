@@ -102,6 +102,11 @@ import { createExploreFoldState, createExploreFoldTools } from './exploreFold';
 import { OperationGate } from './gate';
 import { createGoalTools } from './goal';
 import { readHarnessRuleFiles, resolveHarnessSkillRoots } from './harnessAssets';
+import { createHashlineIo } from './hashline/io';
+import { applyHashlineSessionTools } from './hashline/sessionTools';
+import { InMemorySnapshotStore } from './hashline/snapshots';
+import { wrapHashlineEditDefinition } from './hashline/tools';
+import { withHashlineWrite } from './hashline/withWrite';
 import { McpManager } from './mcp';
 import { createMessageCoworkerTool } from './messageCoworker';
 import { createMessageMainTool } from './messageMain';
@@ -710,6 +715,7 @@ export class SessionSupervisor {
           command.windowsLocalShell,
           command.exploreFoldEnabled,
           command.bashInterceptEnabled,
+          command.hashlineEditEnabled,
           command.smartCompactEnabled,
           command.smartCompactSummaryModel,
           command.smartCompactMode
@@ -1091,6 +1097,7 @@ export class SessionSupervisor {
     windowsLocalShell?: WindowsLocalShell,
     exploreFoldEnabled = false,
     bashInterceptEnabled = false,
+    hashlineEditEnabled = false,
     smartCompactEnabled = false,
     smartCompactSummaryModel?: SpawnModelConfig,
     smartCompactMode?: SmartCompactMode
@@ -1216,23 +1223,50 @@ export class SessionSupervisor {
     // 只读探索四件套(read/grep/find/ls,免审):readonly 子代理的全部工具,也是 base 的底座。
     // 远程会话经 operations 注入落到 ssh(grep 无注入点,换整个定义)
     const structuredById = new Map<string, unknown>();
+    const hashlineStore = new InMemorySnapshotStore();
+    const hashlineIo = createHashlineIo({
+      cwd,
+      remote: remoteOps
+        ? { readFile: remoteOps.read.readFile, writeFile: remoteOps.edit.writeFile }
+        : undefined,
+    });
     const wrapRead = (definition: Def): Def => withAgentRead(definition, () => structuredById);
-    const readOnlyTools = (): Def[] =>
-      remoteOps && sshExecutor
+    const applyHashline = <T extends Def>(tools: { read: T; grep: T; edit?: T }) =>
+      applyHashlineSessionTools({
+        enabled: hashlineEditEnabled,
+        store: hashlineStore,
+        io: hashlineIo,
+        wrapOuterRead: wrapRead,
+        ...tools,
+      });
+    const readOnlyTools = (): Def[] => {
+      const stock =
+        remoteOps && sshExecutor
+          ? {
+              read: createReadToolDefinition(cwd, {
+                operations: remoteOps.read,
+              }) as unknown as Def,
+              grep: createRemoteGrepToolDefinition(cwd, sshExecutor) as unknown as Def,
+            }
+          : {
+              read: createReadToolDefinition(cwd) as unknown as Def,
+              grep: createGrepToolDefinition(cwd) as unknown as Def,
+            };
+      const { read, grep } = applyHashline(stock);
+      return remoteOps && sshExecutor
         ? [
-            wrapRead(
-              createReadToolDefinition(cwd, { operations: remoteOps.read }) as unknown as Def
-            ),
-            createRemoteGrepToolDefinition(cwd, sshExecutor) as unknown as Def,
+            read,
+            grep,
             createFindToolDefinition(cwd, { operations: remoteOps.find }) as unknown as Def,
             createLsToolDefinition(cwd, { operations: remoteOps.ls }) as unknown as Def,
           ]
         : [
-            wrapRead(createReadToolDefinition(cwd) as unknown as Def),
-            createGrepToolDefinition(cwd) as unknown as Def,
+            read,
+            grep,
             createFindToolDefinition(cwd) as unknown as Def,
             createLsToolDefinition(cwd) as unknown as Def,
           ];
+    };
     // 后台任务 manager 本体始终本地 spawn:远程会话把命令变换成本地 ssh 命令
     const backgroundTransform = remote
       ? (command: string, taskCwd: string) => {
@@ -1269,6 +1303,14 @@ export class SessionSupervisor {
       // 写范围在审批之外:越界直接拒绝,不占用审批也不落盘
       const scoped = (kind: 'file-edit' | 'file-write', definition: Def): Def =>
         withWriteScope(withApproval(toolGate, kind, guarded(definition)), cwd, writeScope);
+      const stockEdit = createNormalizedEditTool(
+        cwd,
+        remoteOps ? { operations: remoteOps.edit } : undefined
+      ) as unknown as Def;
+      const stockWrite = createWriteToolDefinition(
+        cwd,
+        remoteOps ? { operations: remoteOps.write } : undefined
+      ) as unknown as Def;
       return [
         ...readOnlyTools(),
         withApproval(
@@ -1293,14 +1335,17 @@ export class SessionSupervisor {
         ),
         scoped(
           'file-edit',
-          createNormalizedEditTool(cwd, remoteOps ? { operations: remoteOps.edit } : undefined)
+          hashlineEditEnabled
+            ? wrapHashlineEditDefinition(stockEdit, {
+                store: hashlineStore,
+                readText: hashlineIo.readText,
+                writeText: hashlineIo.writeText,
+              })
+            : stockEdit
         ),
         scoped(
           'file-write',
-          createWriteToolDefinition(
-            cwd,
-            remoteOps ? { operations: remoteOps.write } : undefined
-          ) as unknown as Def
+          hashlineEditEnabled ? withHashlineWrite(stockWrite, hashlineStore) : stockWrite
         ),
       ];
     };

@@ -111,6 +111,7 @@ const SUMMARY_KEYS = [
 ];
 
 const PATH_SUMMARY_KEYS = new Set(['path', 'file_path']);
+const HASHLINE_HEADER = /^\[(.+)#([0-9A-Fa-f]{4})\]$/;
 
 /** 项目内绝对路径收成相对路径；前缀碰巧相同的目录不误切 */
 export function toProjectRelativePath(value: string, cwd?: string): string {
@@ -125,6 +126,16 @@ export function toProjectRelativePath(value: string, cwd?: string): string {
   return value;
 }
 
+function hashlinePathFromInput(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  for (const line of input.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    return HASHLINE_HEADER.exec(trimmed)?.[1];
+  }
+  return undefined;
+}
+
 function summarizeArgs(args: unknown, cwd?: string): string {
   if (!args || typeof args !== 'object') return '';
   const record = args as Record<string, unknown>;
@@ -134,6 +145,8 @@ function summarizeArgs(args: unknown, cwd?: string): string {
       return PATH_SUMMARY_KEYS.has(key) ? toProjectRelativePath(value, cwd) : value;
     }
   }
+  const hashlinePath = hashlinePathFromInput(record.input);
+  if (hashlinePath) return toProjectRelativePath(hashlinePath, cwd);
   const json = JSON.stringify(record);
   return json === '{}' ? '' : json.slice(0, 80);
 }
@@ -166,6 +179,16 @@ function extractEdits(name: string, args: unknown): EditBlock[] | null {
       typeof (e as EditBlock).newText === 'string'
   );
   return ok ? (edits as EditBlock[]) : null;
+}
+
+/** Hashline edit 无 edits[] 时，用 toolResult 前后全文合成一块可渲 diff */
+function extractHashlineDiff(
+  name: string,
+  editDiff: { oldText: string; newText: string } | null | undefined
+): EditBlock[] | null {
+  if (name !== 'edit' || !editDiff) return null;
+  if (typeof editDiff.oldText !== 'string' || typeof editDiff.newText !== 'string') return null;
+  return [{ oldText: editDiff.oldText, newText: editDiff.newText }];
 }
 
 const partText = (message: ProjectedMessage): string =>
@@ -262,6 +285,7 @@ function buildMessageTimeline(
       todos: TodoItem[] | null;
       durationMs: number | null;
       agentMeta: { modelId?: string; outputTokens?: number; steps?: number } | null;
+      editDiff: { oldText: string; newText: string } | null;
     }
   >();
   for (const message of messages) {
@@ -272,6 +296,7 @@ function buildMessageTimeline(
         todos: message.todos ?? null,
         durationMs: message.toolDurationMs ?? null,
         agentMeta: message.subagentMeta ?? null,
+        editDiff: message.editDiff ?? null,
       });
     }
   }
@@ -433,7 +458,9 @@ function buildMessageTimeline(
                 : running
                   ? 'ok'
                   : 'error',
-            edits: extractEdits(part.name, part.arguments),
+            edits:
+              extractEdits(part.name, part.arguments) ??
+              extractHashlineDiff(part.name, result?.editDiff),
             writeContent: extractWriteContent(part.name, part.arguments),
             todos: result?.todos ?? null,
             durationMs: result?.durationMs ?? null,
