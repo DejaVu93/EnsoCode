@@ -8,6 +8,7 @@ import { listClaudeSessions, readClaudeSession } from './claudeCode';
 import { listCodexSessions, readCodexSession } from './codex';
 import { listCursorSessions, readCursorSession } from './cursor';
 import { listGrokSessions, readGrokSession } from './grok';
+import { listOhMyPiSessions, listPiSessions, readPiV3Session } from './pi';
 import { writePiSession } from './piJsonl';
 
 interface SessionReader {
@@ -27,6 +28,13 @@ const READERS: SessionReader[] = [
   { sourceId: 'codex', sourceName: 'Codex', list: listCodexSessions, read: readCodexSession },
   { sourceId: 'grok', sourceName: 'Grok CLI', list: listGrokSessions, read: readGrokSession },
   { sourceId: 'cursor', sourceName: 'Cursor', list: listCursorSessions, read: readCursorSession },
+  { sourceId: 'pi', sourceName: 'pi', list: listPiSessions, read: readPiV3Session },
+  {
+    sourceId: 'oh-my-pi',
+    sourceName: 'oh-my-pi',
+    list: listOhMyPiSessions,
+    read: readPiV3Session,
+  },
 ];
 
 const readerOf = (sourceId: string): SessionReader | undefined =>

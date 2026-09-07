@@ -324,6 +324,115 @@ describe('Cursor 会话', () => {
   });
 });
 
+const piSessionFile = (home: string, root: '.pi' | '.omp', dirName: string, id: string) => {
+  const dir = path.join(home, root, 'agent', 'sessions', dirName);
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${id}.jsonl`);
+};
+
+const piHeader = (cwd: string) => ({ type: 'session', version: 3, id: 'sid', cwd });
+const piTurn = (role: string, content: unknown[]) => ({ type: 'message', message: { role, content } });
+const piText = (text: string) => ({ type: 'text', text });
+
+describe('pi / oh-my-pi 会话', () => {
+  const projectPath = '/tmp/demo';
+
+  it('列出 .pi 下 cwd 匹配的会话，来源为 pi，path 是 jsonl 本身', () => {
+    const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([piHeader(projectPath), piTurn('user', [piText('hi')])])
+    );
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'pi');
+    expect(source?.sourceName).toBe('pi');
+    expect(source?.sessions.map((s) => s.path)).toEqual([file]);
+  });
+
+  it('列出 .omp 下同样形状的会话，来源为 oh-my-pi', () => {
+    const file = piSessionFile(tmp, '.omp', '-project-billcom-web', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([piHeader(projectPath), piTurn('user', [piText('hi')])])
+    );
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'oh-my-pi');
+    expect(source?.sourceName).toBe('oh-my-pi');
+    expect(source?.sessions.map((s) => s.path)).toEqual([file]);
+  });
+
+  it('标题优先用非空的 title 行', () => {
+    const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        { type: 'title', title: '重构导入流程' },
+        piHeader(projectPath),
+        piTurn('user', [piText('先看看导入')]),
+      ])
+    );
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'pi');
+    expect(source?.sessions[0].title).toBe('重构导入流程');
+  });
+
+  it('title 为空时回退到首条 user 文本', () => {
+    const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        { type: 'title', title: '' },
+        piHeader(projectPath),
+        piTurn('user', [piText('先看看导入')]),
+      ])
+    );
+    const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'pi');
+    expect(source?.sessions[0].title).toContain('先看看导入');
+  });
+
+  it('读取时只收 text part，跳过 thinking', () => {
+    const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        piHeader(projectPath),
+        piTurn('user', [piText('构建挂了')]),
+        piTurn('assistant', [{ type: 'thinking', thinking: '想想' }, piText('已修复')]),
+      ])
+    );
+    expect(readExternalSession('pi', file)).toEqual([
+      expect.objectContaining({ role: 'user', text: '构建挂了' }),
+      expect.objectContaining({ role: 'assistant', text: '已修复' }),
+    ]);
+  });
+
+  it('oh-my-pi 读取走同一套 v3 解析', () => {
+    const file = piSessionFile(tmp, '.omp', '-project-billcom-web', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        piHeader(projectPath),
+        piTurn('user', [piText('你好')]),
+        piTurn('assistant', [piText('在')]),
+      ])
+    );
+    expect(readExternalSession('oh-my-pi', file).map((m) => m.text)).toEqual(['你好', '在']);
+  });
+
+  it('目录名像当前项目但 header cwd 不匹配时不出现', () => {
+    const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
+    fs.writeFileSync(
+      file,
+      jsonl([piHeader('/tmp/other'), piTurn('user', [piText('hi')])])
+    );
+    expect(listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'pi')).toBeUndefined();
+  });
+
+  it('损坏的 jsonl 与缺失文件都返回空消息且不抛错', () => {
+    const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
+    fs.writeFileSync(file, `not-json\n${JSON.stringify(piHeader(projectPath))}\n`);
+    expect(readExternalSession('pi', file)).toEqual([]);
+    expect(readExternalSession('pi', path.join(path.dirname(file), 'missing.jsonl'))).toEqual([]);
+  });
+});
+
 describe('writePiSession', () => {
   it('产出 header + 消息链，parentId 依次串联', () => {
     const file = writePiSession(
