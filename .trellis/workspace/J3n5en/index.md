@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-09-07
+- **Total Sessions**: 22
+- **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~632 | Active |
+| `journal-1.md` | ~707 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-09-08 | 对齐 origin/dev 并收口未更新工作区 | `ac1ddadf`, `0c932262`, `9456e896` | `dev` |
+| 21 | 2026-09-08 | 切回半截回复时强制对齐 snapshot | `d516d52e`, `efbaf658` | `dev` |
 | 20 | 2026-09-07 | 上滑历史 loading 与到头提示 | `6dc34d3b`, `3deb31ce` | `dev` |
 | 19 | 2026-09-07 | Files tree refresh after Agent writes | `41296583`, `197b4884` | `enso/9090acd8` |
 | 18 | 2026-09-07 | Fix persist rehydrate Object.keys crash | `19cc44fe`, `60f8c76e` | `dev` |

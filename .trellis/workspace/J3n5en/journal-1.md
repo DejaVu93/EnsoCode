@@ -630,3 +630,78 @@ Completed Agent writes now refresh the Files tree and expand ancestors without a
 ### Next Steps
 
 - README 与截图仍是工作区脏文件，不在本任务范围
+
+
+## Session 21: 切回半截回复时强制对齐 snapshot
+
+**Date**: 2026-09-08
+**Task**: 切回半截回复会话时强制对齐 snapshot
+**Branch**: `dev`
+
+### Summary
+
+切走超过热窗口后后台 `message-upsert` 被丢，本地留下半截权威正文；切回时不再因已有权威消息跳过 `requestSnapshot`。`lastViewedAt` 改为离开时盖章，TTL 从离开起算。任务已归档。
+
+### Main Changes
+
+- `needsWorkerSnapshot` 门控切回对齐，半截权威正文也要 snapshot
+- `needsHistoryHydration` 只继续门控 jsonl 尾窗
+- `stampViewDeparture` 离开才盖章，正在看的会话由 viewedId 保热
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `36a29323` | (see git log) |
+| `6d75061c` | (see git log) |
+
+### Testing
+
+- [OK] vitest: sessions index / messageCache 75 通过
+- [OK] biome: 本次改动文件干净
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 时间线到头提示已在后续提交 `ac1ddadf` 落地：短会话不上报「对话开头」
+
+
+## Session 22: 对齐 origin/dev 并收口未更新工作区
+
+**Date**: 2026-09-08
+**Task**: 对齐 origin/dev 并收口未更新工作区
+**Branch**: `dev`
+
+### Summary
+
+rebase 合入远端 Hashline #64 与 pair VPN 修复；短会话不上报到头提示；归档 session-import 与 hashline 任务。
+
+### Main Changes
+
+- rebase origin/dev：合入 d8924e15 Hashline 与 5d40e248 pair VPN 掉线修复
+- historyPageChrome 增加 everHadOlder：一页就完的短会话不再显示对话开头
+- 归档 09-08-session-import-all-sources 与 09-07-hashline-edit
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ac1ddadf` | (see git log) |
+| `0c932262` | (see git log) |
+| `9456e896` | (see git log) |
+
+### Testing
+
+- [OK] vitest src/renderer/stores/sessions/timeline.test.ts 113 通过
+- [OK] biome check 本次时间线改动文件干净
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 本地 dev 仍超前 origin/dev 未 push
