@@ -7,6 +7,7 @@ import {
   hasLiveGenerationWork,
   nextStallWatchAction,
   shouldAbortStalledGeneration,
+  stallLiveWorkFlags,
 } from '@/stores/sessions/stallTimeout';
 import { useSettingsStore } from '@/stores/settings';
 
@@ -39,13 +40,7 @@ export function useGenerationStallTimeout(): void {
             now,
             timeoutMs,
             hasLiveWork: hasLiveGenerationWork({
-              pendingApprovals: conversation.pendingApprovals.length,
-              pendingAsks: conversation.pendingAsks.length,
-              runningBackgroundTasks: conversation.backgroundTasks.some(
-                (task) => task.status === 'running'
-              ),
-              runningSubagents: conversation.subagents.some((agent) => agent.status === 'running'),
-              hasToolOutput: Object.keys(conversation.toolOutputs).length > 0,
+              ...stallLiveWorkFlags(conversation),
               liveCoworker,
               inFlightTools: hasInFlightToolCalls(conversation.messages),
             }),

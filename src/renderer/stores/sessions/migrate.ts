@@ -8,38 +8,65 @@
  */
 
 /** 当前持久化数据版本；改数据形状时 +1 并在 `migrateSessions` 里加一段 */
-export const SESSIONS_VERSION = 1;
+export const SESSIONS_VERSION = 2;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
 
 /**
  * v0 → v1：started 是运行态，历史版本误将其持久化，导致重启后 ChatView 的
  * `!started` 自动恢复门永假（会话点开空白、无报错、不重试）。一律清 false；
  * 无 sessionFile 的已启动会话重启后无从回放，落终态并带错误文案。
  */
+function migrateConversationV1(conversation: Record<string, unknown>): Record<string, unknown> {
+  const orphaned = conversation.started === true && !conversation.sessionFile;
+  return {
+    ...conversation,
+    started: false,
+    ...(orphaned
+      ? { status: 'failed', error: 'Session ended — history not restored' }
+      : { status: 'idle' }),
+  };
+}
+
+/** v1 → v2：旧 persist 缺运行态集合，卡死巡检会对 undefined 做 Object.keys。 */
+function migrateConversationV2(conversation: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...conversation,
+    toolOutputs: asRecord(conversation.toolOutputs),
+    toolStartedAt: asRecord(conversation.toolStartedAt),
+    pendingApprovals: asArray(conversation.pendingApprovals),
+    pendingAsks: asArray(conversation.pendingAsks),
+    backgroundTasks: asArray(conversation.backgroundTasks),
+    subagents: asArray(conversation.subagents),
+    customEntries: asArray(conversation.customEntries),
+    dispatchMainEvents: asRecord(conversation.dispatchMainEvents),
+  };
+}
+
 export function migrateSessions(persisted: unknown, version: number): unknown {
   if (version >= SESSIONS_VERSION) return persisted;
-  if (!persisted || typeof persisted !== 'object' || Array.isArray(persisted)) return persisted;
+  if (!isRecord(persisted)) return persisted;
 
-  const state = { ...(persisted as Record<string, unknown>) };
-  const conversations = state.conversations;
-  if (!conversations || typeof conversations !== 'object' || Array.isArray(conversations)) {
-    return state;
-  }
+  const state = { ...persisted };
+  if (!isRecord(state.conversations)) return state;
 
   state.conversations = Object.fromEntries(
-    Object.entries(conversations as Record<string, unknown>).map(([id, entry]) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return [id, entry];
-      const conversation = entry as Record<string, unknown>;
-      const orphaned = conversation.started === true && !conversation.sessionFile;
-      return [
-        id,
-        {
-          ...conversation,
-          started: false,
-          ...(orphaned
-            ? { status: 'failed', error: 'Session ended — history not restored' }
-            : { status: 'idle' }),
-        },
-      ];
+    Object.entries(state.conversations).map(([id, entry]) => {
+      if (!isRecord(entry)) return [id, entry];
+      let conversation = entry;
+      if (version < 1) conversation = migrateConversationV1(conversation);
+      if (version < 2) conversation = migrateConversationV2(conversation);
+      return [id, conversation];
     })
   );
   return state;
