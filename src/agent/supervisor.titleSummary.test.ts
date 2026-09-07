@@ -61,7 +61,11 @@ const text = (value: string, stopReason = 'stop') => ({
 });
 
 /** 永不 resolve、只响应 abort 的补全：模拟慢模型 */
-function hanging(): (model: unknown, context: unknown, options: { signal: AbortSignal }) => Promise<unknown> {
+function hanging(): (
+  model: unknown,
+  context: unknown,
+  options: { signal: AbortSignal }
+) => Promise<unknown> {
   return (_model, _context, { signal }) =>
     new Promise((resolve) => {
       signal.addEventListener('abort', () => resolve(text('', 'aborted')), { once: true });
