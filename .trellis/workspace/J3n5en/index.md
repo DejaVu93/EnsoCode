@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 24
+- **Total Sessions**: 25
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 25 | 2026-09-08 | 标题总结：回退链多候选、递增超时、失败红叹号与手动重试 | `89892db`, `99c1bd7`, `e8ca4c4`, `c57ddc4`, `0713e0e`, `574d7a2`, `5888f82` | `dev` |
 | 24 | 2026-09-08 | Force read/find promptGuidelines + Hashline read 高亮/edit diff/offset 修复 | `19bf6963`, `4408183a`, `2d7c5ea5`, `d2998bbb` | `dev` |
 | 23 | 2026-09-08 | 升级 pi-cursor 到 1.4.32 | `0c767cf9`, `2da9fd9b` | `dev` |
 | 22 | 2026-09-08 | 对齐 origin/dev 并收口未更新工作区 | `ac1ddadf`, `0c932262`, `9456e896` | `dev` |

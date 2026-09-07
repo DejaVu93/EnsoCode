@@ -751,3 +751,31 @@ Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 re
 ### Status
 
 [OK] **Completed**
+
+---
+
+## Session 25: 标题总结：回退链多候选、递增超时、失败红叹号与手动重试
+
+**Date**: 2026-09-07
+**Task**: 标题总结：回退链多候选、递增超时、失败红叹号与手动重试
+**Branch**: `dev`
+
+### Summary
+
+标题总结从「取第一个可解析候选、15s 静默丢弃」改为：Main 下发回退链全部可解析候选（标题模型→全局默认→会话模型，去重≤3），worker 按序尝试并 60/120/180s 递增超时，结果加「像不像标题」守卫拦下 composer 类模型的多句叙述；全失败回新旁路事件 title-failed，error 含模型标识与原因。renderer 新增不持久化的 titleSummaryPending/titleSummaryError/lastTurnDigest，侧栏标题后转圈/红叹号共用一个状态槽，hover 见原因，点击叹号一键重试（有 digest 走 rolling，否则 initial）且不切会话。TDD 分层 Red-Green，6 个 commit。真机 CDP 隔离实例验证：Cursor 订阅下 composer-2.5-fast 与 grok-4.6 在标题 prompt 下均不听指令 120s 不回，失败路径与红叹号/重试/模型标识全部命中；追加 haiku 作候选后 title-generated 正常写回。全量测试 17 个失败文件在基线 06bdeb9 同样失败（Windows symlink/SSH/shellPath 存量），biome 全仓 format 报错为 CRLF 环境存量。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `89892db` | (see git log) |
+| `99c1bd7` | (see git log) |
+| `e8ca4c4` | (see git log) |
+| `c57ddc4` | (see git log) |
+| `0713e0e` | (see git log) |
+| `574d7a2` | (see git log) |
+| `5888f82` | (see git log) |
+
+### Status
+
+[OK] **Completed**
