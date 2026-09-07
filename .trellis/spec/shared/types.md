@@ -192,6 +192,46 @@ export interface McpCandidate {
 
 新增扫描来源时保持这个切分，不要图省事把明文塞进候选类型。
 
+## 子模型条目可用性契约
+
+### Scope / Trigger
+
+修改 `SubagentModelEntry`、子模型设置、Enso 更新能力或便携配置时都要核对；条目可用性不是推理开关。
+
+### Signatures
+
+`SubagentModelEntry.enabled?: boolean`；`updateSubagentModel(id, { enabled })` 只改条目。
+`pickSubagentModelRefs(entries, providers)` 输出不带 disabled 条目；`reasoning?: 'on' | 'off'` 仍是独立推理覆盖。
+
+### Contracts
+
+缺省 enabled=true；false 保留描述和推理配置，仅移出候选。过滤必须在 provider/model 去重**之前**。
+候选由 Main 在 parent spawn 时下发，已有 parent 不热更新；UI 必须简短说明新启动会话生效，不打断现有子任务。
+便携 codec 的 SUBAGENT_MODEL_KEYS 必须包含 enabled；Enso 能力重建条目时不得遗漏已持久化 enabled。
+
+### Validation & Error Matrix
+
+| 输入 | 行为 |
+| --- | --- |
+| 缺 enabled | 兼容旧数据，启用 |
+| enabled=false | 不输出候选，配置原样保留 |
+| enabled=true | 仍受 provider 凭证/模型行可用性约束 |
+| 便携包 enabled 非布尔 | codec 拒绝，不静默转 true |
+
+### Good / Base / Bad Cases
+
+Good：关 A、B 继续可用，开 A 后原描述和深度仍在。Base：旧配置无 enabled 正常可用。
+Bad：编辑 A 的描述后 enabled 丢失、A 悄悄重新启用；禁用的重复条目抢占后续启用条目的去重键。
+
+### Tests Required
+
+selector 过滤/去重，settings update→持久化→rehydrate，codec 明文/加密 roundtrip，merge/replace 导入，gateway 描述更新均需断言 enabled 与相邻配置不变。
+
+### Wrong vs Correct
+
+Wrong：只在 React 隐藏行，或重建 `{ id, providerId, modelId, description }` 丢掉 enabled。
+Correct：保留原条目配置，Main 在生成候选列表时执行 `if (entry.enabled === false) continue`。
+
 ## 厂商短文案必须上游限长
 
 `OauthAccount.plan` 和 `OauthUsageWindow.label` 来自厂商 JWT / 额度接口，

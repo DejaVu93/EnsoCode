@@ -110,3 +110,16 @@
   <p className="mt-1 text-muted-foreground text-xs">{t('...引导下一步操作')}</p>
 </div>
 ```
+
+## 子模型思考与条目开关
+
+条目 enabled（可供派发）和 reasoning（是否思考）是两个开关。禁用条目保留编辑内容，显示“已停用”。
+思考 popup 使用三态：Follow 清除 reasoning/thinkingLevel；On 立即显示滑块，缺档位时同时写入支持的默认档；Off 隐藏滑块但保留上次程度。
+不能再叠“自定义”“深度跟随”要求第二次点击，也不要拿全局默认值伪装父会话状态。
+
+`ModelPicker` 主聊天保留二态开关；子模型传 `reasoningMode` 和 `onReasoningModeChange(mode, level)`。
+自定义子模型编辑允许条目覆盖 provider 行，选择的努力档不能反过来缩小滑块而无法升档；OAuth 仍以 catalog 支持集为界。
+
+Slider tick 与 thumb 必须共用 `index / max(1, levels.length - 1)` 坐标。不要用等宽 flex 格子中心画刻度。
+本选择器局部用 `thumbAlignment="center"` 并去除 indicator 起点外边距；单档 min=0/max=1/value=0 且 disabled。
+回归验收要真实测量 thumb center、fill right、tick x；SSR/mock Slider 只能验证 props，不能证明布局对齐。
