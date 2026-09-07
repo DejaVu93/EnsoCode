@@ -508,6 +508,7 @@ function parseSubagentModelFields(
       providerId,
       modelId,
       description,
+      ...(typeof existing?.enabled === 'boolean' ? { enabled: existing.enabled } : {}),
       ...(reasoning ? { reasoning } : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
     },

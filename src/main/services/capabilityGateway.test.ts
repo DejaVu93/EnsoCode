@@ -5,7 +5,7 @@ import type {
   OauthFlowLocator,
   ReceiptLifecycleEvent,
 } from '@shared/capabilities/types';
-import type { ModelProvider, OauthLoginEvent } from '@shared/types';
+import type { ModelProvider, OauthLoginEvent, SubagentModelEntry } from '@shared/types';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentSessionIndex } from './agentSessionIndex';
 import {
@@ -14,6 +14,7 @@ import {
   type CapabilityGatewayTransport,
   createCapabilityHandlers,
 } from './capabilityGateway';
+import { pickSubagentModelRefs } from './subagentModels';
 
 const child: ChildSessionIdentity = {
   sessionId: 'parent::enso-1',
@@ -508,6 +509,53 @@ describe('CapabilityGateway OAuth/default/secret/receipt', () => {
     expect(added.modelResult).toMatchObject({ ok: false, code: 'unavailable' });
     const updated = await gateway.invoke(request('ssh-5', 'projects.ssh-connections.update', {}));
     expect(updated.modelResult).toMatchObject({ ok: false, code: 'unavailable' });
+  });
+
+  it.each([false, true, undefined])(
+    '子模型只更新描述时保留原有可用性 %s 和邻居',
+    async (enabled) => {
+      const { gateway, state } = fixture();
+      const entry: SubagentModelEntry = {
+        id: 'sub-model',
+        providerId: 'provider-1',
+        modelId: 'model-1',
+        description: '原说明',
+        reasoning: 'on',
+        thinkingLevel: 'high',
+        ...(enabled === undefined ? {} : { enabled }),
+      };
+      const neighbor = { ...entry, id: 'neighbor', enabled: false };
+      state.subagentModels = [entry, neighbor];
+      const updated = await gateway.invoke(
+        request('sm-description', 'providers.subagent-models.update', {
+          id: entry.id,
+          description: '新说明',
+        })
+      );
+      expect(updated.modelResult).toMatchObject({ ok: true });
+      expect(state.subagentModels).toStrictEqual([{ ...entry, description: '新说明' }, neighbor]);
+      expect(
+        pickSubagentModelRefs(state.subagentModels as SubagentModelEntry[], [provider()])
+      ).toHaveLength(enabled === false ? 0 : 1);
+    }
+  );
+
+  it('子模型更新能力不能夹带 enabled 重新开启禁用条目', async () => {
+    const { gateway, state, patchSettings } = fixture();
+    const entry = {
+      id: 'sub-model',
+      providerId: 'provider-1',
+      modelId: 'model-1',
+      description: '',
+      enabled: false,
+    };
+    state.subagentModels = [entry];
+    const updated = await gateway.invoke(
+      request('sm-reenable', 'providers.subagent-models.update', { id: entry.id, enabled: true })
+    );
+    expect(updated.modelResult).toMatchObject({ ok: false, code: 'invalid' });
+    expect(patchSettings).not.toHaveBeenCalled();
+    expect(state.subagentModels).toEqual([entry]);
   });
 
   it('subagent-models: list/toggle/add/update/remove 全链受控,引用与推理值校验', async () => {
