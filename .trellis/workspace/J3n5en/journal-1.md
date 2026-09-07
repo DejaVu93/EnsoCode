@@ -539,3 +539,36 @@ worker 只消费 token 并自动 refresh、状态经独立 IPC 通道（不污�
 ### Next Steps
 
 - 无
+
+
+## Session 18: Fix persist rehydrate Object.keys crash
+
+**Date**: 2026-09-07
+**Task**: Fix persist rehydrate Object.keys crash
+**Branch**: `dev`
+
+### Summary
+
+旧 v1 persist 回灌后缺 toolOutputs 等运行态集合，卡死巡检 Object.keys 崩溃。SESSIONS_VERSION 升到 2 在 migrate 补 emptyProjection 同形字段，stallLiveWorkFlags 对缺/null 当空。规格补：persist 整段覆盖、巡检不经 reducer。
+
+### Main Changes
+
+- migrateSessions v1→v2 补齐 toolOutputs/toolStartedAt/pending*/backgroundTasks/subagents/customEntries/dispatchMainEvents，已有非空值不动
+- 抽出 stallLiveWorkFlags，卡死 hook 不再直接 Object.keys/.length/.some
+- spec/renderer/state.md 记录 persist 回灌不补 emptyProjection 的双层防护
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `19cc44fe` | (see git log) |
+| `60f8c76e` | (see git log) |
+
+### Testing
+
+- [OK] vitest migrate.test.ts + stallTimeout.test.ts 19 通过（先红后绿）
+- [OK] biome check 干净；pnpm typecheck 4 条报错 stash 后仍在，属既有问题
+
+### Status
+
+[OK] **Completed**

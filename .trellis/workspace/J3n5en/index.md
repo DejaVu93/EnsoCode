@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-09-06
+- **Total Sessions**: 18
+- **Last Active**: 2026-09-07
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~537 | Active |
+| `journal-1.md` | ~574 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-09-07 | Fix persist rehydrate Object.keys crash | `19cc44fe`, `60f8c76e` | `dev` |
 | 17 | 2026-09-04 | 会话标题滚动总结 + 修首条总结被 sessionFile 守卫误杀 | `b829adc`, `72bff65`, `71ebc56`, `fee4dca`, `432a6c6`, `8942bbe`, `0f51813`, `2d3b056` | `dev` |
 | 16 | 2026-09-06 | Bash intercept switch (default off) | `c09ff4dc` | `enso/4e6016e3` |
 | 15 | 2026-09-04 | Cmd session switch and v0.1.19 | `159713a`, `a87e9ce`, `d505874`, `99db782`, `75f0ed5` | `dev` |
