@@ -258,6 +258,23 @@ describe('McpManager connection cache', () => {
       'fresh'
     );
   });
+
+  it('失败后短时不重连，TTL 过后再试', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    clientState.connect = vi.fn(async () => {
+      throw new Error('boom');
+    });
+    const { manager } = makeManager();
+    await manager.toolsFor([httpServer]);
+    expect(clientState.instances).toBe(1);
+    await manager.toolsFor([httpServer]);
+    expect(clientState.instances).toBe(1);
+    vi.setSystemTime(15_001);
+    await manager.toolsFor([httpServer]);
+    expect(clientState.instances).toBe(2);
+    vi.useRealTimers();
+  });
 });
 
 describe('McpManager per-server timeouts', () => {

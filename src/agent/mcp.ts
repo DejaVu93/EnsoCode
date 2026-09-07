@@ -215,12 +215,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  * MCP 连接管理：worker 级共享，按配置签名缓存（同配置只建一条连接，多会话复用）。
  * 连接保活到 worker 退出（closeAll）；不做引用计数，泄漏面由 worker 生命周期兜底。
  */
+const MCP_FAIL_TTL_MS = 15_000;
+
 export class McpManager {
   private readonly connections = new Map<string, Promise<Connection | null>>();
   /** 每条连接最近一次被下发的 token 指纹，用来区分「换了凭据」与「回传了旧凭据」 */
   private readonly dispatched = new Map<string, string>();
   /** 同 server 并发 stale 调用合并成一次重连 */
   private readonly reconnecting = new Map<string, Promise<Connection | null>>();
+  /** 失败短时负缓存：同凭据在 TTL 内不再打连接 */
+  private readonly failedUntil = new Map<string, { until: number; fingerprint: string }>();
 
   constructor(private readonly options: McpManagerOptions = { emit: () => {} }) {}
 
@@ -245,6 +249,10 @@ export class McpManager {
 
   private connectionFor(server: McpServerSpawnConfig): Promise<Connection | null> {
     const key = connectionKey(server);
+    const fingerprint = oauthFingerprint(server.oauth);
+    const failed = this.failedUntil.get(key);
+    if (failed && failed.fingerprint !== fingerprint) this.failedUntil.delete(key);
+    else if (failed && Date.now() < failed.until) return Promise.resolve(null);
     let pending = this.connections.get(key);
     if (pending) pending = this.applyDispatchedTokens(key, server, pending);
     if (!pending) {
@@ -253,13 +261,13 @@ export class McpManager {
         this.emitStatus(server, isUnauthorized(error) ? 'unauthorized' : 'error', {
           error: errorMessage(error),
         });
-        // 失败结果不缓存：下次 spawn 重试
         this.connections.delete(key);
+        this.failedUntil.set(key, { until: Date.now() + MCP_FAIL_TTL_MS, fingerprint });
         return null;
       });
       this.connections.set(key, pending);
     }
-    this.dispatched.set(key, oauthFingerprint(server.oauth));
+    this.dispatched.set(key, fingerprint);
     return pending;
   }
 
@@ -305,9 +313,11 @@ export class McpManager {
     if (previous === undefined || previous === fingerprint) return pending;
     if (!server.oauth) {
       this.connections.delete(key);
+      this.failedUntil.delete(key);
       void pending.then((connection) => connection?.client.close().catch(() => {}));
       return undefined;
     }
+    this.failedUntil.delete(key);
     const tokens = server.oauth;
     void pending.then((connection) => connection?.provider?.updateTokens(tokens));
     return pending;
