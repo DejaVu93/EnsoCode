@@ -38,9 +38,24 @@ const READERS: SessionReader[] = [
     list: listOhMyPiSessions,
     read: readPiV3Session,
   },
-  { sourceId: 'factory', sourceName: 'Factory', list: listFactorySessions, read: readFactorySession },
-  { sourceId: 'opencode', sourceName: 'OpenCode', list: listOpencodeSessions, read: readOpencodeSession },
-  { sourceId: 'gemini-cli', sourceName: 'Gemini CLI', list: listGeminiSessions, read: readGeminiSession },
+  {
+    sourceId: 'factory',
+    sourceName: 'Factory',
+    list: listFactorySessions,
+    read: readFactorySession,
+  },
+  {
+    sourceId: 'opencode',
+    sourceName: 'OpenCode',
+    list: listOpencodeSessions,
+    read: readOpencodeSession,
+  },
+  {
+    sourceId: 'gemini-cli',
+    sourceName: 'Gemini CLI',
+    list: listGeminiSessions,
+    read: readGeminiSession,
+  },
 ];
 
 const readerOf = (sourceId: string): SessionReader | undefined =>

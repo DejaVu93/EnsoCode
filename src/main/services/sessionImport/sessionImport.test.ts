@@ -219,7 +219,10 @@ describe('Grok CLI 会话', () => {
 
   it('只列出当前项目编码目录下的会话', () => {
     const mine = grokSessionDir(tmp, projectPath, 'sess-1');
-    fs.writeFileSync(path.join(mine, 'chat_history.jsonl'), jsonl([{ type: 'user', content: 'a' }]));
+    fs.writeFileSync(
+      path.join(mine, 'chat_history.jsonl'),
+      jsonl([{ type: 'user', content: 'a' }])
+    );
     const other = grokSessionDir(tmp, '/tmp/other', 'sess-2');
     fs.writeFileSync(
       path.join(other, 'chat_history.jsonl'),
@@ -253,10 +256,7 @@ describe('Cursor 会话', () => {
 
   it('列出会话时给出 Cursor 来源、jsonl 绝对路径与首条 user 标题', () => {
     const file = cursorTranscript(tmp, projectPath, 'tr-1');
-    fs.writeFileSync(
-      file,
-      jsonl([cursorTurn('user', '<user_query>修复登录问题</user_query>')])
-    );
+    fs.writeFileSync(file, jsonl([cursorTurn('user', '<user_query>修复登录问题</user_query>')]));
     const cursor = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'cursor');
     expect(cursor?.sourceName).toBe('Cursor');
     expect(cursor?.sessions).toHaveLength(1);
@@ -332,7 +332,10 @@ const piSessionFile = (home: string, root: '.pi' | '.omp', dirName: string, id: 
 };
 
 const piHeader = (cwd: string) => ({ type: 'session', version: 3, id: 'sid', cwd });
-const piTurn = (role: string, content: unknown[]) => ({ type: 'message', message: { role, content } });
+const piTurn = (role: string, content: unknown[]) => ({
+  type: 'message',
+  message: { role, content },
+});
 const piText = (text: string) => ({ type: 'text', text });
 
 describe('pi / oh-my-pi 会话', () => {
@@ -340,10 +343,7 @@ describe('pi / oh-my-pi 会话', () => {
 
   it('列出 .pi 下 cwd 匹配的会话，来源为 pi，path 是 jsonl 本身', () => {
     const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
-    fs.writeFileSync(
-      file,
-      jsonl([piHeader(projectPath), piTurn('user', [piText('hi')])])
-    );
+    fs.writeFileSync(file, jsonl([piHeader(projectPath), piTurn('user', [piText('hi')])]));
     const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'pi');
     expect(source?.sourceName).toBe('pi');
     expect(source?.sessions.map((s) => s.path)).toEqual([file]);
@@ -351,10 +351,7 @@ describe('pi / oh-my-pi 会话', () => {
 
   it('列出 .omp 下同样形状的会话，来源为 oh-my-pi', () => {
     const file = piSessionFile(tmp, '.omp', '-project-billcom-web', 's1');
-    fs.writeFileSync(
-      file,
-      jsonl([piHeader(projectPath), piTurn('user', [piText('hi')])])
-    );
+    fs.writeFileSync(file, jsonl([piHeader(projectPath), piTurn('user', [piText('hi')])]));
     const source = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'oh-my-pi');
     expect(source?.sourceName).toBe('oh-my-pi');
     expect(source?.sessions.map((s) => s.path)).toEqual([file]);
@@ -419,10 +416,7 @@ describe('pi / oh-my-pi 会话', () => {
 
   it('目录名像当前项目但 header cwd 不匹配时不出现', () => {
     const file = piSessionFile(tmp, '.pi', '-tmp-demo', 's1');
-    fs.writeFileSync(
-      file,
-      jsonl([piHeader('/tmp/other'), piTurn('user', [piText('hi')])])
-    );
+    fs.writeFileSync(file, jsonl([piHeader('/tmp/other'), piTurn('user', [piText('hi')])]));
     expect(listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'pi')).toBeUndefined();
   });
 
@@ -500,7 +494,10 @@ describe('Factory 会话', () => {
     const mine = factorySessionFile(tmp, projectPath, 'u-1');
     fs.writeFileSync(
       mine,
-      jsonl([{ type: 'session_start', title: 'a', cwd: projectPath }, piTurn('user', [piText('a')])])
+      jsonl([
+        { type: 'session_start', title: 'a', cwd: projectPath },
+        piTurn('user', [piText('a')]),
+      ])
     );
     const other = factorySessionFile(tmp, '/tmp/other', 'u-2');
     fs.writeFileSync(
@@ -648,9 +645,9 @@ describe('OpenCode 会话', () => {
     fs.mkdirSync(path.dirname(broken), { recursive: true });
     fs.writeFileSync(broken, '{not json');
     expect(readExternalSession('opencode', broken)).toEqual([]);
-    expect(readExternalSession('opencode', path.join(storage, 'session', 'prj1', 'x.json'))).toEqual(
-      []
-    );
+    expect(
+      readExternalSession('opencode', path.join(storage, 'session', 'prj1', 'x.json'))
+    ).toEqual([]);
   });
 });
 

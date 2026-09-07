@@ -36,8 +36,7 @@ function readSummary(dir: string): { title: string; updatedAt?: number } {
       updated_at?: unknown;
     };
     const title = typeof raw.session_summary === 'string' ? raw.session_summary : '';
-    const updatedAt =
-      typeof raw.updated_at === 'string' ? Date.parse(raw.updated_at) : undefined;
+    const updatedAt = typeof raw.updated_at === 'string' ? Date.parse(raw.updated_at) : undefined;
     return { title, updatedAt: Number.isFinite(updatedAt) ? updatedAt : undefined };
   } catch {
     return { title: '' };
@@ -61,15 +60,17 @@ export function readGrokSession(filePath: string): { title: string; messages: Si
     if (entry.type !== 'user' && entry.type !== 'assistant') continue;
     const text = unwrapUserQuery(textOfContent(entry.content).trim());
     if (!text) continue;
-    const timestamp =
-      typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : undefined;
+    const timestamp = typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : undefined;
     messages.push({
       role: entry.type,
       text,
       timestamp: Number.isFinite(timestamp) ? timestamp : undefined,
     });
   }
-  const title = readSummary(path.dirname(filePath)).title || messages.find((m) => m.role === 'user')?.text.slice(0, 40) || '';
+  const title =
+    readSummary(path.dirname(filePath)).title ||
+    messages.find((m) => m.role === 'user')?.text.slice(0, 40) ||
+    '';
   return { title, messages };
 }
 

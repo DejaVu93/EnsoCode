@@ -19,7 +19,8 @@ const listDir = (dir: string): string[] => {
   }
 };
 
-const storageRootOf = (sessionFile: string): string => path.dirname(path.dirname(path.dirname(sessionFile)));
+const storageRootOf = (sessionFile: string): string =>
+  path.dirname(path.dirname(path.dirname(sessionFile)));
 
 const sessionIdOf = (sessionFile: string): string => path.basename(sessionFile, '.json');
 
@@ -36,7 +37,10 @@ function textPartsOf(storageRoot: string, messageId: string): string {
 }
 
 /** 从 session 元数据 json 读出拉平消息 */
-export function readOpencodeSession(sessionFile: string): { title: string; messages: SimpleMessage[] } {
+export function readOpencodeSession(sessionFile: string): {
+  title: string;
+  messages: SimpleMessage[];
+} {
   const session = readJson(sessionFile);
   const title = typeof session?.title === 'string' ? session.title : '';
   if (!session) return { title: '', messages: [] };

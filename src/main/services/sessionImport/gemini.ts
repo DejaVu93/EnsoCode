@@ -37,12 +37,23 @@ function messagesFromEntries(entries: unknown[]): SimpleMessage[] {
   return messages;
 }
 
-function kindOf(filePath: string, content: string): string {
-  const trimmed = content.trim();
-  if (trimmed.startsWith('{')) {
-    const obj = parseLine(trimmed);
-    if (typeof obj?.kind === 'string') return obj.kind;
+function isWholeJson(filePath: string, content: string): Record<string, unknown> | null {
+  if (filePath.endsWith('.jsonl')) return null;
+  const obj = parseLine(content.trim());
+  if (!obj) return null;
+  if (
+    Array.isArray(obj.messages) ||
+    typeof obj.kind === 'string' ||
+    typeof obj.sessionId === 'string'
+  ) {
+    return obj;
   }
+  return null;
+}
+
+function kindOf(filePath: string, content: string): string {
+  const whole = isWholeJson(filePath, content);
+  if (typeof whole?.kind === 'string') return whole.kind;
   for (const line of content.split('\n')) {
     const entry = parseLine(line);
     if (typeof entry?.kind === 'string') return entry.kind;
@@ -58,14 +69,12 @@ export function readGeminiSession(filePath: string): { title: string; messages: 
   } catch {
     return { title: '', messages: [] };
   }
-  const trimmed = content.trim();
+  const whole = isWholeJson(filePath, content);
   let firstUserMessage = '';
   let messages: SimpleMessage[] = [];
-  if (trimmed.startsWith('{') && !trimmed.includes('\n{')) {
-    const obj = parseLine(trimmed);
-    if (!obj) return { title: '', messages: [] };
-    if (typeof obj.firstUserMessage === 'string') firstUserMessage = obj.firstUserMessage;
-    messages = messagesFromEntries(Array.isArray(obj.messages) ? obj.messages : []);
+  if (whole) {
+    if (typeof whole.firstUserMessage === 'string') firstUserMessage = whole.firstUserMessage;
+    messages = messagesFromEntries(Array.isArray(whole.messages) ? whole.messages : []);
   } else {
     const entries: unknown[] = [];
     for (const line of content.split('\n')) {
@@ -75,13 +84,16 @@ export function readGeminiSession(filePath: string): { title: string; messages: 
     }
     messages = messagesFromEntries(entries);
   }
-  const title = firstUserMessage || messages.find((m) => m.role === 'user')?.text.slice(0, 40) || '';
+  const title =
+    firstUserMessage || messages.find((m) => m.role === 'user')?.text.slice(0, 40) || '';
   return { title, messages };
 }
 
 function projectSlug(home: string, projectPath: string): string | null {
   try {
-    const raw = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'projects.json'), 'utf-8')) as {
+    const raw = JSON.parse(
+      fs.readFileSync(path.join(home, '.gemini', 'projects.json'), 'utf-8')
+    ) as {
       projects?: Record<string, unknown>;
     };
     const slug = raw.projects?.[projectPath];
@@ -96,7 +108,9 @@ function listSessionFiles(home: string, identifier: string): string[] {
   try {
     return fs
       .readdirSync(dir)
-      .filter((name) => name.startsWith('session-') && (name.endsWith('.jsonl') || name.endsWith('.json')))
+      .filter(
+        (name) => name.startsWith('session-') && (name.endsWith('.jsonl') || name.endsWith('.json'))
+      )
       .map((name) => path.join(dir, name));
   } catch {
     return [];

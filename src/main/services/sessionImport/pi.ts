@@ -99,10 +99,7 @@ export function readPiV3Session(filePath: string): { title: string; messages: Si
   return { title, messages };
 }
 
-function listPiV3Sessions(
-  sessionsDir: string,
-  projectPath: string
-): ExternalSession[] {
+function listPiV3Sessions(sessionsDir: string, projectPath: string): ExternalSession[] {
   const sessions: ExternalSession[] = [];
   for (const file of listJsonlFiles(sessionsDir)) {
     if (cwdOfSession(file.path) !== projectPath) continue;
