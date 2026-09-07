@@ -94,6 +94,7 @@ import {
   COLLAPSED_SESSION_LIMIT,
   sessionSwitchSlotIds,
 } from '@/stores/sessions/sessionSwitchSlots';
+import { selectSidebarConversations } from '@/stores/sessions/sidebarDirectory';
 import { DIRTY_MAIN_TREE, worktreeHasPendingWork } from '@/stores/sessions/worktree';
 import { useSettingsStore } from '@/stores/settings';
 import { applyProjectOrder, moveProject } from '@/stores/settings/projectOrder';
@@ -130,7 +131,9 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   const searchShortcut = formatBinding(effectiveKeybindings(keybindings)['search-workspace']);
   const addProject = useSettingsStore((state) => state.addProject);
   const removeProject = useSettingsStore((state) => state.removeProject);
-  const conversations = useSessionsStore((state) => state.conversations);
+  const conversations = useSessionsStore((state) =>
+    selectSidebarConversations(state.conversations)
+  );
   const order = useSessionsStore((state) => state.order);
   const activeId = useSessionsStore((state) => state.activeId);
   const newConversation = useSessionsStore((state) => state.newConversation);
@@ -1888,7 +1891,7 @@ function ConversationRow({
             )}
             <span className="shrink-0 text-[10px] text-muted-foreground group-hover:hidden">
               {formatRelativeTime(
-                conversation.messages.at(-1)?.timestamp ?? conversation.createdAt,
+                conversation.lastActiveAt ?? conversation.createdAt,
                 locale,
                 nowTick
               )}
