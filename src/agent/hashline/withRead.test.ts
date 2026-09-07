@@ -24,6 +24,37 @@ describe('withHashlineRead', () => {
     expect(visible).toContain('2:beta');
   });
 
+  it('带 offset 的局部读取：按 offset 编号、截断提示不编号、快照记录整文件', async () => {
+    const path = '/tmp/big.ts';
+    const full = 'l1\nl2\nl3\nl4\nl5\nl6\n';
+    const notice = '[Showing lines 3-4 of 6. Use offset=5 to continue.]';
+    const store = new InMemorySnapshotStore();
+    const read = withHashlineRead(
+      fakeRead([{ type: 'text', text: `l3\nl4\n\n${notice}` }]),
+      store,
+      {
+        readFileText: async () => full,
+      }
+    );
+    const result = await read.execute('call-5', { path, offset: 3, limit: 2 });
+    const visible = result.content[0]?.text ?? '';
+    const tag = computeFileHash(full);
+    expect(store.get(path, tag)).toBe(full);
+    expect(visible).toBe(`${formatHashlineHeader(path, tag)}\n3:l3\n4:l4\n\n${notice}`);
+  });
+
+  it('局部读取但无法读整文件时不加头、不编号、不记录', async () => {
+    const store = new InMemorySnapshotStore();
+    const record = vi.spyOn(store, 'record');
+    const raw = [{ type: 'text', text: 'l3\nl4' }];
+    const result = await withHashlineRead(fakeRead(raw), store).execute('call-6', {
+      path: '/tmp/big.ts',
+      offset: 3,
+    });
+    expect(record).not.toHaveBeenCalled();
+    expect(result.content).toBe(raw);
+  });
+
   it('不记录 agent 虚拟路径', async () => {
     const store = new InMemorySnapshotStore();
     const record = vi.spyOn(store, 'record');

@@ -26,7 +26,9 @@ export function applyHashlineSessionTools<
       write: options.write,
     };
   }
-  const read = wrapOuter(withHashlineRead(options.read, options.store));
+  const read = wrapOuter(
+    withHashlineRead(options.read, options.store, { readFileText: options.io.readFileText })
+  );
   const grep = withHashlineGrep(options.grep, options.store, options.io.readFileText);
   const write = options.write ? withHashlineWrite(options.write, options.store) : undefined;
   if (!options.edit) return { read, grep, write };

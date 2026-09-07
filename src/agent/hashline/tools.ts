@@ -71,7 +71,7 @@ export function selectHashlineTools<T extends NamedTool>(options: {
     },
   });
   return {
-    read: withHashlineRead(options.read, options.store),
+    read: withHashlineRead(options.read, options.store, { readFileText: options.readFileText }),
     grep: options.readFileText
       ? withHashlineGrep(options.grep, options.store, options.readFileText)
       : options.grep,

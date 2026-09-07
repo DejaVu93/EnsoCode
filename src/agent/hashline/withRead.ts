@@ -21,9 +21,20 @@ function snapshotText(content: unknown): string | undefined {
   return texts.join('');
 }
 
+/** pi read 尾部的续读提示（截断 / limit 未读完） */
+const READ_NOTICE = /\n\n(\[(?:Showing lines|\d+ more lines)[^\n]*\])$/;
+
+function splitNotice(body: string): { text: string; notice: string } {
+  const match = READ_NOTICE.exec(body);
+  return match
+    ? { text: body.slice(0, match.index), notice: match[0] }
+    : { text: body, notice: '' };
+}
+
 export function withHashlineRead<T extends { execute: (...args: never[]) => unknown }>(
   definition: T,
-  store: InMemorySnapshotStore
+  store: InMemorySnapshotStore,
+  options: { readFileText?: (path: string) => Promise<string | undefined> } = {}
 ): T {
   const execute = definition.execute as (
     toolCallId: string,
@@ -40,13 +51,20 @@ export function withHashlineRead<T extends { execute: (...args: never[]) => unkn
         if (!result || typeof result !== 'object') return result;
         const body = snapshotText((result as { content?: unknown }).content);
         if (body === undefined) return result;
-        const tag = store.record(filePath, body);
+        const offset = Number((params as { offset?: unknown } | undefined)?.offset ?? 1);
+        const startLine = Number.isFinite(offset) && offset > 1 ? offset : 1;
+        const { text, notice } = splitNotice(body);
+        // 局部读取：tag 必须对应整文件，否则后续 hashline edit 永远 stale
+        const partial = startLine > 1 || notice !== '';
+        const snapshot = partial ? await options.readFileText?.(filePath) : text;
+        if (snapshot === undefined) return result;
+        const tag = store.record(filePath, snapshot);
         return {
           ...(result as object),
           content: [
             {
               type: 'text',
-              text: `${formatHashlineHeader(filePath, tag)}\n${formatNumberedLines(body)}`,
+              text: `${formatHashlineHeader(filePath, tag)}\n${formatNumberedLines(text, startLine)}${notice}`,
             },
           ],
         };
