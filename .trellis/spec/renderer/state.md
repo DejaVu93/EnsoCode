@@ -138,6 +138,21 @@ contextBridge 复制之前合并写入；不能在 `createJSONStorage` 后再排
 Zustand persist 即使收到 `set((state) => state)` 也会调用存储适配器。
 已知无需更新的后台事件应在调用 `set` 之前返回，保留无标题首条用户消息的标题提取。
 
+### persist 回灌不会补 `emptyProjection`
+
+会话 store 没有自定义 `merge`：persist 把磁盘对象整段盖进内存。`emptyProjection`
+只服务新建会话，旧盘（v1、`partialize` 补字段前）缺的运行态集合**不会**被默认值填上。
+`applyAgentEvent` 入口会归一这些字段，但卡死巡检、设置订阅这类读点**不经过 reducer**。
+
+因此形状变更必须同时做两件事：
+
+1. `SESSIONS_VERSION` +1，在 `migrateSessions` 里按 `emptyProjection` 补空集合
+   （缺或 `null` 才写空值，已有非空保持原样）。不要放 `onRehydrateStorage`，
+   原因见 [../main/settings-persistence.md](../main/settings-persistence.md)。
+2. 新读点对 `toolOutputs` / `pendingApprovals` / `pendingAsks` / `backgroundTasks` /
+   `subagents` 一律经可测纯函数容错（`stallLiveWorkFlags`），不要直接 `Object.keys` /
+   `.length` / `.some`。巡检不经 reducer，只靠 migrate 挡不住尚未回写的旧盘。
+
 ## 多窗口同步
 
 store 末尾注册了 `settings.onChanged` → `persist.rehydrate()`。
