@@ -878,7 +878,7 @@ export const zhTranslations: Record<string, string> = {
   'Selected model is unavailable': '所选模型不可用',
   Clear: '清除',
   'No conversations yet': '暂无对话',
-  'Preparing session…': '正在恢复会话…',
+  'Preparing session…': '正在读取历史…',
   'Retry resume': '重新恢复',
   Todos: '任务清单',
   '{{count}} tool calls': '{{count}} 个工具调用',

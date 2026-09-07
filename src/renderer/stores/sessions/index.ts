@@ -1903,7 +1903,7 @@ export const useSessionsStore = create<SessionsState>()(
               ],
             })
           );
-          if (!conversation.started) {
+          if (!conversation.started && !conversation.spawning) {
             set((state) =>
               patch(state, id, {
                 spawning: true,
@@ -1951,7 +1951,6 @@ export const useSessionsStore = create<SessionsState>()(
             }
             set((state) =>
               patch(state, id, {
-                spawning: false,
                 started: true,
                 lastProviderId: target.providerId,
                 lastModelId: target.modelId,

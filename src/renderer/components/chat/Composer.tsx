@@ -61,6 +61,8 @@ interface ComposerProps {
   onInitialRecipientConsumed?: () => void;
   /** @ 弹窗的过去会话候选（宿主从 sessions store 算好传入，保持本组件与 store 解耦） */
   chatCandidates?: ChatMentionCandidate[];
+  /** 浏览不自动 spawn：用户开始打字/聚焦输入框时再拉 worker */
+  onActivate?: () => void;
   onSend: (payload: ComposerPayload) => boolean | undefined;
   onAbort: () => void;
 }
@@ -89,6 +91,7 @@ export function Composer({
   initialRecipient,
   onInitialRecipientConsumed,
   chatCandidates,
+  onActivate,
   onSend,
   onAbort,
 }: ComposerProps) {
@@ -156,30 +159,34 @@ export function Composer({
   const slashListRef = useRef<HTMLDivElement>(null);
 
   /** 编辑器每次输入/光标变化回流：同步 query 与派生态，重置弹窗选中 */
-  const handleEditorState = useCallback((state: MentionEditorState) => {
-    setEditorPlain(state.plainText);
-    setEditorHasMentions(state.hasMentions);
-    const nextBound = new Set(
-      state.segments
-        .filter((segment) => segment.type === 'ui-element' && segment.imageId)
-        .map((segment) => (segment.type === 'ui-element' ? segment.imageId : ''))
-    );
-    const dropped = [...boundIds.current].filter((id) => !nextBound.has(id));
-    boundIds.current = nextBound;
-    if (dropped.length > 0) {
-      setImages((current) => unbindImages(current, dropped));
-      setPreview((current) => (current && dropped.includes(current.imageId) ? null : current));
-    }
-    setMentionQuery((previous) => {
-      if (previous !== state.mentionQuery) {
-        setActiveIndex(0);
-        setOpenFolderId(null);
-        setFolderIndex(0);
+  const handleEditorState = useCallback(
+    (state: MentionEditorState) => {
+      if (state.plainText.trim() || state.hasMentions) onActivate?.();
+      setEditorPlain(state.plainText);
+      setEditorHasMentions(state.hasMentions);
+      const nextBound = new Set(
+        state.segments
+          .filter((segment) => segment.type === 'ui-element' && segment.imageId)
+          .map((segment) => (segment.type === 'ui-element' ? segment.imageId : ''))
+      );
+      const dropped = [...boundIds.current].filter((id) => !nextBound.has(id));
+      boundIds.current = nextBound;
+      if (dropped.length > 0) {
+        setImages((current) => unbindImages(current, dropped));
+        setPreview((current) => (current && dropped.includes(current.imageId) ? null : current));
       }
-      return state.mentionQuery;
-    });
-    setSlashQuery(state.slashQuery);
-  }, []);
+      setMentionQuery((previous) => {
+        if (previous !== state.mentionQuery) {
+          setActiveIndex(0);
+          setOpenFolderId(null);
+          setFolderIndex(0);
+        }
+        return state.mentionQuery;
+      });
+      setSlashQuery(state.slashQuery);
+    },
+    [onActivate]
+  );
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: focusKey is a switch signal; values are captured at switch time.
   useEffect(() => {

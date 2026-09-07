@@ -1874,5 +1874,51 @@ describe('parent history tail hydrate', () => {
     expect(cold.historyBaseIndex).toBe(12);
     expect(cold.generation).toBe('stale-generation');
   });
+
+  it('resume 已在 spawn 时 send 不再二次 spawn', async () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: false,
+          spawning: true,
+          sessionFile: '/tmp/parent.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'tail' }] }],
+        },
+      },
+      activeId: 'parent',
+    }));
+    agentSpawn.mockClear();
+    agentPrompt.mockClear();
+    await sessionsModule.useSessionsStore
+      .getState()
+      .send('follow up', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
+    expect(agentSpawn).not.toHaveBeenCalled();
+    expect(agentPrompt).toHaveBeenCalled();
+  });
+
+  it('send 在未 started 时才 spawn，点开本身不 spawn', async () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: false,
+          spawning: false,
+          sessionFile: '/tmp/parent.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'tail' }] }],
+        },
+      },
+      activeId: 'parent',
+    }));
+    agentSpawn.mockClear();
+    expect(agentSpawn).not.toHaveBeenCalled();
+    await sessionsModule.useSessionsStore
+      .getState()
+      .send('go', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
+    expect(agentSpawn).toHaveBeenCalledTimes(1);
+  });
 });
+
 
