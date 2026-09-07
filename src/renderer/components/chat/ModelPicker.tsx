@@ -625,9 +625,8 @@ export function ModelPicker({
         provider,
         row,
         meta,
-        targetProviderId === providerId && targetModelId === modelId
-          ? modelCapabilityOverrides
-          : undefined
+        // 切模型只替换 provider/model id，条目覆盖仍保留；归一化必须按切换后的同一份覆盖计算。
+        modelCapabilityOverrides
       );
       const persisted = persistClampedThinkingLevel(
         thinkingLevel,
@@ -639,8 +638,6 @@ export function ModelPicker({
     [
       onSelect,
       providers,
-      providerId,
-      modelId,
       modelCapabilityOverrides,
       metaByProvider,
       thinkingLevel,

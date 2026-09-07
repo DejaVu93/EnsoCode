@@ -121,6 +121,28 @@ beforeEach(() => {
 });
 
 describe('ModelPicker reasoning controls mode', () => {
+  it('切换自定义子模型保留条目深度，不被目标模型行的上限覆盖', () => {
+    const onThinkingNormalize = vi.fn();
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        providers: [
+          {
+            ...providers[0],
+            models: [{ id: 'model' }, { id: 'target', thinkingLevel: 'high' }],
+          },
+        ],
+        reasoningMode: 'on',
+        thinkingLevel: 'max',
+        modelCapabilityOverrides: { reasoning: 'on', thinkingLevel: 'max' },
+        onThinkingNormalize,
+      })
+    );
+    harness.menuItemClicks[1]();
+    expect(commonProps.onSelect).toHaveBeenCalledWith('api', 'target');
+    expect(onThinkingNormalize).not.toHaveBeenCalled();
+  });
+
   it.each(['high', 'max'] as const)(
     '自定义子模型选低档后仍可再选 max，不把当前深度变成上限：%s',
     (rowLevel) => {
@@ -183,7 +205,7 @@ describe('ModelPicker reasoning controls mode', () => {
     expect(capability.thinkingLevels).toEqual([]);
   });
 
-  it('当前子模型覆盖用于展示，但不泄漏到另一个模型的选择归一化', () => {
+  it('条目覆盖用于展示，切换模型也不丢弃已保存的深度', () => {
     const onThinkingNormalize = vi.fn();
     renderToStaticMarkup(
       createElement(ModelPicker, {
@@ -207,7 +229,7 @@ describe('ModelPicker reasoning controls mode', () => {
     harness.menuItemClicks[0]?.();
     expect(onThinkingNormalize).not.toHaveBeenCalled();
     harness.menuItemClicks[1]?.();
-    expect(onThinkingNormalize).toHaveBeenCalledWith('low');
+    expect(onThinkingNormalize).not.toHaveBeenCalled();
   });
 
   it.each([
