@@ -31,7 +31,6 @@ import { ensureAccountProvider } from '@shared/piAccounts';
 import { resolvePiProviderBaseUrl } from '@shared/providerCatalog';
 import { ANTIGRAVITY_PROVIDER_ID, antigravityProviderConfig } from '@shared/providers/antigravity';
 import type { SmartCompactMode } from '@shared/smartCompactMode';
-import { takeSnapshotTail } from '@shared/snapshotTail';
 import { buildSshShellCommand, shellQuote } from '@shared/ssh';
 import type {
   AgentCommand,
@@ -109,6 +108,7 @@ import { createMessageMainTool } from './messageMain';
 import { ParentNotifier } from './notify';
 import { projectMessage } from './projection';
 import { applyWorkerProxyEnv } from './proxyEnv';
+import { projectMessages, projectResumeTail } from './resumeSnapshots';
 import {
   EVICTION_SWEEP_INTERVAL_MS,
   type EvictionCandidate,
@@ -1719,6 +1719,7 @@ export class SessionSupervisor {
     this.sessions.set(identity.sessionId, managed);
     if (opts.resumeFile) {
       const raw = this.transcript(managed);
+      const { immediate, deferFull } = projectResumeTail(raw);
       const emitResumeSnapshot = (payload: { messages: ProjectedMessage[]; baseIndex: number }) => {
         this.options.emit({
           type: 'snapshot',
@@ -1736,18 +1737,15 @@ export class SessionSupervisor {
           ],
         });
       };
-      const window = takeSnapshotTail(raw, raw.length);
-      const tailProjected = window.messages
-        .map(projectMessage)
-        .filter((message): message is ProjectedMessage => message !== null);
-      emitResumeSnapshot({ messages: tailProjected, baseIndex: window.baseIndex });
-      if (window.baseIndex > 0 || window.messages.length !== raw.length) {
-        managed.messages = raw
-          .map(projectMessage)
-          .filter((message): message is ProjectedMessage => message !== null);
-        emitResumeSnapshot({ messages: managed.messages, baseIndex: 0 });
-      } else {
-        managed.messages = tailProjected;
+      managed.messages = immediate.messages;
+      emitResumeSnapshot(immediate);
+      if (deferFull) {
+        queueMicrotask(() => {
+          if (this.sessions.get(identity.sessionId) !== managed) return;
+          const full = { messages: projectMessages(raw), baseIndex: 0 };
+          managed.messages = full.messages;
+          emitResumeSnapshot(full);
+        });
       }
       managed.turnStartIndex = managed.messages.length;
     }
@@ -1758,7 +1756,13 @@ export class SessionSupervisor {
       seq: ++managed.seq,
       commands: managed.commands,
     });
-    this.emitSessionMeta(managed);
+    if (opts.resumeFile) {
+      queueMicrotask(() => {
+        if (this.sessions.get(identity.sessionId) === managed) this.emitSessionMeta(managed);
+      });
+    } else {
+      this.emitSessionMeta(managed);
+    }
     return managed;
   }
 
