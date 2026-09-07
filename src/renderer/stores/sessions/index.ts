@@ -57,9 +57,11 @@ import {
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
   needsHistoryHydration,
+  pruneSessionClocks,
   viewedConversationId,
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
+import { cachedPartializeSessions } from './persistSnapshot';
 import { remapConversationProjectIds } from './projectAuthorityRemap';
 import {
   applyAgentEvent,
@@ -82,6 +84,12 @@ function resyncSnapshot(sessionId: string): void {
   if (now - (snapshotResyncAt[sessionId] ?? 0) < SNAPSHOT_RESYNC_DEBOUNCE_MS) return;
   snapshotResyncAt[sessionId] = now;
   void window.electronAPI.agent.requestSnapshot(sessionId);
+}
+
+function forgetUnknownSessionClocks(conversations: Record<string, unknown>): void {
+  const known = new Set(Object.keys(conversations));
+  pruneSessionClocks(lastViewedAt, known);
+  pruneSessionClocks(snapshotResyncAt, known);
 }
 
 function viewedFromState(state: {
@@ -784,6 +792,7 @@ export const useSessionsStore = create<SessionsState>()(
                 ),
                 activeTabId: parent.activeTabId === coworker.id ? undefined : parent.activeTabId,
               };
+              forgetUnknownSessionClocks(conversations);
               return { conversations };
             }
             const existing = conversations[coworker.id];
@@ -1621,6 +1630,7 @@ export const useSessionsStore = create<SessionsState>()(
             }
             delete conversations[id];
             const order = state.order.filter((entry) => entry !== id);
+            forgetUnknownSessionClocks(conversations);
             return {
               conversations,
               order,
@@ -2266,6 +2276,7 @@ export const useSessionsStore = create<SessionsState>()(
               coworkerIds: (parent.coworkerIds ?? []).filter((id) => id !== coworkerId),
               activeTabId: parent.activeTabId === coworkerId ? undefined : parent.activeTabId,
             };
+            forgetUnknownSessionClocks(conversations);
             return { conversations };
           });
         },
@@ -2444,62 +2455,7 @@ export const useSessionsStore = create<SessionsState>()(
       // 存 settings.json（localStorage 按 origin 隔离，dev 与打包版会分家）
       storage: createElectronPersistStorage(),
       // 只存元数据：messages 由 worker snapshot 补回（刷新场景）；app 重启后拿不回则标结束
-      partialize: (state) => ({
-        conversations: Object.fromEntries(
-          Object.entries(state.conversations).map(([id, conversation]) => [
-            id,
-            {
-              ...conversation,
-              // 剥离 messages 前留下活跃时刻标量，重启后侧栏排序用（pinned.ts lastActiveAt）
-              lastActiveAt:
-                conversation.messages.at(-1)?.timestamp ??
-                conversation.lastActiveAt ??
-                conversation.createdAt,
-              messages: [],
-              historyBaseIndex: undefined,
-              // 命令列表按会话重复且可能很大，由 worker snapshot / commands 事件恢复。
-              commands: [],
-              customEntries: [],
-              dispatchMainEvents: {},
-              generation: undefined,
-              lastSeq: 0,
-              spawning: false,
-              error: undefined,
-              // started 是「worker 里这个会话还活着」的运行态。worker 随 app 一起重启，
-              // 持久化它会让重启后 ChatView 的 `!started` 自动恢复门永假：会话点开空白、
-              // 无 loading 无报错，且再也不会重试（打包版 worker 延后启动时必现）。
-              // status 同理：把 running 写盘会让重启后的会话锁 composer 装忙；
-              // 有 sessionFile 的降为 idle 等回放，无 sessionFile 的无从回放，直接落终态。
-              ...(conversation.started && !conversation.sessionFile
-                ? { status: 'failed' as const, error: 'Session ended — history not restored' }
-                : { status: 'idle' as const }),
-              started: false,
-              runStartedAt: undefined,
-              lastOutputAt: undefined,
-              // 运行态字段不持久化：重启后由 worker snapshot 重建，避免 rehydrate 先摆出陈旧状态
-              pendingApprovals: [],
-              pendingAsks: [],
-              pendingCapabilityAsks: [],
-              activeOauthAsk: undefined,
-              historyOnly: undefined,
-              historyLoadAttempted: undefined,
-              backgroundTasks: [],
-              subagents: [],
-              activeTabId: undefined,
-              draftText: undefined,
-              prefillAgentTypeKey: undefined,
-              // resume 时重新校验，不持久化陈旧的丢失/迁移标记
-              worktreeMissing: undefined,
-              workspaceMigrating: undefined,
-              abortRequested: undefined,
-              compaction: undefined,
-              compactionError: undefined,
-            },
-          ])
-        ),
-        order: state.order,
-        activeId: state.activeId,
-      }),
+      partialize: (state) => cachedPartializeSessions(state),
       onRehydrateStorage: () => (_state, error) => {
         if (!error) openPersistWriteGate('enso-conversations');
         // 刷新时 worker 仍活着：只补当前正在看的会话正文。其它会话点开再 snapshot。
@@ -2529,6 +2485,7 @@ window.electronAPI.sourceAuthority.onChanged((projection) => {
 // 上报「当前正在查看的会话」给 main：窗口聚焦时,只有正被查看的会话才抑制系统通知。
 // tab 生效时以 tab（coworker/子会话）为准,与 sendActive 等处的解析口径一致。
 let lastReportedViewedId: string | null = null;
+
 useSessionsStore.subscribe((state) => {
   const viewed = viewedFromState(state);
   if (viewed === lastReportedViewedId) return;
