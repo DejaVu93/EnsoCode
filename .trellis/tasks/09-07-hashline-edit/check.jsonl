@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/guides/bug-root-cause-thinking-guide.md", "reason": "核对失败是否仍是层边界/默认行为，而不是又一层包装"}
+{"file": ".trellis/spec/shared/types.md", "reason": "白名单、生产、消费三处是否同时有 hashlineEditEnabled"}
+{"file": ".trellis/spec/main/settings-persistence.md", "reason": "缺字段是否真当关；有没有误升 version"}
+{"file": ".trellis/spec/testing.md", "reason": "核心契约是否先红后绿；实现有没有改测试造绿"}
+{"file": ".trellis/tasks/09-07-hashline-edit/prd.md", "reason": "对照验收：默认关、双模式 edit、hashline 形状 fail-closed、时间线"}
+{"file": ".trellis/tasks/09-07-hashline-edit/design.md", "reason": "有没有引入 Bun/OMP natives，或抄了 ast_edit"}
