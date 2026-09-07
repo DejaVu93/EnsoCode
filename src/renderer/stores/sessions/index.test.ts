@@ -15,6 +15,12 @@ let onDispatchEvent: ((event: DispatchMainEvent) => void) | undefined;
 let sourceProjection: SourceAuthorityProjection = { projects: [], conversations: [] };
 let nextConversationId = 'parent';
 const agentPrompt = vi.fn(async () => ({ ok: true }));
+const agentSpawn = vi.fn(async () => ({ ok: true }));
+const readParentHistoryTail = vi.fn(async () => ({
+  ok: false as const,
+  code: 'not-found' as const,
+  error: 'no',
+}));
 const dispatch = vi.fn();
 const registerModelSelection = vi.fn(async () => ({
   accepted: true as const,
@@ -136,10 +142,11 @@ vi.stubGlobal('window', {
         return vi.fn();
       }),
       requestSnapshot: vi.fn(async () => ({ ok: true })),
+      readParentHistoryTail,
       readChildHistory,
       prompt: agentPrompt,
       summarizeTitle,
-      spawn: vi.fn(async () => ({ ok: true })),
+      spawn: agentSpawn,
       dismissCoworker,
       hireCoworker,
       abort: agentAbort,
@@ -237,6 +244,13 @@ describe('typed Agent child projection', () => {
     createConversation.mockClear();
     updateConversationSelection.mockClear();
     readChildHistory.mockClear();
+    readParentHistoryTail.mockReset();
+    readParentHistoryTail.mockResolvedValue({
+      ok: false,
+      code: 'not-found',
+      error: 'no',
+    });
+    agentSpawn.mockClear();
     nextConversationId = 'parent';
     sourceProjection = {
       projects: [
@@ -1808,3 +1822,57 @@ describe('typed Agent child projection', () => {
     );
   });
 });
+
+describe('parent history tail hydrate', () => {
+  it('spawn 中仍能上屏尾巴，且不写 historyOnly', async () => {
+    let resolveTail:
+      | ((value: {
+          ok: true;
+          messages: Array<{ role: 'assistant'; content: Array<{ type: 'text'; text: string }> }>;
+          baseIndex: number;
+        }) => void)
+      | undefined;
+    readParentHistoryTail.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveTail = resolve;
+        })
+    );
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        cold: {
+          ...state.conversations.parent,
+          id: 'cold',
+          started: false,
+          spawning: false,
+          sessionFile: '/tmp/cold.jsonl',
+          messages: [],
+          generation: 'stale-generation',
+        },
+      },
+      order: ['cold'],
+      activeId: 'parent',
+    }));
+    sessionsModule.useSessionsStore.getState().selectConversation('cold');
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        cold: { ...state.conversations.cold, spawning: true, started: true },
+      },
+    }));
+    resolveTail?.({
+      ok: true,
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'tail' }] }],
+      baseIndex: 12,
+    });
+    await vi.waitFor(() =>
+      expect(sessionsModule.useSessionsStore.getState().conversations.cold.messages).toHaveLength(1)
+    );
+    const cold = sessionsModule.useSessionsStore.getState().conversations.cold;
+    expect(cold.historyOnly).toBeUndefined();
+    expect(cold.historyBaseIndex).toBe(12);
+    expect(cold.generation).toBe('stale-generation');
+  });
+});
+

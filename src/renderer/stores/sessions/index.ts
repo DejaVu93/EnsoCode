@@ -53,6 +53,7 @@ import { createElectronPersistStorage, openPersistWriteGate } from '@/stores/set
 import { purgeConversationAuthority } from './authorityCleanup';
 import {
   evictColdMessages,
+  hasAuthoritativeMessages,
   isBulkyAgentEvent,
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
@@ -75,6 +76,7 @@ import { isPairViewed, nextUnread } from './unread';
 import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
 
 const lastViewedAt: Record<string, number> = {};
+const parentTailInFlight = new Set<string>();
 let evictTimer: ReturnType<typeof setTimeout> | null = null;
 /** 正文脱节时向 worker 补要 snapshot 的去抖：同一会话一轮重叠的 upsert 不重复要 */
 const snapshotResyncAt: Record<string, number> = {};
@@ -2461,7 +2463,10 @@ export const useSessionsStore = create<SessionsState>()(
         // 刷新时 worker 仍活着：只补当前正在看的会话正文。其它会话点开再 snapshot。
         const state = useSessionsStore.getState();
         const viewed = viewedFromState(state);
-        if (viewed) void window.electronAPI.agent.requestSnapshot(viewed);
+        if (viewed) {
+          void hydrateParentHistoryTail(viewed);
+          void window.electronAPI.agent.requestSnapshot(viewed);
+        }
         void syncConversationProjectIds();
       },
     }
@@ -2486,6 +2491,36 @@ window.electronAPI.sourceAuthority.onChanged((projection) => {
 // tab 生效时以 tab（coworker/子会话）为准,与 sendActive 等处的解析口径一致。
 let lastReportedViewedId: string | null = null;
 
+async function hydrateParentHistoryTail(conversationId: string): Promise<void> {
+  if (parentTailInFlight.has(conversationId)) return;
+  const current = useSessionsStore.getState().conversations[conversationId];
+  if (!current || current.parentId || hasAuthoritativeMessages(current.messages)) return;
+  const read = window.electronAPI.agent.readParentHistoryTail;
+  if (!read) return;
+  parentTailInFlight.add(conversationId);
+  try {
+    const result = await read(conversationId);
+    if (!result.ok || result.messages.length === 0) return;
+    const latest = useSessionsStore.getState().conversations[conversationId];
+    if (!latest || latest.parentId || hasAuthoritativeMessages(latest.messages)) return;
+    const optimistic = latest.messages.filter((message) => message.optimistic);
+    useSessionsStore.setState({
+      conversations: {
+        ...useSessionsStore.getState().conversations,
+        [conversationId]: {
+          ...latest,
+          messages: optimistic.length > 0 ? [...result.messages, ...optimistic] : result.messages,
+          historyBaseIndex: result.baseIndex > 0 ? result.baseIndex : undefined,
+        },
+      },
+    });
+  } catch {
+    // 尾巴失败不挡 resume；下次点开再试
+  } finally {
+    parentTailInFlight.delete(conversationId);
+  }
+}
+
 useSessionsStore.subscribe((state) => {
   const viewed = viewedFromState(state);
   if (viewed === lastReportedViewedId) return;
@@ -2494,6 +2529,7 @@ useSessionsStore.subscribe((state) => {
   if (viewed) lastViewedAt[viewed] = Date.now();
   const conversation = viewed ? state.conversations[viewed] : undefined;
   if (viewed && conversation && needsHistoryHydration(conversation)) {
+    void hydrateParentHistoryTail(viewed);
     void window.electronAPI.agent.requestSnapshot(viewed);
   }
   if (evictTimer) clearTimeout(evictTimer);
