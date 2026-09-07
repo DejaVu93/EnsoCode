@@ -75,3 +75,29 @@ Completed latest persisted-setting coverage, secure merge/replace and independen
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Review修复：生成心跳与子模型独立配置
+
+**Date**: 2026-09-07
+**Task**: Review修复：生成心跳与子模型独立配置
+**Branch**: `fix/generation-stall-visible-output`
+
+### Summary
+
+同步 origin/dev 0238951；修复重复输出与 snapshot 时钟，补条目 enabled 及便携/gateway 保留，推理三态开即滑块；TDD独立review/CDP通过，2440测试通过，typecheck/lint/build通过。PR https://github.com/J3n5en/EnsoCode/pull/59
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f2356f0` | (see git log) |
+| `9ceaa88` | (see git log) |
+| `8524983` | (see git log) |
+| `9519d9e` | (see git log) |
+| `cfa0d4f` | (see git log) |
+| `cded2f3` | (see git log) |
+
+### Status
+
+[OK] **Completed**
