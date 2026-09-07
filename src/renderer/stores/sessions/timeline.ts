@@ -151,6 +151,20 @@ function summarizeArgs(args: unknown, cwd?: string): string {
   return json === '{}' ? '' : json.slice(0, 80);
 }
 
+/** 时间线顶部：翻页在途 / 已到第 0 条 / 不占文案 */
+export type HistoryPageChrome = 'none' | 'loading' | 'start';
+
+export function historyPageChrome(
+  hasItems: boolean,
+  loading: boolean,
+  hasOlder: boolean | undefined
+): HistoryPageChrome {
+  if (!hasItems) return 'none';
+  if (loading) return 'loading';
+  if (hasOlder === false) return 'start';
+  return 'none';
+}
+
 /** write 工具参数里取出写入内容 */
 function extractWriteContent(name: string, args: unknown): string | null {
   if (name !== 'write' || !args || typeof args !== 'object') return null;

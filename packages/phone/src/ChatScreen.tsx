@@ -39,6 +39,8 @@ interface Props {
   onOpenConfig?(): void;
   /** 还有更早的历史可上滑加载 */
   hasOlder?: boolean;
+  /** 上滑翻页在途 */
+  historyLoading?: boolean;
   onLoadOlder?(): void;
   /** coworker tab 组（仅当父会话雇有 coworker 时有值）：主会话 + 子会话 */
   tabGroup?: { parent: CatalogEntry; children: CatalogEntry[] };
@@ -244,6 +246,8 @@ export function ChatScreen(props: Props) {
           emptyTitle={props.projectName || 'EnsoCode'}
           // 手机端不虚拟化：见 MessageTimeline 里 virtualize 的说明
           virtualize={false}
+          historyLoading={props.historyLoading}
+          hasOlder={props.hasOlder}
           onStartReached={props.hasOlder ? loadOlder : undefined}
         />
       )}

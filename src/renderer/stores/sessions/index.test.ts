@@ -1896,6 +1896,43 @@ describe('parent history tail hydrate', () => {
     expect(parent.messages.map((message) => (message.content[0] as { text: string }).text)).toEqual(
       ['older', 'tail']
     );
+    expect(parent.historyLoading).toBeUndefined();
+  });
+
+  it('上滑在途时 historyLoading，结束后清除', async () => {
+    let resolvePage: ((value: ParentHistoryTailResult) => void) | undefined;
+    readParentHistoryTail.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        })
+    );
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: false,
+          sessionFile: '/tmp/parent.jsonl',
+          historyBaseIndex: 12,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'tail' }] }],
+        },
+      },
+      activeId: 'parent',
+    }));
+    const pending = sessionsModule.useSessionsStore.getState().loadOlderHistory('parent');
+    expect(sessionsModule.useSessionsStore.getState().conversations.parent.historyLoading).toBe(
+      true
+    );
+    resolvePage?.({
+      ok: true,
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'older' }] }],
+      baseIndex: 11,
+    });
+    await pending;
+    expect(sessionsModule.useSessionsStore.getState().conversations.parent.historyLoading).toBe(
+      undefined
+    );
   });
 
   it('resume 已在 spawn 时 send 不再二次 spawn', async () => {

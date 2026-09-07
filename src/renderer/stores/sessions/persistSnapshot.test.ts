@@ -9,6 +9,7 @@ const conv = (id: string, extra: { title?: string; text?: string } = {}) => ({
   spawning: false,
   createdAt: 1,
   sessionFile: '/tmp/a.jsonl',
+  historyLoading: true,
   status: 'running' as const,
   messages: [
     { timestamp: 10, role: 'assistant', content: [{ type: 'text', text: extra.text ?? 'x' }] },
@@ -37,6 +38,7 @@ describe('cachedPartializeSessions', () => {
     expect(first.conversations.a.status).toBe('idle');
     expect(first.conversations.a.toolOutputs).toEqual({});
     expect(first.conversations.a.toolStartedAt).toEqual({});
+    expect(first.conversations.a.historyLoading).toBeUndefined();
   });
 
   it('rebuilds when a persisted field changes', () => {

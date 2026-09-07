@@ -98,6 +98,8 @@ export function App() {
   const [view, setView] = useState<SessionView | null>(null);
   /** 订阅会话同步中（subscribe 已发、snapshot 未回）：此时时间线可能是陈旧的 */
   const [syncing, setSyncing] = useState(false);
+  /** 上滑翻页在途的会话 */
+  const [historyPending, setHistoryPending] = useState<ReadonlySet<string>>(new Set());
   /** 横幅刚收起时短暂闪现「已是最新」，随后淡出 */
   const [okFlash, setOkFlash] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -141,6 +143,7 @@ export function App() {
     // 换绑另一台桌面时清掉上一台的 VAPID 公钥，等新桌面重新下发
     vapidKeyRef.current = null;
     setPushConfigReady(false);
+    setHistoryPending(new Set());
     const client = new PairClient(device, {
       onState: setState,
       onCatalog: (entries, order) => {
@@ -159,6 +162,14 @@ export function App() {
       onGhostSession: (id) => {
         // 订阅的会话已在桌面被删：跳回列表态，由 firstId 兑底选最近一条
         if (id === activeIdRef.current) setActiveId(null);
+      },
+      onHistoryPending: (id, pending) => {
+        setHistoryPending((prev) => {
+          const next = new Set(prev);
+          if (pending) next.add(id);
+          else next.delete(id);
+          return next;
+        });
       },
       onPushConfig: (key) => {
         vapidKeyRef.current = key;
@@ -410,6 +421,7 @@ export function App() {
         hasOlder={Boolean(
           activeId && view && view.messages.size > 0 && Math.min(...view.messages.keys()) > 0
         )}
+        historyLoading={Boolean(activeId && historyPending.has(activeId))}
         onLoadOlder={() => activeId && clientRef.current?.requestHistory(activeId)}
         queued={entry?.queued}
         onSend={(text, images) => {

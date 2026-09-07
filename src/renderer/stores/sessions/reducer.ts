@@ -132,6 +132,8 @@ export interface SessionProjection {
   toolStartedAt?: Record<string, number>;
   /** 当前权威消息对应的 worker 绝对起点；全量快照缺省 */
   historyBaseIndex?: number;
+  /** 上滑翻页在途；不持久化 */
+  historyLoading?: boolean;
 }
 
 export const emptyProjection: SessionProjection = {

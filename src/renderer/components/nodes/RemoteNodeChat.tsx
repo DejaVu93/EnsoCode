@@ -32,6 +32,7 @@ interface RemoteNodeChatProps {
   syncing: boolean;
   providers: ProviderEntry[];
   hasOlder: boolean;
+  historyLoading?: boolean;
   onLoadOlder: () => void;
   onSelectTab: (id: string) => void;
   onSend: (text: string, images: AttachedImage[]) => void;
@@ -182,6 +183,8 @@ export function RemoteNodeChat(props: RemoteNodeChatProps) {
             running={running}
             error={undefined}
             emptyTitle={entry?.projectName || node.label}
+            historyLoading={props.historyLoading}
+            hasOlder={props.hasOlder}
             onStartReached={props.hasOlder ? props.onLoadOlder : undefined}
           />
         )}

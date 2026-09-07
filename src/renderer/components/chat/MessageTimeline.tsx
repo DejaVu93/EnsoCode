@@ -14,7 +14,12 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { foldTimeline, type TimelineItem } from '@/stores/sessions/timeline';
+import {
+  foldTimeline,
+  type HistoryPageChrome,
+  historyPageChrome,
+  type TimelineItem,
+} from '@/stores/sessions/timeline';
 import { useSettingsStore } from '@/stores/settings';
 import { ChatSearchHighlightContext } from './highlightQuery';
 import { NavRail } from './NavRail';
@@ -67,6 +72,10 @@ interface MessageTimelineProps {
    * 桌面 Virtuoso / 手机全量渲染都走这条：上滑加载更早的历史分页。
    */
   onStartReached?: () => void;
+  /** 上滑翻页在途：顶部转圈 */
+  historyLoading?: boolean;
+  /** 还有更早一页；false = 已到第 0 条，顶部给出到头提示 */
+  hasOlder?: boolean;
   /** 当前权威区绝对起点；Virtuoso prepend 时靠它钉住已渲染行 */
   firstItemIndex?: number;
   searchQuery?: string;
@@ -89,6 +98,8 @@ export function MessageTimeline({
   onRetryResume,
   virtualize = true,
   onStartReached,
+  historyLoading = false,
+  hasOlder,
   firstItemIndex = 0,
   searchQuery = '',
   activeHit = null,
@@ -329,6 +340,8 @@ export function MessageTimeline({
       </div>
     );
   };
+  const pageChrome = historyPageChrome(items.length > 0, historyLoading, hasOlder);
+  const renderHeader = () => <HistoryPageHeader chrome={pageChrome} />;
   const renderFooter = () => (
     <div className={cn(CHAT_COL, 'pb-6 [overflow-wrap:anywhere]')}>
       {busy && (
@@ -434,7 +447,7 @@ export function MessageTimeline({
             className="h-full select-text overflow-y-auto [overflow-anchor:none]"
           >
             <div ref={attachContent}>
-              <div className="h-6" />
+              {renderHeader()}
               {folded.map((item, index) => renderRow(item, index))}
               {renderFooter()}
             </div>
@@ -475,7 +488,7 @@ export function MessageTimeline({
             }}
             className="h-full select-text"
             components={{
-              Header: () => <div className="h-6" />,
+              Header: renderHeader,
               Footer: renderFooter,
             }}
             itemContent={(index, item) => renderRow(item, index)}
@@ -502,6 +515,23 @@ function groupContainsKey(
 ): boolean {
   return group.children.some(
     (child) => child.key === key || (child.kind === 'tool-group' && groupContainsKey(child, key))
+  );
+}
+
+function HistoryPageHeader({ chrome }: { chrome: HistoryPageChrome }) {
+  const { t } = useI18n();
+  if (chrome === 'none') return <div className="h-6" />;
+  return (
+    <div className={cn(CHAT_COL, 'flex items-center justify-center gap-2 py-3')}>
+      {chrome === 'loading' ? (
+        <>
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">{t('Loading earlier messages…')}</p>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t('Beginning of conversation')}</p>
+      )}
+    </div>
   );
 }
 

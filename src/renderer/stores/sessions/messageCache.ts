@@ -98,7 +98,13 @@ export function evictColdMessages<T extends { messages: unknown[]; customEntries
   for (const [id, conversation] of Object.entries(conversations)) {
     if (isMessageCacheHot(id, viewedId, lastViewedAt, now, ttl)) continue;
     if (conversation.messages.length === 0 && conversation.customEntries.length === 0) continue;
-    next[id] = { ...conversation, messages: [], customEntries: [], historyBaseIndex: undefined };
+    next[id] = {
+      ...conversation,
+      messages: [],
+      customEntries: [],
+      historyBaseIndex: undefined,
+      historyLoading: undefined,
+    };
     changed = true;
   }
   return changed ? next : conversations;

@@ -32,12 +32,17 @@ describe('messageCache', () => {
   it('evicts stale message bodies, leaves hot and empty conversations', () => {
     const conversations = {
       hot: { messages: [1], customEntries: [2] },
-      stale: { messages: [3], customEntries: [4] },
+      stale: { messages: [3], customEntries: [4], historyLoading: true },
       empty: { messages: [], customEntries: [] },
     };
     const next = evictColdMessages(conversations, 'hot', { stale: 0 }, MESSAGE_CACHE_TTL_MS);
     expect(next.hot).toBe(conversations.hot);
-    expect(next.stale).toEqual({ messages: [], customEntries: [], historyBaseIndex: undefined });
+    expect(next.stale).toEqual({
+      messages: [],
+      customEntries: [],
+      historyBaseIndex: undefined,
+      historyLoading: undefined,
+    });
     expect(next.empty).toBe(conversations.empty);
   });
 

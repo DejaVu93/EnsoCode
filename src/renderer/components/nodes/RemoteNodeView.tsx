@@ -66,6 +66,7 @@ export function RemoteNodeView({ nodeId, sidebarWidth }: RemoteNodeViewProps) {
         syncing={view.sync.state === 'syncing'}
         providers={view.providers}
         hasOlder={hasOlder}
+        historyLoading={Boolean(activeId && view.historyPending.has(activeId))}
         onLoadOlder={() => activeId && requestHistory(nodeId, activeId)}
         onSelectTab={(id) => selectSession(nodeId, id)}
         onSend={(text, images) => {

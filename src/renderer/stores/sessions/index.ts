@@ -172,6 +172,8 @@ export interface Conversation extends SessionProjection {
   historyOnly?: boolean;
   /** 已尝试过只读回放（含失败），避免反复打 IPC。不持久化。 */
   historyLoadAttempted?: boolean;
+  /** 上滑翻页在途；不持久化 */
+  historyLoading?: boolean;
   /** 当前 child TAB 的危险 capability ASK；不持久化。 */
   pendingCapabilityAsks?: CapabilityAskRequest[];
   /** allow ACK 后留在 child TAB 的 OAuth 宿主请求；不持久化。 */
@@ -673,7 +675,12 @@ export const useSessionsStore = create<SessionsState>()(
                   title,
                   ...(keepBody
                     ? {}
-                    : { messages: [], customEntries: [], historyBaseIndex: undefined }),
+                    : {
+                        messages: [],
+                        customEntries: [],
+                        historyBaseIndex: undefined,
+                        historyLoading: undefined,
+                      }),
                   ...(snapshot.child
                     ? {
                         parentId: snapshot.child.parentId,
@@ -2071,6 +2078,7 @@ export const useSessionsStore = create<SessionsState>()(
           const read = window.electronAPI.agent.readParentHistoryTail;
           if (!read) return;
           olderHistoryInFlight.add(id);
+          set((state) => patch(state, id, { historyLoading: true }));
           try {
             const result = await read(id, beforeIndex);
             if (!result.ok || result.messages.length === 0) return;
@@ -2089,6 +2097,9 @@ export const useSessionsStore = create<SessionsState>()(
             // 翻页失败保持已有尾窗，下次到顶再试
           } finally {
             olderHistoryInFlight.delete(id);
+            if (get().conversations[id]) {
+              set((state) => patch(state, id, { historyLoading: undefined }));
+            }
           }
         },
 

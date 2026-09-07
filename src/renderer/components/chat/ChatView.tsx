@@ -399,6 +399,8 @@ export function ChatView() {
             : undefined
         }
         firstItemIndex={conversation.historyBaseIndex ?? 0}
+        historyLoading={Boolean(conversation.historyLoading)}
+        hasOlder={(conversation.historyBaseIndex ?? 0) > 0}
         onStartReached={
           (conversation.historyBaseIndex ?? 0) > 0
             ? () => void useSessionsStore.getState().loadOlderHistory(conversation.id)

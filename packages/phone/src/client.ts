@@ -58,6 +58,8 @@ export interface ClientEvents {
   onSync?(state: SyncState): void;
   /** 订阅的会话已被桌面删除（曾在目录、现在消失）：上层应跳离该会话 */
   onGhostSession?(sessionId: string): void;
+  /** 上滑翻页在途变化 */
+  onHistoryPending?(sessionId: string, pending: boolean): void;
 }
 
 export class PairClient {
@@ -235,6 +237,7 @@ export class PairClient {
       case 'history': {
         // 上滑分页应答：只并入消息，不动 status/审批（那些以尾窗快照为准）
         this.historyPending.delete(payload.sessionId);
+        this.events.onHistoryPending?.(payload.sessionId, false);
         const view = this.sessions.get(payload.sessionId);
         if (!view) break;
         const next = applyGuestHistory(view, payload);
@@ -306,7 +309,11 @@ export class PairClient {
   /** 订阅会话：带上本地游标，只补断线期间的增量。fresh = 手机刚 spawn 的全新会话，不进 syncing */
   subscribe(sessionId: string | null, opts?: { fresh?: boolean }): void {
     this.subscribedId = sessionId;
-    this.historyPending.clear();
+    if (this.historyPending.size > 0) {
+      const pending = [...this.historyPending];
+      this.historyPending.clear();
+      for (const id of pending) this.events.onHistoryPending?.(id, false);
+    }
     this.setSync(applySubscribe(this.sync, sessionId, opts));
     if (!sessionId) {
       this.send({ type: 'subscribe', sessionId: null });
@@ -333,6 +340,7 @@ export class PairClient {
     const view = this.sessions.get(sessionId);
     if (!view) return;
     this.historyPending.add(sessionId);
+    this.events.onHistoryPending?.(sessionId, true);
     this.send({ type: 'history', sessionId, beforeIndex: Math.min(...view.messages.keys()) });
   }
 }

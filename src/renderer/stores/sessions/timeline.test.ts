@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTimeline,
   foldTimeline,
+  historyPageChrome,
   isReadOnlyCommand,
   type TimelineItem,
   terminalErrorText,
@@ -11,6 +12,21 @@ import {
 const user = (text: string): ProjectedMessage => ({
   role: 'user',
   content: [{ type: 'text', text }],
+});
+
+describe('historyPageChrome', () => {
+  it('空时间线不占 Header，避免盖住 Preparing / 空态', () => {
+    expect(historyPageChrome(false, true, false)).toBe('none');
+    expect(historyPageChrome(false, false, false)).toBe('none');
+  });
+
+  it('有消息时：在途 loading、到顶 start、还有更早或未知则 none', () => {
+    expect(historyPageChrome(true, true, true)).toBe('loading');
+    expect(historyPageChrome(true, true, false)).toBe('loading');
+    expect(historyPageChrome(true, false, false)).toBe('start');
+    expect(historyPageChrome(true, false, true)).toBe('none');
+    expect(historyPageChrome(true, false, undefined)).toBe('none');
+  });
 });
 
 describe('buildTimeline', () => {
