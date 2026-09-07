@@ -131,6 +131,9 @@ interface ModelPickerProps {
   modelId: string;
   reasoningEnabled: boolean;
   thinkingLevel: ThinkingLevel;
+  /** 设置页按字段标明继承；传入值仅作全局默认预览，不代表父会话当前状态。 */
+  reasoningInherited?: boolean;
+  thinkingInherited?: boolean;
   /** 仅需 provider/account/model 级联的场景可隐藏 reasoning/thinking。 */
   showReasoningControls?: boolean;
   /** 仅会话工具行：响应全局「切换模型」快捷键并聚焦搜索框 */
@@ -430,6 +433,8 @@ export function ModelPicker({
   modelId,
   reasoningEnabled,
   thinkingLevel,
+  reasoningInherited,
+  thinkingInherited,
   showReasoningControls = true,
   listenHotkey = false,
   onSelect,
@@ -441,6 +446,8 @@ export function ModelPicker({
   const { t } = useI18n();
   const normalizeReasoning = onReasoningNormalize ?? onReasoningChange;
   const normalizeThinking = onThinkingNormalize ?? onThinkingChange;
+  const showInheritance = reasoningInherited !== undefined || thinkingInherited !== undefined;
+  const hasInherited = reasoningInherited || thinkingInherited;
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
   const openSubmenuIdsRef = useRef(new Set<string>());
@@ -600,10 +607,10 @@ export function ModelPicker({
         thinkingLevel,
         capability.declaredThinkingLevels
       );
-      if (persisted) normalizeThinking(persisted);
+      if (persisted && !thinkingInherited) normalizeThinking(persisted);
       setOpen(false);
     },
-    [onSelect, providers, metaByProvider, thinkingLevel, normalizeThinking]
+    [onSelect, providers, metaByProvider, thinkingLevel, thinkingInherited, normalizeThinking]
   );
 
   const currentProviderMeta = useModelMeta(currentProvider);
@@ -635,17 +642,19 @@ export function ModelPicker({
    */
   useEffect(() => {
     if (reasoningUnsupported) {
-      if (reasoningEnabled) normalizeReasoning(false);
+      if (reasoningEnabled && !reasoningInherited) normalizeReasoning(false);
       return;
     }
     if (!reasoningEnabled) return;
     const persisted = persistClampedThinkingLevel(thinkingLevel, capability.declaredThinkingLevels);
-    if (persisted) normalizeThinking(persisted);
+    if (persisted && !thinkingInherited) normalizeThinking(persisted);
   }, [
     capability.declaredThinkingLevels,
     reasoningUnsupported,
     reasoningEnabled,
+    reasoningInherited,
     thinkingLevel,
+    thinkingInherited,
     normalizeReasoning,
     normalizeThinking,
   ]);
@@ -682,12 +691,16 @@ export function ModelPicker({
         title={current?.label ?? modelId ?? t('Model')}
       >
         <span className="min-w-0 truncate">{current?.label ?? modelId ?? t('Model')}</span>
-        {displayedReasoningEnabled && (
+        {showReasoningControls && hasInherited ? (
+          <span data-model-picker-inherited="true" className="shrink-0 text-[10px]">
+            {t('Follow conversation')}
+          </span>
+        ) : displayedReasoningEnabled ? (
           <span className="flex shrink-0 items-center gap-0.5 text-primary">
             <Brain className="h-3 w-3" />
             {t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}
           </span>
-        )}
+        ) : null}
         <ChevronDown className="h-3 w-3 shrink-0" />
       </MenuTrigger>
       <MenuPopup data-model-picker="root" side="top" align="start" className="w-80">
@@ -830,11 +843,35 @@ export function ModelPicker({
               </span>
               <Switch
                 tabIndex={-1}
+                aria-label={t('Reasoning')}
                 checked={displayedReasoningEnabled}
                 onCheckedChange={onReasoningChange}
                 disabled={reasoningUnsupported}
               />
             </div>
+            {showInheritance && (
+              <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">
+                <p>
+                  {t('{{setting}}: {{source}}', {
+                    setting: t('Reasoning'),
+                    source: t(reasoningInherited ? 'Follow conversation' : 'Explicit'),
+                  })}
+                </p>
+                <p>
+                  {t('{{setting}}: {{source}}', {
+                    setting: t('Thinking level'),
+                    source: t(thinkingInherited ? 'Follow conversation' : 'Explicit'),
+                  })}
+                </p>
+                {hasInherited && (
+                  <p>
+                    {t(
+                      'Inherited controls preview global defaults; actual values follow the parent conversation.'
+                    )}
+                  </p>
+                )}
+              </div>
+            )}
             {reasoningUnsupported && (
               <p className="mt-1 text-[10px] text-muted-foreground/70">
                 {t('{{model}} does not support reasoning', { model: current?.label ?? modelId })}
@@ -845,6 +882,7 @@ export function ModelPicker({
               <div className="mt-3">
                 <Slider
                   tabIndex={-1}
+                  aria-label={t('Thinking level')}
                   thumbAlignment="center"
                   className="[&_[data-slot=slider-indicator]]:ms-0 [&_[data-slot=slider-track]]:before:inset-x-0"
                   min={0}

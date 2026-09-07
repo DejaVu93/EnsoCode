@@ -19,6 +19,7 @@ const providers: ModelProvider[] = [
 const harness = vi.hoisted(() => ({
   state: {} as Record<string, unknown>,
   pickerProps: [] as Record<string, unknown>[],
+  entrySwitchProps: [] as Record<string, unknown>[],
   followClicks: [] as Array<() => void>,
   updateEntry: vi.fn(),
 }));
@@ -66,6 +67,13 @@ vi.mock('@/components/chat/ModelPicker', () => ({
   },
 }));
 
+vi.mock('@/components/ui/switch', () => ({
+  Switch: (props: Record<string, unknown>) => {
+    if (props['data-slot'] === 'subagent-model-enabled') harness.entrySwitchProps.push(props);
+    return createElement('i', { 'data-switch': props['data-slot'] });
+  },
+}));
+
 function entry(id: string, overrides: Partial<SubagentModelEntry> = {}): SubagentModelEntry {
   return {
     id,
@@ -94,12 +102,75 @@ function renderEntries(entries: SubagentModelEntry[]) {
 
 beforeEach(() => {
   harness.pickerProps = [];
+  harness.entrySwitchProps = [];
   harness.followClicks = [];
   harness.updateEntry.mockClear();
 });
 
 describe('SubagentModelsSettings reasoning controls', () => {
-  it('缺省与脏覆盖继承全局默认，合法 on/off 和档位按条目独立优先', () => {
+  it('旧条目默认启用，显式停用仍保留可编辑的模型与推理配置', () => {
+    renderEntries([
+      entry('legacy'),
+      entry('disabled', { enabled: false, reasoning: 'off', thinkingLevel: 'high' }),
+    ]);
+    expect(harness.entrySwitchProps.map((props) => props.checked)).toEqual([true, false]);
+    expect(harness.entrySwitchProps[0]['aria-label']).toBe('Enable subagent model');
+    expect(harness.pickerProps).toHaveLength(2);
+    expect(harness.pickerProps[1]).toMatchObject({
+      reasoningEnabled: false,
+      thinkingLevel: 'high',
+    });
+    expect(harness.updateEntry).not.toHaveBeenCalled();
+  });
+
+  it('单行停用再启用只写 enabled，不改其它行或遗失该行模型与推理档位', () => {
+    const configured = entry('configured', { reasoning: 'on', thinkingLevel: 'high' });
+    const other = entry('other', { reasoning: 'off', thinkingLevel: 'low' });
+    renderEntries([configured, other]);
+    expect(harness.entrySwitchProps).toHaveLength(2);
+    const change = harness.entrySwitchProps[0].onCheckedChange as (enabled: boolean) => void;
+    change(false);
+    change(true);
+    expect(harness.updateEntry.mock.calls).toEqual([
+      ['configured', { enabled: false }],
+      ['configured', { enabled: true }],
+    ]);
+    expect(configured).toEqual(entry('configured', { reasoning: 'on', thinkingLevel: 'high' }));
+    expect(other).toEqual(entry('other', { reasoning: 'off', thinkingLevel: 'low' }));
+  });
+
+  it('推理开关与思考档位分别标记继承，包括仅设置档位与脏值', () => {
+    renderEntries([
+      entry('follow'),
+      entry('level-only', { thinkingLevel: 'low' }),
+      entry('reasoning-only', { reasoning: 'off' }),
+      entry('explicit', { reasoning: 'on', thinkingLevel: 'high' }),
+      entry('dirty', { reasoning: 'maybe' as never, thinkingLevel: 'ultra' as never }),
+    ]);
+    expect(
+      harness.pickerProps.map(({ reasoningInherited, thinkingInherited }) => ({
+        reasoningInherited,
+        thinkingInherited,
+      }))
+    ).toEqual([
+      { reasoningInherited: true, thinkingInherited: true },
+      { reasoningInherited: true, thinkingInherited: false },
+      { reasoningInherited: false, thinkingInherited: true },
+      { reasoningInherited: false, thinkingInherited: false },
+      { reasoningInherited: true, thinkingInherited: true },
+    ]);
+    expect(harness.updateEntry).not.toHaveBeenCalled();
+  });
+
+  it('仅设置档位不把推理开关继承归一化为显式值，用户调档也只写档位', () => {
+    renderEntries([entry('level-only', { thinkingLevel: 'low' })]);
+    const props = harness.pickerProps[0];
+    (props.onReasoningNormalize as (enabled: boolean) => void)(false);
+    (props.onThinkingChange as (level: string) => void)('high');
+    expect(harness.updateEntry.mock.calls).toEqual([['level-only', { thinkingLevel: 'high' }]]);
+  });
+
+  it('缺省与脏覆盖只预览全局默认，合法 on/off 和档位按条目独立优先', () => {
     renderEntries([
       entry('follow'),
       entry('forced-on', { reasoning: 'on', thinkingLevel: 'low' }),

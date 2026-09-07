@@ -54,6 +54,69 @@ afterAll(() => {
 });
 
 describe('config sync sender-bound import flow', () => {
+  it.each(['merge', 'replace'] as const)(
+    '子模型禁用状态经便携导出和 %s 导入后实际落盘',
+    async (mode) => {
+      const providers = [
+        {
+          id: 'sub-provider',
+          name: 'Sub Provider',
+          api: 'openai-completions',
+          apiKey: 'local-only',
+          baseUrl: 'https://example.test',
+          enabled: true,
+          models: [{ id: 'model' }],
+        },
+      ];
+      const entry = {
+        id: 'sub-model',
+        providerId: 'sub-provider',
+        modelId: 'model',
+        description: '保留说明',
+        reasoning: 'off',
+        thinkingLevel: 'high',
+        enabled: false,
+      };
+      const neighbor = { ...entry, id: 'neighbor', enabled: true };
+      settings.patchSettingsState('providers', providers);
+      settings.patchSettingsState('subagentModels', [entry, neighbor]);
+      settings.patchSettingsState('subagentModelsEnabled', true);
+      try {
+        const file = join(userData, `subagent-${mode}.enso-config`);
+        await expect(
+          service.exportConfigToPath({ includeSecrets: false }, file)
+        ).resolves.toMatchObject({
+          ok: true,
+        });
+        expect((await decodeBundle(readFileSync(file))).state.subagentModels).toEqual([
+          entry,
+          neighbor,
+        ]);
+        settings.patchSettingsState('subagentModels', [{ ...entry, enabled: true }, neighbor]);
+        const opened = await service.openImportForSender(50, file);
+        expect(opened.ok).toBe(true);
+        if (!opened.ok) return;
+        await expect(
+          service.previewImportForSender(50, opened.token, undefined, mode)
+        ).resolves.toMatchObject({
+          ok: true,
+        });
+        await expect(service.commitImportForSender(50, opened.token, mode)).resolves.toMatchObject({
+          ok: true,
+        });
+        const persisted = JSON.parse(readFileSync(join(userData, 'settings.json'), 'utf8'));
+        expect(persisted['enso-settings'].state.subagentModels).toEqual([entry, neighbor]);
+        expect(persisted['enso-settings'].state.subagentModelsEnabled).toBe(true);
+        expect(persisted['enso-settings'].state.providers).toEqual(providers);
+      } finally {
+        settings.patchSettingsState('subagentModels', []);
+        settings.patchSettingsState('subagentModelsEnabled', false);
+        settings.patchSettingsState('providers', []);
+        settings.flushSettings();
+      }
+    }
+  );
+
   it('所有持久化设置字段都有明确的同步策略', async () => {
     const { SETTINGS_STATE_FIELDS } = await import('../../ipc/settings');
     const source = readFileSync(

@@ -104,6 +104,30 @@ beforeEach(() => {
 });
 
 describe('ModelPicker reasoning controls mode', () => {
+  it.each([
+    { reasoningInherited: true, thinkingInherited: true, reasoningEnabled: true },
+    { reasoningInherited: true, thinkingInherited: false, reasoningEnabled: true },
+    { reasoningInherited: false, thinkingInherited: true, reasoningEnabled: false },
+    { reasoningInherited: false, thinkingInherited: false, reasoningEnabled: true },
+  ])('每个字段展示跟随或独立状态，不把默认预览伪装为父会话值：%j', (inheritance) => {
+    const html = renderToStaticMarkup(
+      createElement(ModelPicker, { ...commonProps, ...inheritance })
+    );
+    expect(html).toContain(
+      `Reasoning: ${inheritance.reasoningInherited ? 'Follow conversation' : 'Explicit'}`
+    );
+    expect(html).toContain(
+      `Thinking level: ${inheritance.thinkingInherited ? 'Follow conversation' : 'Explicit'}`
+    );
+    const hasInherited = inheritance.reasoningInherited || inheritance.thinkingInherited;
+    expect(
+      html.includes(
+        'Inherited controls preview global defaults; actual values follow the parent conversation.'
+      )
+    ).toBe(hasInherited);
+    expect(html.includes('data-model-picker-inherited="true"')).toBe(hasInherited);
+  });
+
   it.each<ThinkingLevel[]>([
     ['high'],
     ['low', 'high'],

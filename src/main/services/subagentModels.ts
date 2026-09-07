@@ -24,7 +24,7 @@ export interface SubagentModelRef {
 
 /**
  * 把设置页「允许子代理指定模型」列表解析成命名引用。
- * 过滤规则:provider 需存在、启用且有凭证(API key 或订阅账号);
+ * 过滤规则:条目需 `enabled !== false`;provider 需存在、启用且有凭证(API key 或订阅账号);
  * 模型行需存在且 `enabled !== false`;同一 provider+model 的重复条目去重。
  * 凭证解析仍走 resolveModelSelection,这里只做纯过滤与命名,便于单测。
  */
@@ -39,6 +39,7 @@ export function pickSubagentModelRefs(
     if (!entry || typeof entry.providerId !== 'string' || typeof entry.modelId !== 'string') {
       continue;
     }
+    if (entry.enabled === false) continue;
     const key = `${entry.providerId}\u0000${entry.modelId}`;
     if (seen.has(key)) continue;
     const provider = providers.find((candidate) => candidate.id === entry.providerId);

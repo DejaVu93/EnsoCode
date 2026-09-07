@@ -141,6 +141,8 @@ export interface SubagentModelEntry {
   providerId: string;
   modelId: string;
   description: string;
+  /** 缺省启用；关闭仅移出子代理候选，保留条目配置 */
+  enabled?: boolean;
   /** 条目级推理覆盖；缺省 = 跟随父会话（不存 'follow'） */
   reasoning?: ModelReasoningOverride;
   /** 推理开启时的思考档位覆盖；缺省 = 跟随父会话 */

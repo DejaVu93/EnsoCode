@@ -140,6 +140,7 @@ const SUBAGENT_MODEL_KEYS = [
   'providerId',
   'modelId',
   'description',
+  'enabled',
   'reasoning',
   'thinkingLevel',
 ];
@@ -618,6 +619,7 @@ function validateSubagentModel(raw: unknown): RecordValue {
   nonEmptyStringField(entry, 'providerId', 'subagent model');
   nonEmptyStringField(entry, 'modelId', 'subagent model');
   stringField(entry, 'description', 'subagent model');
+  booleanField(entry, 'enabled', 'subagent model', false);
   if (entry.reasoning !== undefined && !['on', 'off'].includes(String(entry.reasoning)))
     throw new Error('Invalid subagent reasoning');
   if (

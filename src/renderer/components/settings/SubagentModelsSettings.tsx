@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
+import { cn } from '@/lib/utils';
 import {
   usableProvidersForOauthSnapshot,
   useOauthCredentialStore,
@@ -112,13 +113,25 @@ export function SubagentModelsSettings() {
             <div
               key={entry.id}
               data-slot="subagent-model-row"
-              className="flex items-center gap-2 rounded-md border px-2 py-1.5"
+              className={cn(
+                'flex items-center gap-2 rounded-md border px-2 py-1.5',
+                entry.enabled === false && 'bg-muted/50 text-muted-foreground'
+              )}
             >
+              <Switch
+                data-slot="subagent-model-enabled"
+                aria-label={t('Enable subagent model')}
+                title={t('Make this model available to subagents')}
+                checked={entry.enabled !== false}
+                onCheckedChange={(enabled) => updateEntry(entry.id, { enabled })}
+              />
               <div className="shrink-0 rounded-md border bg-background">
                 <ModelPicker
                   providers={candidates}
                   providerId={entry.providerId}
                   modelId={entry.modelId}
+                  reasoningInherited={!isReasoningOverride(entry.reasoning)}
+                  thinkingInherited={!isThinkingLevelOverride(entry.thinkingLevel)}
                   reasoningEnabled={resolveReasoningEnabled(
                     entry.reasoning,
                     defaultReasoningEnabled

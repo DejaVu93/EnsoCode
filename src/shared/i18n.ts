@@ -826,6 +826,12 @@ export const zhTranslations: Record<string, string> = {
   'You are a fast recon agent. Explore, never modify…': '你是快速调研代理,只探索不修改…',
   'Provider (optional)': '模型服务(可选)',
   'Follow conversation': '跟随会话',
+  'Enable subagent model': '启用子代理模型',
+  'Make this model available to subagents': '允许子代理选择此模型',
+  Explicit: '独立设置',
+  '{{setting}}: {{source}}': '{{setting}}：{{source}}',
+  'Inherited controls preview global defaults; actual values follow the parent conversation.':
+    '跟随项的控件仅预览全局默认值；实际值跟随父会话。',
   'Select model': '选择模型',
   Toolset: '工具集',
   'All tools (bash/edit/write)': '全部工具(bash/edit/write)',

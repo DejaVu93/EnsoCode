@@ -6,6 +6,7 @@ import {
   redactBundle,
   validateBundle,
 } from './codec';
+import type { ConfigSyncBundle } from './types';
 
 const bundle = () => ({
   format: 'enso-config' as const,
@@ -33,6 +34,66 @@ const skill = {
 };
 
 describe('config sync codec', () => {
+  const subagentBundle = (): ConfigSyncBundle => ({
+    ...bundle(),
+    state: {
+      ...bundle().state,
+      providers: [
+        {
+          id: 'p1',
+          name: 'P',
+          api: 'openai-completions',
+          baseUrl: 'https://example.test',
+          enabled: true,
+          models: [{ id: 'model' }],
+        },
+      ],
+      subagentModels: [
+        {
+          id: 'sub1',
+          providerId: 'p1',
+          modelId: 'model',
+          description: '保留选型说明',
+          reasoning: 'off',
+          thinkingLevel: 'high',
+        },
+      ],
+    },
+  });
+
+  it.each([false, true])('子模型可用性在敏感配置=%s 的导出导入中无损保留', async (encrypted) => {
+    const source = subagentBundle();
+    source.secretsIncluded = encrypted;
+    const entry = source.state.subagentModels[0];
+    source.state.subagentModels = [
+      { ...entry, enabled: false },
+      { ...entry, id: 'sub2', enabled: true },
+      { ...entry, id: 'legacy' },
+    ];
+    const original = structuredClone(source);
+    const password = encrypted ? 'correct horse' : undefined;
+    const decoded = await decodeBundle(await encodeBundle(source, password), password);
+    expect(decoded.state.subagentModels).toEqual(original.state.subagentModels);
+    expect(source).toEqual(original);
+  });
+
+  it.each(['false', 0, null])('拒绝非布尔子模型可用性 %s，而不是误当默认启用', (enabled) => {
+    const source = subagentBundle();
+    const state = source.state;
+    expect(() =>
+      validateBundle({
+        ...source,
+        state: { ...state, subagentModels: [{ ...state.subagentModels[0], enabled }] },
+      })
+    ).toThrow('Invalid subagent model.enabled');
+  });
+
+  it('旧配置包缺少子模型可用性时仍接受且不补写字段', () => {
+    const source = subagentBundle();
+    expect(validateBundle(source).state.subagentModels).toEqual(source.state.subagentModels);
+    expect(validateBundle(source).state.subagentModels[0]).not.toHaveProperty('enabled');
+  });
+
   it('拒绝技能资源中的路径穿越', () => {
     expect(() =>
       validateBundle({
