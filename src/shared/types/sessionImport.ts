@@ -7,8 +7,19 @@ export interface ExternalSession {
   messageCount: number;
 }
 
+export type ExternalSessionSourceId =
+  | 'claude-code'
+  | 'codex'
+  | 'grok'
+  | 'cursor'
+  | 'pi'
+  | 'oh-my-pi'
+  | 'factory'
+  | 'opencode'
+  | 'gemini-cli';
+
 export interface ExternalSessionSource {
-  sourceId: 'claude-code' | 'codex';
+  sourceId: ExternalSessionSourceId;
   sourceName: string;
   sessions: ExternalSession[];
 }

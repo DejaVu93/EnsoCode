@@ -22,7 +22,7 @@ interface ImportSessionDialogProps {
   onClose: () => void;
 }
 
-/** 从本地 AI 应用（Claude Code / Codex）导入该项目下的会话历史 */
+/** 从本地 AI 应用导入该项目下的会话历史 */
 export function ImportSessionDialog({ project, onClose }: ImportSessionDialogProps) {
   const { t } = useI18n();
   const [sources, setSources] = useState<ExternalSessionSource[] | null>(null);
