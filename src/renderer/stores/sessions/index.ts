@@ -18,6 +18,7 @@ import type {
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
 import type { PairCreatedSession } from '@shared/types/pair';
 import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import { isContinuationTurn } from '@shared/titleContinuation';
 // 纯逻辑模块(仅类型级依赖),store 引用不破坏 node 环境测试
 import {
   cleanTitleSummarySource,
@@ -486,8 +487,10 @@ export const useSessionsStore = create<SessionsState>()(
       }
 
       /**
-       * 回合成功结束后的滚动标题刷新：当前标题 + worker 切出的本轮摘要送模型，
+       * 回合成功结束后的滚动标题刷新：开场请求（主旨锚点）+ 当前标题 + worker 切出的本轮摘要送模型，
        * 模型可原样返回当前标题（不改）。每个成功回合都触发，不收敛；在飞未回流时跳过。
+       * 本轮 user 是推进类短句（“继续 / 开始实施 / go ahead”）时直接跳过：同一话题往前走不该重写标题，
+       * 真机已证不听话的模型会把“开始实施”总结成“开始实施：先读 PRD”这种脱离主旨的标题。
        * 冷会话/手机端会话没有正文也能触发——摘要来自 worker，不依赖 renderer 的 messages。
        */
       function tryRollingSummarizeTitle(
@@ -496,6 +499,7 @@ export const useSessionsStore = create<SessionsState>()(
       ): void {
         if (!digest || !useSettingsStore.getState().titleSummaryEnabled) return;
         if (!digest.userText.trim() && !digest.assistantText.trim()) return;
+        if (isContinuationTurn(digest.userText)) return;
         const conversation = get().conversations[conversationId];
         if (
           !conversation ||
@@ -513,6 +517,7 @@ export const useSessionsStore = create<SessionsState>()(
           {
             kind: 'rolling',
             currentTitle: conversation.title,
+            firstUserText: digest.firstUserText,
             userText: digest.userText,
             assistantText: digest.assistantText,
           },

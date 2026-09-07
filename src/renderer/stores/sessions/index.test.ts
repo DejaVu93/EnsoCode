@@ -1290,7 +1290,11 @@ describe('typed Agent child projection', () => {
   });
 
   describe('回合结束滚动刷新标题', () => {
-    const digest = { userText: '本轮用户请求', assistantText: '本轮 assistant 结论' };
+    const digest = {
+      firstUserText: '会话首条请求',
+      userText: '本轮用户请求',
+      assistantText: '本轮 assistant 结论',
+    };
 
     /** 构造一个已 started、带标题与模型记忆的 root 会话，返回其 id */
     function seedStartedRoot(id: string, overrides: Record<string, unknown> = {}) {
@@ -1315,7 +1319,7 @@ describe('typed Agent child projection', () => {
       }));
     }
 
-    function turnCompleted(id: string, d: { userText: string; assistantText: string } = digest) {
+    function turnCompleted(id: string, d: typeof digest = digest) {
       onAgentEvent?.({
         type: 'turn-completed',
         identity: { sessionId: id, generation: 'g1' },
@@ -1347,11 +1351,37 @@ describe('typed Agent child projection', () => {
         {
           kind: 'rolling',
           currentTitle: '初始标题',
+          firstUserText: '会话首条请求',
           userText: '本轮用户请求',
           assistantText: '本轮 assistant 结论',
         },
         { providerId: 'provider-1', modelId: 'model-1' }
       );
+    });
+
+    it('本轮 user 是推进类短句（“开始实施”）→ 不发滚动总结，但 lastTurnDigest 照常写入', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      const continuation = { ...digest, userText: '开始实施' };
+      turnCompleted('parent', continuation);
+
+      expect(summarizeTitle).not.toHaveBeenCalled();
+      const conversation = sessionsModule.useSessionsStore.getState().conversations.parent;
+      expect(conversation.lastTurnDigest).toEqual(continuation);
+      expect(conversation.titleSummaryPending).toBeUndefined();
+      expect(conversation.title).toBe('初始标题');
+    });
+
+    it('推进类短句带实词（“继续排查节点转圈”）→ 照常发滚动总结', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      turnCompleted('parent', { ...digest, userText: '继续排查节点转圈' });
+
+      expect(summarizeTitle).toHaveBeenCalledTimes(1);
     });
 
     it('在飞未回流时第二个 turn-completed 不再调用；收到 title-generated 后再触发', async () => {
@@ -1557,7 +1587,11 @@ describe('typed Agent child projection', () => {
   });
 
   describe('标题总结在飞态、失败态与手动重试', () => {
-    const digest = { userText: '本轮用户请求', assistantText: '本轮 assistant 结论' };
+    const digest = {
+      firstUserText: '会话首条请求',
+      userText: '本轮用户请求',
+      assistantText: '本轮 assistant 结论',
+    };
     const conv = () => sessionsModule.useSessionsStore.getState().conversations.parent;
 
     function seed(overrides: Record<string, unknown> = {}) {
