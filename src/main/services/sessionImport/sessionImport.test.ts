@@ -229,6 +229,101 @@ describe('Grok CLI 会话', () => {
   });
 });
 
+const cursorTranscript = (home: string, projectPath: string, id: string) => {
+  const dir = path.join(
+    home,
+    '.cursor',
+    'projects',
+    projectPath.replace(/^\//, '').replaceAll('/', '-'),
+    'agent-transcripts',
+    id
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  return path.join(dir, `${id}.jsonl`);
+};
+
+const cursorTurn = (role: string, text: string) => ({
+  role,
+  message: { content: [{ type: 'text', text }] },
+});
+
+describe('Cursor 会话', () => {
+  const projectPath = '/tmp/demo';
+
+  it('列出会话时给出 Cursor 来源、jsonl 绝对路径与首条 user 标题', () => {
+    const file = cursorTranscript(tmp, projectPath, 'tr-1');
+    fs.writeFileSync(
+      file,
+      jsonl([cursorTurn('user', '<user_query>修复登录问题</user_query>')])
+    );
+    const cursor = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'cursor');
+    expect(cursor?.sourceName).toBe('Cursor');
+    expect(cursor?.sessions).toHaveLength(1);
+    expect(cursor?.sessions[0].path).toBe(file);
+    expect(cursor?.sessions[0].title).toContain('修复登录问题');
+  });
+
+  it('读取时提取 user/assistant 文本轮次', () => {
+    const file = cursorTranscript(tmp, projectPath, 'tr-1');
+    fs.writeFileSync(
+      file,
+      jsonl([cursorTurn('user', '构建挂了'), cursorTurn('assistant', '已修复')])
+    );
+    expect(readExternalSession('cursor', file)).toEqual([
+      expect.objectContaining({ role: 'user', text: '构建挂了' }),
+      expect.objectContaining({ role: 'assistant', text: '已修复' }),
+    ]);
+  });
+
+  it('user 正文从 user_query 标签中抽出', () => {
+    const file = cursorTranscript(tmp, projectPath, 'tr-1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        cursorTurn(
+          'user',
+          '<timestamp>2026-09-08</timestamp>\n<user_query>真正的问题</user_query>'
+        ),
+      ])
+    );
+    expect(readExternalSession('cursor', file)).toEqual([
+      expect.objectContaining({ role: 'user', text: '真正的问题' }),
+    ]);
+  });
+
+  it('整段以尖括号开头且抽不到 user_query 时跳过该轮次', () => {
+    const file = cursorTranscript(tmp, projectPath, 'tr-1');
+    fs.writeFileSync(
+      file,
+      jsonl([
+        cursorTurn('user', '<environment_context>工作区快照</environment_context>'),
+        cursorTurn('assistant', '收到'),
+      ])
+    );
+    expect(readExternalSession('cursor', file)).toEqual([
+      expect.objectContaining({ role: 'assistant', text: '收到' }),
+    ]);
+  });
+
+  it('损坏的 jsonl 与缺失文件都返回空消息且不抛错', () => {
+    const file = cursorTranscript(tmp, projectPath, 'tr-1');
+    fs.writeFileSync(file, 'not-json\n{"role":"user"}\n');
+    expect(readExternalSession('cursor', file)).toEqual([]);
+    expect(readExternalSession('cursor', path.join(path.dirname(file), 'missing.jsonl'))).toEqual(
+      []
+    );
+  });
+
+  it('只列出当前项目编码目录下的会话', () => {
+    const mine = cursorTranscript(tmp, projectPath, 'tr-1');
+    fs.writeFileSync(mine, jsonl([cursorTurn('user', 'a')]));
+    const other = cursorTranscript(tmp, '/tmp/other', 'tr-2');
+    fs.writeFileSync(other, jsonl([cursorTurn('user', 'b')]));
+    const cursor = listExternalSessions(projectPath, tmp).find((s) => s.sourceId === 'cursor');
+    expect(cursor?.sessions.map((s) => s.path)).toEqual([mine]);
+  });
+});
+
 describe('writePiSession', () => {
   it('产出 header + 消息链，parentId 依次串联', () => {
     const file = writePiSession(

@@ -6,6 +6,7 @@ import type {
 } from '@shared/types/sessionImport';
 import { listClaudeSessions, readClaudeSession } from './claudeCode';
 import { listCodexSessions, readCodexSession } from './codex';
+import { listCursorSessions, readCursorSession } from './cursor';
 import { listGrokSessions, readGrokSession } from './grok';
 import { writePiSession } from './piJsonl';
 
@@ -25,6 +26,7 @@ const READERS: SessionReader[] = [
   },
   { sourceId: 'codex', sourceName: 'Codex', list: listCodexSessions, read: readCodexSession },
   { sourceId: 'grok', sourceName: 'Grok CLI', list: listGrokSessions, read: readGrokSession },
+  { sourceId: 'cursor', sourceName: 'Cursor', list: listCursorSessions, read: readCursorSession },
 ];
 
 const readerOf = (sourceId: string): SessionReader | undefined =>
