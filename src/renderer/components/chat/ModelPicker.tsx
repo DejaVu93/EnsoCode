@@ -1,11 +1,18 @@
-import { resolveCustomModelView } from '@shared/modelCatalog';
+import { pickModelCapabilityOverrides, resolveCustomModelView } from '@shared/modelCatalog';
 import { clampProjectThinkingLevel, visibleThinkingLevels } from '@shared/modelThinking';
 import { CUSTOM_VENDOR_ID, groupProviders } from '@shared/providerGroups';
-import type { ModelEntry, ModelMeta, ModelProvider, OauthProviderInfo } from '@shared/types';
-import type { ThinkingLevel } from '@shared/types/agent';
+import type {
+  ModelCapabilityOverrides,
+  ModelEntry,
+  ModelMeta,
+  ModelProvider,
+  OauthProviderInfo,
+} from '@shared/types';
+import { THINKING_LEVELS, type ThinkingLevel } from '@shared/types/agent';
 import { BadgeCheck, Brain, Check, ChevronDown, KeyRound } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Menu,
   MenuGroup,
@@ -45,7 +52,8 @@ export function persistClampedThinkingLevel(
 export function resolvePickerCapabilities(
   provider: ModelProvider | undefined,
   row: ModelEntry | undefined,
-  meta: ModelMeta | undefined
+  meta: ModelMeta | undefined,
+  overrides?: ModelCapabilityOverrides
 ): {
   reasoning: boolean | undefined;
   thinkingLevels: ThinkingLevel[] | undefined;
@@ -59,7 +67,15 @@ export function resolvePickerCapabilities(
       declaredThinkingLevels: knownMeta?.thinkingLevels,
     };
   }
-  const view = resolveCustomModelView(row, meta);
+  const view = resolveCustomModelView({ ...row, ...pickModelCapabilityOverrides(overrides) }, meta);
+  // 子模型的深度是可编辑覆盖，不是不可突破的模型能力上限；选低档不能删掉更高档入口。
+  if (overrides !== undefined) {
+    return {
+      reasoning: view.reasoning,
+      thinkingLevels: [...THINKING_LEVELS],
+      declaredThinkingLevels: undefined,
+    };
+  }
   return {
     reasoning: view.reasoning,
     thinkingLevels: view.thinkingLevels,
@@ -131,9 +147,11 @@ interface ModelPickerProps {
   modelId: string;
   reasoningEnabled: boolean;
   thinkingLevel: ThinkingLevel;
-  /** 设置页按字段标明继承；传入值仅作全局默认预览，不代表父会话当前状态。 */
-  reasoningInherited?: boolean;
-  thinkingInherited?: boolean;
+  /** 子模型三态；不传时保留主会话的二态开关。 */
+  reasoningMode?: 'follow' | 'on' | 'off';
+  onReasoningModeChange?: (mode: 'follow' | 'on' | 'off', level: ThinkingLevel) => void;
+  /** 仅当前选中自定义模型的条目覆盖；OAuth 能力仍以 catalog 为准。 */
+  modelCapabilityOverrides?: ModelCapabilityOverrides;
   /** 仅需 provider/account/model 级联的场景可隐藏 reasoning/thinking。 */
   showReasoningControls?: boolean;
   /** 仅会话工具行：响应全局「切换模型」快捷键并聚焦搜索框 */
@@ -433,8 +451,9 @@ export function ModelPicker({
   modelId,
   reasoningEnabled,
   thinkingLevel,
-  reasoningInherited,
-  thinkingInherited,
+  modelCapabilityOverrides,
+  reasoningMode,
+  onReasoningModeChange,
   showReasoningControls = true,
   listenHotkey = false,
   onSelect,
@@ -446,8 +465,8 @@ export function ModelPicker({
   const { t } = useI18n();
   const normalizeReasoning = onReasoningNormalize ?? onReasoningChange;
   const normalizeThinking = onThinkingNormalize ?? onThinkingChange;
-  const showInheritance = reasoningInherited !== undefined || thinkingInherited !== undefined;
-  const hasInherited = reasoningInherited || thinkingInherited;
+  const reasoningInherited = reasoningMode === 'follow';
+  const thinkingInherited = reasoningMode !== undefined && !modelCapabilityOverrides?.thinkingLevel;
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
   const openSubmenuIdsRef = useRef(new Set<string>());
@@ -602,7 +621,14 @@ export function ModelPicker({
       const meta = metaByProvider[targetProviderId]?.[targetModelId];
       const provider = providers.find((entry) => entry.id === targetProviderId);
       const row = provider?.models.find((entry) => entry.id === targetModelId);
-      const capability = resolvePickerCapabilities(provider, row, meta);
+      const capability = resolvePickerCapabilities(
+        provider,
+        row,
+        meta,
+        targetProviderId === providerId && targetModelId === modelId
+          ? modelCapabilityOverrides
+          : undefined
+      );
       const persisted = persistClampedThinkingLevel(
         thinkingLevel,
         capability.declaredThinkingLevels
@@ -610,19 +636,36 @@ export function ModelPicker({
       if (persisted && !thinkingInherited) normalizeThinking(persisted);
       setOpen(false);
     },
-    [onSelect, providers, metaByProvider, thinkingLevel, thinkingInherited, normalizeThinking]
+    [
+      onSelect,
+      providers,
+      providerId,
+      modelId,
+      modelCapabilityOverrides,
+      metaByProvider,
+      thinkingLevel,
+      thinkingInherited,
+      normalizeThinking,
+    ]
   );
 
   const currentProviderMeta = useModelMeta(currentProvider);
   const currentModelMeta = currentProviderMeta[modelId];
   const capability = useMemo(
-    () => resolvePickerCapabilities(currentProvider, current, currentModelMeta),
-    [currentProvider, current, currentModelMeta]
+    () =>
+      resolvePickerCapabilities(
+        currentProvider,
+        current,
+        currentModelMeta,
+        modelCapabilityOverrides
+      ),
+    [currentProvider, current, currentModelMeta, modelCapabilityOverrides]
   );
   const supportedLevels = capability.thinkingLevels;
   const visibleLevels = useMemo(() => visibleThinkingLevels(supportedLevels), [supportedLevels]);
   const reasoningUnsupported = capability.reasoning === false || supportedLevels?.length === 0;
-  const displayedReasoningEnabled = reasoningUnsupported ? false : reasoningEnabled;
+  const displayedReasoningEnabled =
+    !reasoningUnsupported && (reasoningMode ? reasoningMode === 'on' : reasoningEnabled);
   const displayedThinkingLevel =
     visibleLevels.length > 0
       ? clampProjectThinkingLevel(thinkingLevel, visibleLevels)
@@ -691,9 +734,12 @@ export function ModelPicker({
         title={current?.label ?? modelId ?? t('Model')}
       >
         <span className="min-w-0 truncate">{current?.label ?? modelId ?? t('Model')}</span>
-        {showReasoningControls && hasInherited ? (
-          <span data-model-picker-inherited="true" className="shrink-0 text-[10px]">
-            {t('Follow conversation')}
+        {showReasoningControls && reasoningMode ? (
+          <span className="shrink-0 text-[10px]" data-reasoning-summary={reasoningMode}>
+            {t(
+              reasoningMode === 'follow' ? 'Follow parent' : reasoningMode === 'on' ? 'On' : 'Off'
+            )}
+            {reasoningMode === 'on' && ` · ${t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}`}
           </span>
         ) : displayedReasoningEnabled ? (
           <span className="flex shrink-0 items-center gap-0.5 text-primary">
@@ -841,43 +887,48 @@ export function ModelPicker({
                 <Brain className="h-3.5 w-3.5 text-muted-foreground" />
                 {t('Reasoning')}
               </span>
-              <Switch
-                tabIndex={-1}
-                aria-label={t('Reasoning')}
-                checked={displayedReasoningEnabled}
-                onCheckedChange={onReasoningChange}
-                disabled={reasoningUnsupported}
-              />
+              {!reasoningMode && (
+                <Switch
+                  tabIndex={-1}
+                  aria-label={t('Reasoning')}
+                  checked={displayedReasoningEnabled}
+                  onCheckedChange={onReasoningChange}
+                  disabled={reasoningUnsupported}
+                />
+              )}
             </div>
-            {showInheritance && (
-              <div className="mt-2 space-y-1 text-[10px] text-muted-foreground">
-                <p>
-                  {t('{{setting}}: {{source}}', {
-                    setting: t('Reasoning'),
-                    source: t(reasoningInherited ? 'Follow conversation' : 'Explicit'),
-                  })}
-                </p>
-                <p>
-                  {t('{{setting}}: {{source}}', {
-                    setting: t('Thinking level'),
-                    source: t(thinkingInherited ? 'Follow conversation' : 'Explicit'),
-                  })}
-                </p>
-                {hasInherited && (
-                  <p>
-                    {t(
-                      'Inherited controls preview global defaults; actual values follow the parent conversation.'
-                    )}
-                  </p>
-                )}
+            {reasoningMode && (
+              <div className="mt-2 flex gap-1" role="group" aria-label={t('Reasoning')}>
+                {(['follow', 'on', 'off'] as const).map((mode) => (
+                  <Button
+                    key={mode}
+                    type="button"
+                    size="sm"
+                    variant={reasoningMode === mode ? 'default' : 'outline'}
+                    className="h-7 flex-1 px-2 text-xs"
+                    aria-pressed={reasoningMode === mode}
+                    data-reasoning-mode={mode}
+                    disabled={
+                      mode === 'on' && !!currentProvider?.oauthAccountKey && reasoningUnsupported
+                    }
+                    onClick={() => onReasoningModeChange?.(mode, displayedThinkingLevel)}
+                  >
+                    {t(mode === 'follow' ? 'Follow parent' : mode === 'on' ? 'On' : 'Off')}
+                  </Button>
+                ))}
               </div>
             )}
-            {reasoningUnsupported && (
+            {reasoningUnsupported && (!reasoningMode || !!currentProvider?.oauthAccountKey) && (
               <p className="mt-1 text-[10px] text-muted-foreground/70">
                 {t('{{model}} does not support reasoning', { model: current?.label ?? modelId })}
               </p>
             )}
 
+            {reasoningMode === 'on' && displayedReasoningEnabled && (
+              <p className="mt-2 text-xs">
+                {t('Depth: {{level}}', { level: t(LEVEL_LABEL_KEYS[displayedThinkingLevel]) })}
+              </p>
+            )}
             {displayedReasoningEnabled && visibleLevels.length > 0 && (
               <div className="mt-3">
                 <Slider
@@ -903,7 +954,9 @@ export function ModelPicker({
                       type="button"
                       tabIndex={-1}
                       data-thinking-tick={entry}
-                      style={{ left: `${(index / Math.max(1, visibleLevels.length - 1)) * 100}%` }}
+                      style={{
+                        left: `${(index / Math.max(1, visibleLevels.length - 1)) * 100}%`,
+                      }}
                       onClick={() => onThinkingChange(entry)}
                       className="absolute top-0 flex w-0 flex-col items-center"
                     >
