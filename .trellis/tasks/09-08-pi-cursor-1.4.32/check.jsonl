@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/testing.md", "reason": "验收补丁测试是否仍只断言已安装 bundle"}
+{"file": ".trellis/spec/shared/conventions.md", "reason": "检查注释与无关改动"}
