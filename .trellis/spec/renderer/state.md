@@ -104,6 +104,16 @@ expect(store.getState().conversations.ended.messages).toHaveLength(before);
 [big-question/optimistic-echo-blocks-snapshot.md](../big-question/optimistic-echo-blocks-snapshot.md)）。
 同理，任何「本地是否已有数据、要不要去拉」的判断都要过滤 `optimistic` 条目。
 
+侧栏 Files 按会话常驻（`mountedIds` 只增不减）。`evictColdMessages` 会把隐藏会话的
+`messages` 置空；此时对时间线做「已见 write」占位，会把空数组当成权威历史。
+之后 snapshot / tail 回填会把每一条历史 write 当成新文件，整树展开。
+这类 seen-set / 时间线 diff **必须等权威正文再占位**，冷清空时把 seen 重置为
+`null`，不要写成空 `Set`。
+
+`buildTimeline` 的 tool `key` 是本地数组下标（`${messageIndex}-${partIndex}`）。
+`historyBaseIndex` 从 tail 切到全文 snapshot 时同一条 write 的 key 会变，seen
+必须随 `historyBaseIndex` 清掉重占位，否则会误刷新。
+
 ## 会话标题的自动总结守卫
 
 标题自动总结（首条即时 + 每轮 `turn-completed{digest}` 滚动）在 `sessions/index.ts` 里有两层守卫，缺一不可：
