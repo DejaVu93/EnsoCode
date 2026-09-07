@@ -340,7 +340,14 @@ export function MessageTimeline({
       </div>
     );
   };
-  const pageChrome = historyPageChrome(items.length > 0, historyLoading, hasOlder);
+  const everHadOlderRef = useRef(false);
+  if (hasOlder === true) everHadOlderRef.current = true;
+  const pageChrome = historyPageChrome(
+    items.length > 0,
+    historyLoading,
+    hasOlder,
+    everHadOlderRef.current
+  );
   const renderHeader = () => <HistoryPageHeader chrome={pageChrome} />;
   const renderFooter = () => (
     <div className={cn(CHAT_COL, 'pb-6 [overflow-wrap:anywhere]')}>

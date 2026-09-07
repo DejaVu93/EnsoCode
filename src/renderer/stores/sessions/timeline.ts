@@ -154,14 +154,16 @@ function summarizeArgs(args: unknown, cwd?: string): string {
 /** 时间线顶部：翻页在途 / 已到第 0 条 / 不占文案 */
 export type HistoryPageChrome = 'none' | 'loading' | 'start';
 
+/** 到头提示只给「曾经有更早、现已翻完」的会话；刚开场 / 一页就完的短会话不显示 */
 export function historyPageChrome(
   hasItems: boolean,
   loading: boolean,
-  hasOlder: boolean | undefined
+  hasOlder: boolean | undefined,
+  everHadOlder = false
 ): HistoryPageChrome {
   if (!hasItems) return 'none';
   if (loading) return 'loading';
-  if (hasOlder === false) return 'start';
+  if (hasOlder === false && everHadOlder) return 'start';
   return 'none';
 }
 

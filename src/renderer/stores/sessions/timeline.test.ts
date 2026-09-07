@@ -20,10 +20,12 @@ describe('historyPageChrome', () => {
     expect(historyPageChrome(false, false, false)).toBe('none');
   });
 
-  it('有消息时：在途 loading、到顶 start、还有更早或未知则 none', () => {
+  it('有消息时：在途 loading、翻到顶才 start、短会话不提示开头', () => {
     expect(historyPageChrome(true, true, true)).toBe('loading');
-    expect(historyPageChrome(true, true, false)).toBe('loading');
-    expect(historyPageChrome(true, false, false)).toBe('start');
+    expect(historyPageChrome(true, true, false, true)).toBe('loading');
+    expect(historyPageChrome(true, false, false)).toBe('none');
+    expect(historyPageChrome(true, false, false, false)).toBe('none');
+    expect(historyPageChrome(true, false, false, true)).toBe('start');
     expect(historyPageChrome(true, false, true)).toBe('none');
     expect(historyPageChrome(true, false, undefined)).toBe('none');
   });
