@@ -178,7 +178,16 @@ function extractWriteContent(name: string, args: unknown): string | null {
 /** edit 工具参数里取出替换块（保持同一数组引用，供 memo 做引用比较） */
 function extractEdits(name: string, args: unknown): EditBlock[] | null {
   if (name !== 'edit' || !args || typeof args !== 'object') return null;
-  let edits = (args as Record<string, unknown>).edits;
+  const record = args as Record<string, unknown>;
+  // legacy 单块 {path, oldText, newText}（Hashline 松 schema 下模型常用）
+  if (
+    !('edits' in record) &&
+    typeof record.oldText === 'string' &&
+    typeof record.newText === 'string'
+  ) {
+    return singleBlock(record, record.oldText, record.newText);
+  }
+  let edits = record.edits;
   // 部分模型把 edits 数组双重编码成 JSON 字符串（worker 执行侧已归一化，渲染侧同样兜底）
   if (typeof edits === 'string') {
     try {
@@ -205,7 +214,18 @@ function extractHashlineDiff(
 ): EditBlock[] | null {
   if (name !== 'edit' || !editDiff) return null;
   if (typeof editDiff.oldText !== 'string' || typeof editDiff.newText !== 'string') return null;
-  return [{ oldText: editDiff.oldText, newText: editDiff.newText }];
+  return singleBlock(editDiff, editDiff.oldText, editDiff.newText);
+}
+
+/** 合成的单块按来源对象缓存，保持引用稳定供行 memo 比较 */
+const singleBlockCache = new WeakMap<object, EditBlock[]>();
+function singleBlock(key: object, oldText: string, newText: string): EditBlock[] {
+  let blocks = singleBlockCache.get(key);
+  if (!blocks) {
+    blocks = [{ oldText, newText }];
+    singleBlockCache.set(key, blocks);
+  }
+  return blocks;
 }
 
 const partText = (message: ProjectedMessage): string =>

@@ -122,6 +122,37 @@ describe('buildTimeline', () => {
     expect(timeline[1]).toMatchObject({ name: 'read', output: 'const a = 1;\nexport {};' });
   });
 
+  it('legacy 单块 {path,oldText,newText} edit 也生成 edits', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'e1',
+              name: 'edit',
+              arguments: { path: 'src/a.ts', oldText: 'world', newText: 'hello' },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'e1',
+          toolName: 'edit',
+          content: [{ type: 'text', text: 'Successfully replaced 1 block(s)' }],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({
+      name: 'edit',
+      summary: 'src/a.ts',
+      edits: [{ oldText: 'world', newText: 'hello' }],
+    });
+  });
+
   it('replace edit 没有 editDiff 时继续使用参数中的路径与 edits', () => {
     const timeline = buildTimeline(
       [
