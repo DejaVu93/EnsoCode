@@ -58,7 +58,9 @@ import {
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
   needsHistoryHydration,
+  needsWorkerSnapshot,
   pruneSessionClocks,
+  stampViewDeparture,
   viewedConversationId,
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
@@ -76,6 +78,7 @@ import {
 import { isPairViewed, nextUnread } from './unread';
 import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
 
+/** 离开时盖章；正在看的会话由 viewedId 保热，TTL 从离开起算 */
 const lastViewedAt: Record<string, number> = {};
 const parentTailInFlight = new Set<string>();
 const olderHistoryInFlight = new Set<string>();
@@ -2570,12 +2573,13 @@ async function hydrateParentHistoryTail(conversationId: string): Promise<void> {
 useSessionsStore.subscribe((state) => {
   const viewed = viewedFromState(state);
   if (viewed === lastReportedViewedId) return;
+  const previousViewedId = lastReportedViewedId;
   lastReportedViewedId = viewed;
   window.electronAPI.agent.setViewedSession?.(viewed);
-  if (viewed) lastViewedAt[viewed] = Date.now();
+  stampViewDeparture(lastViewedAt, previousViewedId, viewed, Date.now());
   const conversation = viewed ? state.conversations[viewed] : undefined;
-  if (viewed && conversation && needsHistoryHydration(conversation)) {
-    void hydrateParentHistoryTail(viewed);
+  if (viewed && conversation && needsWorkerSnapshot(conversation)) {
+    if (needsHistoryHydration(conversation)) void hydrateParentHistoryTail(viewed);
     void window.electronAPI.agent.requestSnapshot(viewed);
   }
   if (evictTimer) clearTimeout(evictTimer);

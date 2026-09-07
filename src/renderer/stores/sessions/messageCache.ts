@@ -31,7 +31,7 @@ export function hasAuthoritativeMessages(messages: readonly { optimistic?: boole
   return messages.some((message) => !message.optimistic);
 }
 
-/** 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 snapshot */
+/** 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 jsonl 尾窗 */
 export function needsHistoryHydration(conversation: {
   started: boolean;
   sessionFile?: string;
@@ -45,6 +45,27 @@ export function needsHistoryHydration(conversation: {
     !hasAuthoritativeMessages(conversation.messages) &&
     !conversation.spawning
   );
+}
+
+/** 已启动或可 resume 且未 failed：切回应对齐 worker 全文，半截权威正文也要 */
+export function needsWorkerSnapshot(conversation: {
+  started: boolean;
+  sessionFile?: string;
+  status?: string;
+}): boolean {
+  return (
+    conversation.status !== 'failed' && (conversation.started || Boolean(conversation.sessionFile))
+  );
+}
+
+/** 离开会话时盖章；正在看的会话不写自己，由 isMessageCacheHot 的 viewedId 保热 */
+export function stampViewDeparture(
+  lastViewedAt: Record<string, number>,
+  previousId: string | null,
+  nextId: string | null,
+  now: number
+): void {
+  if (previousId && previousId !== nextId) lastViewedAt[previousId] = now;
 }
 
 /** 输入框 busy：有权威正文后不再因 spawn/读历史锁输入 */

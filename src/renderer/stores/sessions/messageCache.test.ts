@@ -120,6 +120,53 @@ describe('needsHistoryHydration', () => {
   });
 });
 
+describe('needsWorkerSnapshot', () => {
+  it('已启动或可 resume 且未 failed 就要对齐 worker，半截权威正文也不例外', async () => {
+    const { needsWorkerSnapshot } = await import('./messageCache');
+    expect(
+      needsWorkerSnapshot({
+        started: true,
+        sessionFile: '/tmp/s.jsonl',
+        status: 'idle',
+      })
+    ).toBe(true);
+    expect(
+      needsWorkerSnapshot({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        status: 'idle',
+      })
+    ).toBe(true);
+    expect(
+      needsWorkerSnapshot({
+        started: false,
+        sessionFile: undefined,
+        status: 'idle',
+      })
+    ).toBe(false);
+    expect(
+      needsWorkerSnapshot({
+        started: true,
+        sessionFile: '/tmp/s.jsonl',
+        status: 'failed',
+      })
+    ).toBe(false);
+  });
+});
+
+describe('stampViewDeparture', () => {
+  it('离开时盖章，当前会话不写自己', async () => {
+    const { stampViewDeparture } = await import('./messageCache');
+    const last: Record<string, number> = { stay: 1 };
+    stampViewDeparture(last, 'left', 'next', 9);
+    expect(last).toEqual({ stay: 1, left: 9 });
+    stampViewDeparture(last, null, 'next', 10);
+    expect(last.left).toBe(9);
+    stampViewDeparture(last, 'same', 'same', 11);
+    expect(last.same).toBeUndefined();
+  });
+});
+
 describe('chatSurfaceBusy', () => {
   it('尾巴上屏后不再锁输入，即使还在 spawn', () => {
     expect(

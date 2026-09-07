@@ -6,9 +6,10 @@ import type {
   RendererAgentEvent,
   SourceAuthorityProjection,
 } from '@shared/types/agent';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SettingsModule from '../settings';
 import type * as SessionsModule from './index';
+import { MESSAGE_CACHE_TTL_MS } from './messageCache';
 
 let onCapabilityAsk: ((request: CapabilityAskRequest) => void) | undefined;
 let onAgentEvent: ((event: RendererAgentEvent) => void) | undefined;
@@ -113,6 +114,7 @@ const hireCoworker = vi.fn(async (): Promise<{ ok: boolean; error?: string }> =>
 const summarizeTitle = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
 const agentAbort = vi.fn(async (_id: string) => ({ ok: true }));
 const agentRelease = vi.fn(async (_id: string) => ({ ok: true }));
+const requestSnapshot = vi.fn(async () => ({ ok: true }));
 
 vi.stubGlobal('navigator', { language: 'en-US' });
 vi.stubGlobal('document', {
@@ -144,7 +146,7 @@ vi.stubGlobal('window', {
         onAgentEvent = callback;
         return vi.fn();
       }),
-      requestSnapshot: vi.fn(async () => ({ ok: true })),
+      requestSnapshot,
       readParentHistoryTail,
       readChildHistory,
       prompt: agentPrompt,
@@ -254,6 +256,7 @@ describe('typed Agent child projection', () => {
       error: 'no',
     });
     agentSpawn.mockClear();
+    requestSnapshot.mockClear();
     nextConversationId = 'parent';
     sourceProjection = {
       projects: [
@@ -1825,6 +1828,48 @@ describe('typed Agent child projection', () => {
 });
 
 describe('parent history tail hydrate', () => {
+  beforeAll(async () => {
+    settingsModule ??= await import('../settings');
+    sessionsModule ??= await import('./index');
+  });
+
+  beforeEach(async () => {
+    requestSnapshot.mockClear();
+    readParentHistoryTail.mockReset();
+    readParentHistoryTail.mockResolvedValue({
+      ok: false,
+      code: 'not-found',
+      error: 'no',
+    });
+    if (sessionsModule.useSessionsStore.getState().conversations.parent) return;
+    nextConversationId = 'parent';
+    sourceProjection = {
+      projects: [
+        {
+          projectId: 'project',
+          canonicalPath: '/workspace',
+          state: 'active',
+          version: 1,
+        },
+      ],
+      conversations: [],
+    };
+    sessionsModule.useSessionsStore.setState({
+      conversations: {},
+      order: [],
+      activeId: null,
+      pendingAgentPrefill: undefined,
+    });
+    settingsModule.useSettingsStore.setState({
+      projects: [{ id: 'project', name: 'Project', path: '/workspace' }],
+    });
+    await seedParent();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('spawn 中仍能上屏尾巴，且不写 historyOnly', async () => {
     let resolveTail: ((value: ParentHistoryTailResult) => void) | undefined;
     readParentHistoryTail.mockImplementation(
@@ -1978,5 +2023,99 @@ describe('parent history tail hydrate', () => {
       .getState()
       .send('go', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
     expect(agentSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('切到已有半截权威正文的会话仍要 snapshot，不打尾窗', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        partial: {
+          ...state.conversations.parent,
+          id: 'partial',
+          started: true,
+          spawning: false,
+          status: 'idle',
+          sessionFile: '/tmp/partial.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['parent', 'partial'],
+      activeId: 'parent',
+    }));
+    requestSnapshot.mockClear();
+    readParentHistoryTail.mockClear();
+    sessionsModule.useSessionsStore.getState().selectConversation('partial');
+    expect(requestSnapshot).toHaveBeenCalledWith('partial');
+    expect(readParentHistoryTail).not.toHaveBeenCalled();
+  });
+
+  it('切到空窗可 resume 会话仍走尾窗 + snapshot', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        empty: {
+          ...state.conversations.parent,
+          id: 'empty',
+          started: false,
+          spawning: false,
+          status: 'idle',
+          sessionFile: '/tmp/empty.jsonl',
+          messages: [],
+        },
+      },
+      order: ['parent', 'empty'],
+      activeId: 'parent',
+    }));
+    requestSnapshot.mockClear();
+    readParentHistoryTail.mockClear();
+    sessionsModule.useSessionsStore.getState().selectConversation('empty');
+    expect(requestSnapshot).toHaveBeenCalledWith('empty');
+    expect(readParentHistoryTail).toHaveBeenCalledWith('empty');
+  });
+
+  it('在会话里坐超 TTL 再离开，TTL 内后台 upsert 仍写入', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const template = sessionsModule.useSessionsStore.getState().conversations.parent;
+    sessionsModule.useSessionsStore.setState({
+      conversations: {
+        stay: {
+          ...template,
+          id: 'stay',
+          started: false,
+          sessionFile: undefined,
+          activeTabId: undefined,
+          parentId: undefined,
+          messages: [],
+        },
+        leave: {
+          ...template,
+          id: 'leave',
+          started: true,
+          sessionFile: '/tmp/leave.jsonl',
+          status: 'running',
+          generation: 'g1',
+          lastSeq: 0,
+          historyBaseIndex: undefined,
+          activeTabId: undefined,
+          parentId: undefined,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['stay', 'leave'],
+      activeId: 'stay',
+    });
+    sessionsModule.useSessionsStore.getState().selectConversation('leave');
+    vi.setSystemTime(1_000 + MESSAGE_CACHE_TTL_MS + 1);
+    sessionsModule.useSessionsStore.getState().selectConversation('stay');
+    onAgentEvent?.({
+      type: 'message-upsert',
+      identity: { sessionId: 'leave', generation: 'g1' },
+      seq: 1,
+      index: 0,
+      message: { role: 'assistant', content: [{ type: 'text', text: '后半' }] },
+    });
+    const message = sessionsModule.useSessionsStore.getState().conversations.leave.messages[0];
+    expect((message.content[0] as { text: string }).text).toBe('后半');
   });
 });
