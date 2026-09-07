@@ -13,7 +13,7 @@
 - [x] 独立只读 review，修复发现后再跑验证。
 - [x] 更新 spec 与任务验收记录。
 - [x] 再次 fetch origin；上游仍为 0238951，已包含，无需再 merge。
-- [ ] 推送 fork/fix/generation-stall-visible-output；gh pr create --repo J3n5en/EnsoCode --base dev --head DejaVu93:fix/generation-stall-visible-output。
+- [x] 推送 fork/fix/generation-stall-visible-output；gh pr create --repo J3n5en/EnsoCode --base dev --head DejaVu93:fix/generation-stall-visible-output。
 
 验证命令：`pnpm typecheck`、`pnpm lint`、`pnpm test`、`pnpm build`、`git diff --check`。
 不得宣称 mock/SSR 通过就等于真实布局通过；不触碰真实 userData 或收费模型。
