@@ -7,6 +7,7 @@ import {
   type SessionProjection,
   upsertOutOfRange,
 } from './reducer';
+import { shouldAbortStalledGeneration } from './stallTimeout';
 
 const identity = (generation = 'g1') => ({ sessionId: 's1', generation });
 const base: SessionProjection = { ...emptyProjection };
@@ -1060,5 +1061,132 @@ describe('lastOutputAt stall heartbeat', () => {
     expect(changed.lastSeq).toBe(2);
     expect(changed.messages).toEqual([placeholder]);
     expect(changed.lastOutputAt).toBe(1_000);
+  });
+});
+
+describe('snapshot running clocks', () => {
+  const NOW = 50_000;
+  const restore = (
+    state: SessionProjection,
+    overrides: Partial<SessionSnapshot> = {},
+    now = NOW
+  ): SessionProjection =>
+    applyAgentEvent(
+      state,
+      's1',
+      { type: 'snapshot', sessions: [{ ...snapshot(), status: 'running', ...overrides }] },
+      now
+    );
+
+  it('首次 running 快照从接收时间计时，历史正文与后续空 assistant 不续命', () => {
+    const restored = restore(base, { messages: [assistant('historical answer')] });
+    expect.soft(restored.runStartedAt).toBe(NOW);
+    expect(restored.lastOutputAt).toBeUndefined();
+    const empty = applyAgentEvent(
+      restored,
+      's1',
+      {
+        type: 'message-upsert',
+        identity: identity(),
+        seq: 1,
+        index: 1,
+        message: { role: 'assistant', content: [] },
+      },
+      NOW + 1_000
+    );
+    expect.soft(empty.runStartedAt).toBe(NOW);
+    expect(empty.lastOutputAt).toBeUndefined();
+    expect(
+      shouldAbortStalledGeneration({
+        ...empty,
+        now: NOW + 120_000,
+        timeoutMs: 120_000,
+        hasLiveWork: false,
+      })
+    ).toBe(true);
+  });
+
+  it.each([undefined, 2_000])(
+    '同代连续 running 快照保留开始时间和既有心跳 %s，不把历史当新输出',
+    (lastOutputAt) => {
+      const running = {
+        ...applyAgentEvent({ ...base, activeMs: 500 }, 's1', status(1, 'running'), 1_000),
+        lastOutputAt,
+      };
+      const first = restore(running, { messages: [assistant('history')] });
+      const second = restore(first, { messages: [assistant('history updated')] }, NOW + 1_000);
+      for (const restored of [first, second]) {
+        expect.soft(restored.runStartedAt).toBe(1_000);
+        expect.soft(restored.lastOutputAt).toBe(lastOutputAt);
+        expect(restored.activeMs).toBe(500);
+      }
+    }
+  );
+
+  it('新代 running 快照重建基准并清除旧代心跳与累计时间', () => {
+    const running = {
+      ...applyAgentEvent({ ...base, activeMs: 500 }, 's1', status(1, 'running'), 1_000),
+      lastOutputAt: 2_000,
+    };
+    const restored = restore(running, {
+      identity: identity('g2'),
+      messages: [assistant('new generation history')],
+    });
+    expect(restored.generation).toBe('g2');
+    expect.soft(restored.runStartedAt).toBe(NOW);
+    expect(restored.activeMs).toBe(0);
+    // store 浅合并投影；只省略字段会把旧代心跳留在会话里。
+    expect({ ...running, ...restored }.lastOutputAt).toBeUndefined();
+  });
+
+  it.each(['idle', 'failed'] as const)('%s 快照显式清除运行时钟，浅合并也不残留', (status) => {
+    const running: SessionProjection = {
+      ...base,
+      generation: 'g1',
+      status: 'running',
+      runStartedAt: 1_000,
+      lastOutputAt: 2_000,
+    };
+    const restored = restore(running, { status });
+    expect(restored.status).toBe(status);
+    const merged = { ...running, ...restored };
+    expect.soft(merged.runStartedAt).toBeUndefined();
+    expect(merged.lastOutputAt).toBeUndefined();
+  });
+
+  it('同代 idle 快照结算运行时长，重复 idle 快照不重复累计', () => {
+    const running = applyAgentEvent({ ...base, activeMs: 500 }, 's1', status(1, 'running'), 1_000);
+    const idle = restore(running, { status: 'idle' }, 4_000);
+    expect.soft(idle.activeMs).toBe(3_500);
+    expect(restore(idle, { status: 'idle' }, 5_000).activeMs).toBe(3_500);
+  });
+
+  it('running 尾窗快照保留基准，窗口前后越界 upsert 只推进 seq 不续命', () => {
+    const running = {
+      ...applyAgentEvent(base, 's1', status(1, 'running'), 1_000),
+      lastOutputAt: 2_000,
+    };
+    const restored = restore(running, {
+      ...snapshot(40),
+      status: 'running',
+      messages: [assistant('m40')],
+    });
+    let next = restored;
+    for (const [seq, index] of [
+      [1, 39],
+      [2, 42],
+    ]) {
+      next = applyAgentEvent(
+        next,
+        's1',
+        { type: 'message-upsert', identity: identity(), seq, index, message: assistant('late') },
+        NOW + seq * 1_000
+      );
+      expect(next.lastSeq).toBe(seq);
+      expect(next.historyBaseIndex).toBe(40);
+      expect(next.messages).toEqual([assistant('m40')]);
+      expect.soft(next.runStartedAt).toBe(1_000);
+      expect.soft(next.lastOutputAt).toBe(2_000);
+    }
   });
 });

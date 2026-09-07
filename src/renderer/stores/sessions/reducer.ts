@@ -233,6 +233,8 @@ export function applyAgentEvent(
     const snapshot = event.sessions.find((candidate) => candidate.identity.sessionId === sessionId);
     if (!snapshot) return state;
     const sameGeneration = state.generation === snapshot.identity.generation;
+    const running = snapshot.status === 'running';
+    const continuingRun = sameGeneration && state.status === 'running' && running;
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
     const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
@@ -254,7 +256,10 @@ export function applyAgentEvent(
       commands: snapshot.commands,
       dispatchMainEvents: {},
       lastSeq: 0,
-      activeMs: sameGeneration ? state.activeMs : 0,
+      activeMs: sameGeneration ? (running ? state.activeMs : settleTiming(state, now).activeMs) : 0,
+      // 快照正文不是新输出；同轮保留时钟，首次恢复从接收时开始监控。显式 undefined 供 store 浅合并清理旧值。
+      runStartedAt: running ? (continuingRun ? (state.runStartedAt ?? now) : now) : undefined,
+      lastOutputAt: continuingRun ? state.lastOutputAt : undefined,
       pendingApprovals: snapshot.pendingApprovals ?? [],
       pendingAsks: snapshot.pendingAsks ?? [],
       backgroundTasks: snapshot.backgroundTasks ?? [],
