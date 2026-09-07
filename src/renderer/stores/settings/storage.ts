@@ -54,9 +54,13 @@ export function createElectronPersistStorage<State>(): PersistStorage<State> {
   type Write = { value: StorageValue<State> | undefined };
   type Queue = { pending?: Write; done: Promise<void> };
   const queues = new Map<string, Queue>();
+  const lastState = new Map<string, State | undefined>();
 
   function enqueue(name: string, value: StorageValue<State> | undefined): Promise<void> | void {
     if (!hydratedNames.has(name)) return;
+    const stateRef = value?.state;
+    if (lastState.has(name) && lastState.get(name) === stateRef) return;
+    lastState.set(name, stateRef);
     writeGeneration++;
     const existing = queues.get(name);
     if (existing) {

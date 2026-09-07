@@ -21,6 +21,15 @@ describe('对象级会话持久化', () => {
     read.mockReset();
   });
 
+  it('相同 state 引用不重复 IPC', async () => {
+    storageModule.openPersistWriteGate('same-ref');
+    writeKey.mockResolvedValue(true);
+    const snapshot = { revision: 1 };
+    await storage.setItem('same-ref', { state: snapshot, version: 1 });
+    await storage.setItem('same-ref', { state: snapshot, version: 1 });
+    expect(writeKey).toHaveBeenCalledTimes(1);
+  });
+
   it('流式突发只发送首值和最新值，同键最多一个在途写入', async () => {
     storageModule.openPersistWriteGate('burst');
     const first = deferred();
