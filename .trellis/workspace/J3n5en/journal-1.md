@@ -594,3 +594,39 @@ Completed Agent writes now refresh the Files tree and expand ancestors without a
 ### Status
 
 [OK] **Completed**
+
+
+## Session 20: 上滑历史 loading 与到头提示
+
+**Date**: 2026-09-07
+**Task**: 上滑历史 loading 与到头提示
+**Branch**: `dev`
+
+### Summary
+
+三端时间线 Header 共用 historyPageChrome：在途转圈、到第 0 条提示开头；historyLoading 进投影但不持久化。验收已勾，任务归档。
+
+### Main Changes
+
+- MessageTimeline Header 按 historyLoading / hasOlder 显示 loading 或到头
+- 桌面 historyLoading 挂会话投影；手机 PairClient onHistoryPending 进 React 状态
+- partialize / evictColdMessages 剥 historyLoading，避免冷开一直转圈
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6dc34d3b` | (see git log) |
+| `3deb31ce` | (see git log) |
+
+### Testing
+
+- [OK] vitest: timeline / sessions index / persistSnapshot / messageCache / remoteNodes reducer 195 通过
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- README 与截图仍是工作区脏文件，不在本任务范围
