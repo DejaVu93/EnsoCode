@@ -138,6 +138,10 @@ renderer 侧的 `messages` 不可依赖。
 - **大段文本不要进 store** —— 指令文件内容存 `userData/instructions/<id>.md`，
   store 只留元数据（`name` / `sourcePath` / `local` / `bytes`）。
 - 临时 UI 状态（弹窗开合、筛选词、忙碌标记）用 `React.useState`，不要进 store。
+- 驱动时间线 chrome 的在途标记必须进可订阅投影，不能只放模块级 `Set`。
+  `olderHistoryInFlight` 挡连环请求，但 React 看不到；顶部 loading 要写
+  `Conversation.historyLoading`（手机走 `onHistoryPending`）。
+  `partialize` / `evictColdMessages` 必须剥掉，避免冷开或挤出缓存后顶部一直转圈。
 - 字段的兼容性约束见 [../shared/types.md](../shared/types.md) 的"持久化类型的演进"。
 
 高频会话事件使用 `createElectronPersistStorage()` 对象级入口，在 JSON 编解码和
