@@ -61,6 +61,16 @@ export function upsertOutOfRange(messages: readonly TimelineMessage[], index: nu
   return index > authoritativeLength(messages);
 }
 
+/** 时间线能当成「模型还活着」的输出：非空 token / 思考文本 / 工具结果。越界丢弃的 upsert 不算。 */
+export function isVisibleGenerationOutput(message: ProjectedMessage): boolean {
+  if (message.role === 'toolResult') return true;
+  if (message.role !== 'assistant') return false;
+  return message.content.some((part) => {
+    if (part.type === 'text' || part.type === 'thinking') return part.text.trim().length > 0;
+    return false;
+  });
+}
+
 export interface SessionProjection {
   generation?: string;
   status: NodeStatus;
@@ -85,7 +95,7 @@ export interface SessionProjection {
   ended?: boolean;
   /** 本次 running 的起点（wall clock），idle/failed 时清空 */
   runStartedAt?: number;
-  /** 最近一次权威 message-upsert 落地时间：运行中计时显示「距上次返回」，随 running 结束清空 */
+  /** 最近一次可见生成输出（非空 text/thinking、toolResult、非空 tool-output）。stall watchdog 与「距上次返回」都靠它，随 running 结束清空 */
   lastOutputAt?: number;
   /** 自动重试中（非终态）：turn-retry 设置，下一个 status/turn-* 事件清除 */
   retry?: { attempt: number; maxAttempts: number; delayMs: number; error: string; at: number };
@@ -293,7 +303,8 @@ export function applyAgentEvent(
       // 正文被冷缓存清空后重新变热，snapshot 回来前的 upsert 以原 index 到达：直接写会
       // 留下稀疏空洞（.role/.optimistic 读 undefined 崩溃）。丢掉正文、只推进 seq，等 snapshot 整体被覆。
       if (event.index > authoritative.length) {
-        return { ...current, lastOutputAt: now, lastSeq: event.seq };
+        // 丢正文只推 seq：不能续 lastOutputAt，否则 stall watchdog 把脱节心跳当成输出
+        return { ...current, lastSeq: event.seq };
       }
       authoritative[event.index] = event.message;
       // 同文本的 user upsert 到达 = 回显对应的真消息落地，消费掉避免重复
@@ -307,7 +318,7 @@ export function applyAgentEvent(
       return {
         ...current,
         messages: [...authoritative, ...tail],
-        lastOutputAt: now,
+        lastOutputAt: isVisibleGenerationOutput(event.message) ? now : current.lastOutputAt,
         lastSeq: event.seq,
       };
     }
@@ -383,6 +394,7 @@ export function applyAgentEvent(
       return {
         ...current,
         toolOutputs: { ...current.toolOutputs, [event.toolCallId]: event.output },
+        lastOutputAt: event.output.trim() ? now : current.lastOutputAt,
         lastSeq: event.seq,
       };
     case 'turn-completed':

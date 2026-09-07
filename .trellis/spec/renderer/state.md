@@ -102,6 +102,15 @@ expect(store.getState().conversations.ended.messages).toHaveLength(before);
 [big-question/optimistic-echo-blocks-snapshot.md](../big-question/optimistic-echo-blocks-snapshot.md)）。
 同理，任何「本地是否已有数据、要不要去拉」的判断都要过滤 `optimistic` 条目。
 
+## lastOutputAt 只认可见生成
+
+「无输出则停止」和运行中「距上次返回」都读 `lastOutputAt`。写入点在 `reducer.ts`：
+
+- 刷新：非空 assistant `text` / `thinking`、`toolResult`、非空 `tool-output`
+- 不刷新：用户消息、空 assistant（含 Connection error）、空 thinking、仅 toolCall、越界丢弃的 upsert
+
+越界 `message-upsert` 只推 `seq`。把丢弃的权威事件当成心跳，watchdog 会认为模型一直有输出。
+
 ## 持久化边界
 
 store 里的一切都会被写进 `settings.json`。因此：

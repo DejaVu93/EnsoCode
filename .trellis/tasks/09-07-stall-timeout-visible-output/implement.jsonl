@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "src/renderer/stores/sessions/reducer.ts", "reason": "lastOutputAt 心跳写入点"}
+{"file": "src/renderer/stores/sessions/stallTimeout.ts", "reason": "watchdog 只读 lastOutputAt"}
+{"file": ".trellis/spec/big-question/optimistic-echo-blocks-snapshot.md", "reason": "越界 upsert 续命计时器的既有记录"}

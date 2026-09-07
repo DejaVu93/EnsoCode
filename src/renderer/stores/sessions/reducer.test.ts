@@ -656,3 +656,141 @@ describe('applyAgentEvent tool-output', () => {
     expect(failed.toolOutputs).toEqual({});
   });
 });
+
+describe('lastOutputAt stall heartbeat', () => {
+  const NOW = 50_000;
+  const upsert = (
+    seq: number,
+    index: number,
+    message: SessionProjection['messages'][number]
+  ): RendererAgentEvent => ({
+    type: 'message-upsert',
+    identity: identity(),
+    seq,
+    index,
+    message,
+  });
+
+  it('越界 upsert 只推 seq，不续命 lastOutputAt', () => {
+    const seeded: SessionProjection = { ...base, lastOutputAt: 1_000 };
+    const next = applyAgentEvent(
+      seeded,
+      's1',
+      upsert(1, 5, { role: 'assistant', content: [{ type: 'text', text: 'late' }] }),
+      NOW
+    );
+    expect(next.lastSeq).toBe(1);
+    expect(next.messages).toHaveLength(0);
+    expect(next.lastOutputAt).toBe(1_000);
+  });
+
+  it('非空 assistant text 刷新 lastOutputAt', () => {
+    const next = applyAgentEvent(
+      base,
+      's1',
+      upsert(1, 0, { role: 'assistant', content: [{ type: 'text', text: 'hello' }] }),
+      NOW
+    );
+    expect(next.lastOutputAt).toBe(NOW);
+  });
+
+  it('空 assistant / Connection error 不刷新', () => {
+    const seeded: SessionProjection = { ...base, lastOutputAt: 1_000 };
+    const next = applyAgentEvent(
+      seeded,
+      's1',
+      upsert(1, 0, {
+        role: 'assistant',
+        content: [],
+        stopReason: 'error',
+        errorMessage: 'Connection error.',
+      }),
+      NOW
+    );
+    expect(next.lastOutputAt).toBe(1_000);
+  });
+
+  it('非空 thinking 刷新，空 thinking 与仅 toolCall 不刷新', () => {
+    const thinking = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, { role: 'assistant', content: [{ type: 'thinking', text: 'plan' }] }),
+      NOW
+    );
+    expect(thinking.lastOutputAt).toBe(NOW);
+
+    const emptyThinking = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, { role: 'assistant', content: [{ type: 'thinking', text: '  ' }] }),
+      NOW
+    );
+    expect(emptyThinking.lastOutputAt).toBe(1_000);
+
+    const toolCallOnly = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, {
+        role: 'assistant',
+        content: [{ type: 'toolCall', id: 'c1', name: 'read', arguments: { path: 'a.md' } }],
+      }),
+      NOW
+    );
+    expect(toolCallOnly.lastOutputAt).toBe(1_000);
+  });
+
+  it('toolResult 刷新 lastOutputAt', () => {
+    const next = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, {
+        role: 'toolResult',
+        toolCallId: 'c1',
+        toolName: 'read',
+        content: [{ type: 'text', text: '# guide' }],
+      }),
+      NOW
+    );
+    expect(next.lastOutputAt).toBe(NOW);
+  });
+
+  it('用户消息不刷新 lastOutputAt', () => {
+    const next = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      upsert(1, 0, { role: 'user', content: [{ type: 'text', text: 'hi' }] }),
+      NOW
+    );
+    expect(next.lastOutputAt).toBe(1_000);
+  });
+
+  it('非空 tool-output 刷新，空快照不刷新', () => {
+    const live = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      {
+        type: 'tool-output',
+        identity: identity(),
+        seq: 1,
+        toolCallId: 't1',
+        output: 'line 1',
+      },
+      NOW
+    );
+    expect(live.lastOutputAt).toBe(NOW);
+
+    const empty = applyAgentEvent(
+      { ...base, lastOutputAt: 1_000 },
+      's1',
+      {
+        type: 'tool-output',
+        identity: identity(),
+        seq: 1,
+        toolCallId: 't1',
+        output: '  ',
+      },
+      NOW
+    );
+    expect(empty.lastOutputAt).toBe(1_000);
+  });
+});
