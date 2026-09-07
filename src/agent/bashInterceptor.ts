@@ -171,9 +171,11 @@ function push(
 
 export function withBashInterception(definition: ToolDefinition): ToolDefinition {
   const description = [definition.description, BASH_INTERCEPT_HINT].filter(Boolean).join('\n');
+  const stock = Array.isArray(definition.promptGuidelines) ? definition.promptGuidelines : [];
   return {
     ...definition,
     description,
+    promptGuidelines: [...stock, BASH_INTERCEPT_HINT],
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const command = (params as { command?: string }).command;
       if (typeof command === 'string') {

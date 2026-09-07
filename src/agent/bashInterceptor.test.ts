@@ -73,20 +73,51 @@ describe('checkBashInterception', () => {
   });
 });
 
+function bashTool(overrides: Partial<ToolDefinition> = {}): ToolDefinition {
+  return {
+    name: 'bash',
+    label: 'Bash',
+    description: 'Run a shell command.',
+    parameters: { type: 'object' },
+    execute: async () => ({ content: [], details: {} }),
+    ...overrides,
+  } as unknown as ToolDefinition;
+}
+
 describe('withBashInterception description', () => {
   it('appends a prefer-read hint so the model sees it before calling bash', () => {
-    const wrapped = withBashInterception({
-      name: 'bash',
-      label: 'Bash',
-      description: 'Run a shell command.',
-      parameters: { type: 'object' },
-      execute: async () => ({ content: [], details: {} }),
-    } as unknown as ToolDefinition);
+    const wrapped = withBashInterception(bashTool());
     expect(wrapped.description).toContain('Do not use cat/head/tail/less/more/grep/rg');
     expect(wrapped.description).toContain('Do not use cat >/>> or heredocs');
     expect(wrapped.description).toContain(
       'Use the `read`, `grep`, `edit`, `write`, or `find` tools'
     );
     expect(wrapped.description).toContain('Run a shell command.');
+  });
+});
+
+describe('withBashInterception promptGuidelines', () => {
+  it('把拦截禁令写进 Guidelines，点名改用 read/grep/edit/write/find', () => {
+    const wrapped = withBashInterception(bashTool());
+    const text = (wrapped.promptGuidelines ?? []).join('\n');
+    expect(text).toContain('Do not use cat/head/tail/less/more/grep/rg');
+    expect(text).toContain('Do not use cat >/>> or heredocs');
+    expect(text).toContain('Use the `read`, `grep`, `edit`, `write`, or `find` tools');
+  });
+
+  it('追加拦截禁令，不覆盖工具原有 promptGuidelines', () => {
+    const wrapped = withBashInterception(
+      bashTool({
+        promptGuidelines: [
+          'You can inspect PI_* environment variables for current model and session details.',
+        ],
+      })
+    );
+    expect(wrapped.promptGuidelines).toContain(
+      'You can inspect PI_* environment variables for current model and session details.'
+    );
+    expect(wrapped.promptGuidelines?.join('\n')).toContain(
+      'Use the `read`, `grep`, `edit`, `write`, or `find` tools'
+    );
   });
 });
