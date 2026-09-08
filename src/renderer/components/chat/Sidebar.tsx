@@ -15,6 +15,7 @@ import {
   sectionsForAllView,
   UNGROUPED_GROUP_ID,
 } from '@shared/projectGroups';
+import { projectDisplayName, projectNameFromPath } from '@shared/projectName';
 import type { Project } from '@shared/types';
 import type { WorktreeStatus } from '@shared/types/worktree';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -321,7 +322,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     const knownIds = new Set(projects.map((project) => project.id));
     if (request.sshConnectionId) {
       setPendingProject({
-        name: request.path.split('/').filter(Boolean).pop() ?? request.path,
+        name: projectNameFromPath(request.path),
         path: request.path,
         sshHost: request.sshHost,
       });
@@ -919,7 +920,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                           : project.path
                                       }
                                     >
-                                      {project.name}
+                                      {projectDisplayName(project)}
                                       {project.kind === 'ssh' && (
                                         <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
                                           {project.sshConnectionName ?? project.sshHost}
@@ -1168,9 +1169,12 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                 >
                   <div className="mb-0.5 flex max-h-72 flex-col gap-y-1.5 overflow-y-auto">
                     {slicedArchivedGroups.map((group) => {
-                      const projectName =
-                        projects.find((project) => project.id === group.projectId)?.name ??
-                        t('Other');
+                      const archivedProject = projects.find(
+                        (project) => project.id === group.projectId
+                      );
+                      const projectName = archivedProject
+                        ? projectDisplayName(archivedProject)
+                        : t('Other');
                       return (
                         <div key={group.projectId}>
                           <div className="group flex items-center gap-1 rounded-md pr-0.5">

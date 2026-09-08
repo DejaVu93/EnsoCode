@@ -1,6 +1,7 @@
 import { sanitizeDefaultModel } from '@shared/defaultModel';
 import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
+import { projectNameFromPath } from '@shared/projectName';
 import { applyIncomingProviders } from '@shared/providerIdentity';
 import { normalizeProxyMode, type ProxyMode } from '@shared/proxy';
 import { parseSmartCompactMode } from '@shared/smartCompactMode';
@@ -577,9 +578,7 @@ export const useSettingsStore = create<SettingsState>()(
         }
         const project = {
           id: result.value.projectId,
-          name:
-            result.value.canonicalPath.split('/').filter(Boolean).pop() ??
-            result.value.canonicalPath,
+          name: projectNameFromPath(result.value.canonicalPath),
           path: result.value.canonicalPath,
           ...(groupId ? { groupId } : {}),
           ...(result.value.kind === 'ssh'
@@ -781,7 +780,7 @@ function applyProjectAuthorityProjection(projection: SourceAuthorityProjection):
       const previous = previousById.get(project.projectId);
       return {
         id: project.projectId,
-        name: project.canonicalPath.split('/').filter(Boolean).pop() ?? project.canonicalPath,
+        name: projectNameFromPath(project.canonicalPath),
         path: project.canonicalPath,
         ...(previous?.groupId ? { groupId: previous.groupId } : {}),
         ...(project.kind === 'ssh'
