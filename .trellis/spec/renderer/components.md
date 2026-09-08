@@ -120,7 +120,8 @@
 
 - 新的 diff 展示**不要传 `disableWorkerPool`**，直接吃池；主题/语言只改 `codeHighlighter.ts` 的
   `CODE_THEME` / `LANGS`，provider 引用同一份，不另开分叉。
-- 编辑态 `File edit`（FilesView）与聊天 `EditDiff` 仍是 `disableWorkerPool`；去掉前在真机验一次编辑回显。
+- 聊天 `EditDiff` 也已接池（它展开时是全文 diff，量和 Changes 面板同级）。只剩编辑态 `File edit`（FilesView）
+  仍是 `disableWorkerPool`：每次击键重高亮，走 worker 会变成颜色晚半拍跟上，去掉前在真机验一次编辑回显。
 - 只有 `index.html` 挂了 provider，设置窗没有；`index.html` CSP 的 `worker-src 'self' blob:` 是它的前提。
 - 验证方法：CDP `/json/list` 应出现 `type: worker`；prod 是 `file://`，模块 worker 照常可加载
   （已用 bogus 消息回 `Unknown request type` 验过）。
