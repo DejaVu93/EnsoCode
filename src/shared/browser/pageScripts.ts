@@ -335,6 +335,8 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     inset: '0',
     zIndex: '2147483646',
     pointerEvents: 'none',
+    overflow: 'hidden',
+    contain: 'strict',
   });
   const box = document.createElement('div');
   Object.assign(box.style, {
@@ -405,25 +407,27 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     display: 'none',
     pointerEvents: 'auto',
     cursor: 'crosshair',
+    overflow: 'hidden',
+    contain: 'strict',
   });
+  const lockFill = (el) => {
+    el.style.setProperty('position', 'absolute', 'important');
+    el.style.setProperty('inset', '0', 'important');
+    el.style.setProperty('width', '100%', 'important');
+    el.style.setProperty('height', '100%', 'important');
+    el.style.setProperty('max-width', '100%', 'important');
+    el.style.setProperty('max-height', '100%', 'important');
+    el.style.setProperty('box-sizing', 'border-box', 'important');
+    el.style.setProperty('pointer-events', 'none', 'important');
+  };
   const freezeImg = document.createElement('img');
-  Object.assign(freezeImg.style, {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    objectFit: 'fill',
-    pointerEvents: 'none',
-    imageRendering: 'auto',
-  });
+  freezeImg.alt = '';
+  freezeImg.draggable = false;
+  lockFill(freezeImg);
+  freezeImg.style.setProperty('object-fit', 'fill', 'important');
+  freezeImg.style.setProperty('image-rendering', 'auto', 'important');
   const draw = document.createElement('canvas');
-  Object.assign(draw.style, {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    pointerEvents: 'none',
-  });
+  lockFill(draw);
   const cropCard = document.createElement('div');
   Object.assign(cropCard.style, {
     position: 'fixed',
@@ -776,8 +780,8 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
   function showActions() {
     const crop = cropRect();
     paintCrop(cropImg, crop);
-    cropImg.style.width = crop.width + 'px';
-    cropImg.style.height = crop.height + 'px';
+    cropImg.style.setProperty('width', crop.width + 'px', 'important');
+    cropImg.style.setProperty('height', crop.height + 'px', 'important');
     Object.assign(cropCard.style, {
       display: 'block',
       left: crop.x + 'px',

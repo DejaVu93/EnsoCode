@@ -506,7 +506,8 @@ function parseSubagentModelFields(
             (MODEL_THINKING_LEVEL_OVERRIDES as readonly string[]).includes(existing.thinkingLevel)
           ? existing.thinkingLevel
           : undefined;
-  const thinkingLevel = reasoning === 'on' ? levelInput : undefined;
+  // Off 保留上次深度，与设置页三态一致；只有 follow 清空
+  const thinkingLevel = reasoning ? levelInput : undefined;
   return {
     value: {
       providerId,

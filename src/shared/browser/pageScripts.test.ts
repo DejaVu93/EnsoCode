@@ -55,4 +55,12 @@ describe('design mode scripts', () => {
   it('enable script is valid JavaScript', () => {
     expect(() => new Function(PAGE_DESIGN_MODE_ENABLE_SCRIPT)).not.toThrow();
   });
+
+  it('clips freeze overlay and locks replaced-element boxes so guest layout cannot grow', () => {
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("overflow: 'hidden'");
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("contain: 'strict'");
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("setProperty('width'");
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("setProperty('height'");
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("'important'");
+  });
 });
