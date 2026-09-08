@@ -107,6 +107,60 @@ pnpm typecheck && pnpm lint && pnpm test
 
 更新文档后同步检查相邻规范和已有链接，避免把同一规则复制成互相漂移的多份内容。不要把一次性的聊天总结、未经验证的猜测或完整任务日志直接写进长期规范。
 
+## 知识库上限与压缩清理
+
+本项目暂不自动删除或自动改写知识文档；压缩清理采用人工审计，避免误删有价值的根因和回归证据。每次新增知识前，以及完成一组相关任务后，按下面的规则检查：
+
+| 内容 | 建议上限 | 超限处理 |
+| --- | ---: | --- |
+| `AGENTS.md` | 约 100 行 | 只保留高频硬规则，其余移到 `docs/engineering-guidelines.md` 或 reference |
+| `docs/engineering-guidelines.md` | 约 250 行 | 按主题拆到 `docs/engineering-reference/` |
+| 单个 `big-question` 条目 | 约 150–250 行 | 删除过程日志，只保留症状、根因、修法、回归防线和相关代码 |
+| `project-knowledge/SKILL.md` | 约 150 行 | 只保留导航、检索、沉淀和维护规则，不复制规范正文 |
+| `docs/engineering-reference/big-question/` | 不设硬上限 | 合并重复问题，按症状和根因去重 |
+| `docs/project-history/` | 不设硬上限 | 按日期归档；只保留仍有背景价值的设计和研究结论 |
+
+### 新增前去重
+
+1. 先搜索 `AGENTS.md`、`docs/engineering-guidelines.md`、`docs/engineering-reference/` 和 `docs/project-history/`。
+2. 已有同一规则时更新原文，不新建相似条目。
+3. 同一根因导致多个症状时，保留一个根因条目，并在症状表中列出表现。
+4. 只有具备可观察证据、回归测试或明确设计决策的内容才进入长期知识库。
+
+### 手动压缩
+
+- `AGENTS.md` 只保留贡献者每天需要看到的规则。
+- 工程规范保留当前行为契约；旧实现细节和一次性方案比较移入 `project-history/`。
+- `big-question` 条目删除聊天过程、重复代码片段和无结论尝试，保留最短可复用解释。
+- 历史任务保留最终 PRD / design / research 结论；纯 context manifest、重复验收过程和临时日志可以删除。
+- 规则被当前代码淘汰时，不要直接抹掉证据：先在文档中标注已过期及替代规则，确认无引用后再删除。
+
+### 自动维护命令
+
+项目提供三条命令：
+
+```bash
+pnpm knowledge:check
+pnpm knowledge:clean
+pnpm knowledge:clean -- --apply
+pnpm knowledge:compact
+```
+
+- `knowledge:check` 只读检查文档行数、Markdown 链接和踩坑条目结构；发现问题时返回非零状态，不修改文件。
+- `knowledge:clean` 默认 dry-run，列出历史目录中的临时 `.jsonl` 文件；只有显式传 `-- --apply` 才移动到 `docs/knowledge-review/archive/`。
+- `knowledge:compact` 检查超长 `big-question` 条目，在 `docs/knowledge-review/compact/` 生成源文件副本和压缩提示；原文不变。
+- 设置 `OPENAI_API_KEY` 后，`knowledge:compact` 可调用兼容 Chat Completions 的模型生成草案；可选 `OPENAI_BASE_URL` 和 `OPENAI_MODEL`，模型输出仍只写入审阅目录。
+- 自动命令不会直接覆盖、删除或合并当前知识。应用模型草案前必须人工检查 diff，并确认根因、证据、风险和源码链接没有丢失。
+
+### 安全原则
+
+压缩清理只能减少重复和过程噪声，不能删除：
+
+- 真实 bug 的根因和症状；
+- 回归测试、真机验证或安全边界证据；
+- 仍被源码、测试或其他文档引用的内容；
+- 尚未完成的设计决策和风险记录。
+
 ## 维护边界
 
 - 本 skill 只负责知识检索和知识沉淀。
