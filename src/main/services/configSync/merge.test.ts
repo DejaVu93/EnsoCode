@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { planImport } from './merge';
+import type { ConfigSyncBundle } from './types';
 
 const provider = (id: string, name: string, apiKey?: string) => ({
   id,
@@ -70,5 +71,23 @@ describe('config sync merge planning', () => {
       updated: 1,
       skipped: 0,
     });
+  });
+
+  it('允许导入与内置同名的自定义 Agent type，仍拒绝保留名', () => {
+    const agentType = (name: string) => ({
+      id: '14478e0b-5089-4801-967e-0adeadfb4813',
+      name,
+      description: '',
+      systemPrompt: 'x',
+      tools: 'all',
+    });
+    const withAgent = (name: string) =>
+      ({
+        ...bundle([]),
+        state: { ...bundle([]).state, agentTypes: [agentType(name)] },
+      }) as unknown as ConfigSyncBundle;
+    const result = planImport(current([]), withAgent('worker'), 'merge');
+    expect(result.state.agentTypes).toContainEqual(expect.objectContaining({ name: 'worker' }));
+    expect(() => planImport(current([]), withAgent('enso'), 'merge')).toThrow(/reserved/i);
   });
 });

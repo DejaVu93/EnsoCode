@@ -124,4 +124,21 @@ describe('config sync codec', () => {
     const encrypted = await encodeBundle({ ...bundle(), secretsIncluded: true }, 'correct horse');
     await expect(decodeBundle(encrypted, 'wrong password')).rejects.toThrow();
   });
+
+  it('允许与内置同名的自定义 Agent type（覆盖语义），仍拒绝保留名', () => {
+    const agentType = (name: string) => ({
+      id: '14478e0b-5089-4801-967e-0adeadfb4813',
+      name,
+      description: '',
+      systemPrompt: 'x',
+      tools: 'all',
+    });
+    const withAgent = (name: string) => ({
+      ...bundle(),
+      state: { ...bundle().state, agentTypes: [agentType(name)] },
+    });
+    expect(() => validateBundle(withAgent('worker'))).not.toThrow();
+    expect(() => validateBundle(withAgent('enso'))).toThrow(/reserved/i);
+    expect(() => validateBundle(withAgent('builtin:worker'))).toThrow(/reserved/i);
+  });
 });

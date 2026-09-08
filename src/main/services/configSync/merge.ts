@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { isReservedAgentTypeName } from '@shared/builtinAgents';
 import type { ConfigSyncSummary } from '@shared/types';
-import { BUILTIN_AGENT_TYPES, DEFAULT_PRESET_ID } from '@shared/types';
+import { DEFAULT_PRESET_ID } from '@shared/types';
 
 import type { ConfigSyncBundle } from './types';
 
@@ -381,15 +381,10 @@ function summaryFor(
 }
 
 function assertSafeAgentTypes(entries: JsonRecord[]): void {
-  const builtinNames = new Set(BUILTIN_AGENT_TYPES.map((entry) => normalizedName(entry.name)));
   for (const entry of entries) {
     const id = requiredId(entry, 'agent type');
     const name = typeof entry.name === 'string' ? entry.name : '';
-    if (
-      id.startsWith('builtin:') ||
-      isReservedAgentTypeName(name) ||
-      builtinNames.has(normalizedName(name))
-    ) {
+    if (id.startsWith('builtin:') || isReservedAgentTypeName(name)) {
       throw new Error('Reserved built-in agent type cannot be imported');
     }
   }

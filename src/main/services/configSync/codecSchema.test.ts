@@ -166,13 +166,15 @@ describe('config sync codec schema and crypto boundaries', () => {
     const input = minimalBundle();
     input.state.agentTypes = [
       {
-        id: 'custom-scout',
-        name: 'scout',
+        id: 'custom-enso',
+        name: 'Enso',
         description: '',
         systemPrompt: '',
         tools: 'readonly',
       },
     ];
+    expect(() => validateBundle(input)).toThrow();
+    input.state.agentTypes[0] = { ...input.state.agentTypes[0], id: 'builtin:scout', name: 'x' };
     expect(() => validateBundle(input)).toThrow();
 
     input.state.agentTypes = [];

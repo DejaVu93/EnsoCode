@@ -572,14 +572,9 @@ function validatePreset(raw: unknown): RecordValue {
 function validateAgentType(raw: unknown): RecordValue {
   const entry = assertRecord(raw, 'agent type');
   assertExactKeys(entry, AGENT_TYPE_KEYS, 'agent type');
+  // 与设置页/registry 同口径：同名 custom 覆盖 builtin 是合法配置，仅保留名 fail-closed。
   const name = nonEmptyStringField(entry, 'name', 'agent type');
-  const builtinNames = new Set(BUILTIN_AGENT_TYPES.map((type) => type.name.toLocaleLowerCase()));
-  if (
-    isReservedAgentTypeName(name) ||
-    builtinNames.has(name.normalize('NFKC').trim().toLocaleLowerCase())
-  ) {
-    throw new Error('Reserved agent type name');
-  }
+  if (isReservedAgentTypeName(name)) throw new Error('Reserved agent type name');
   const id = nonEmptyStringField(entry, 'id', 'agent type');
   if (id.startsWith('builtin:')) throw new Error('Reserved agent type id');
   stringField(entry, 'description', 'agent type');
