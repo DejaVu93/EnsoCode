@@ -298,6 +298,11 @@ html.bg-image-enabled .shiki span {
   background-color: transparent !important;
 }
 
+/* 聊天列铺满：覆盖 CHAT_COL 的阶梯 max-w，两侧只留 padding */
+html.enso-chat-wide .enso-chat-col {
+  max-width: none;
+}
+
 /**
  * @pierre/diffs（edit diff / read 文件视图）：shadow 内 host/pre/gutter/content/行
  * 多层元素都各自刷 --diffs-bg，若给它设半透明色会叠成近乎不透明。

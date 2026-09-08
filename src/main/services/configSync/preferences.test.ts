@@ -46,6 +46,7 @@ describe('config sync portable preference contract', () => {
       'smartCompactMode',
       'openChangesOnFileEdit',
       'compactReadOnlyTools',
+      'chatWide',
       'notifyMainAgentOnly',
       'generationStallTimeoutMin',
       'backgroundRandomInterval',

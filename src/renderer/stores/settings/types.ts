@@ -128,6 +128,8 @@ export interface SettingsState {
   openChangesOnFileEdit: boolean;
   /** 只读工具（read/grep/find/ls）一行化 + 进行中的轮也折组；缺省 true */
   compactReadOnlyTools: boolean;
+  /** 聊天列铺满：去掉两侧阶梯 max-w；缺省 false（居中阅读宽度） */
+  chatWide: boolean;
   /** 仅主 agent 发送完成/失败通知；coworker 提问/审批仍提醒；缺省 true */
   notifyMainAgentOnly: boolean;
   /** 无 token/工具结果超过此时长则中止；0 = 永不；单位分钟 */
@@ -239,6 +241,7 @@ export interface SettingsState {
   setCustomProxyUrl: (url: string) => void;
   setOpenChangesOnFileEdit: (value: boolean) => void;
   setCompactReadOnlyTools: (value: boolean) => void;
+  setChatWide: (value: boolean) => void;
   setNotifyMainAgentOnly: (value: boolean) => void;
   setGenerationStallTimeoutMin: (minutes: number) => void;
 

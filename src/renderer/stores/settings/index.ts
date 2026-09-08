@@ -73,6 +73,7 @@ function applySettings(state: {
   terminalFontFamily: string;
   terminalFontSize: number;
   language: Locale;
+  chatWide?: boolean;
 }): void {
   if (state.theme === 'sync-terminal') {
     applyTerminalThemeToApp(state.terminalTheme, true);
@@ -82,6 +83,7 @@ function applySettings(state: {
   }
   applyTerminalFont(state.terminalFontFamily, state.terminalFontSize);
   document.documentElement.lang = normalizeLocale(state.language) === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.classList.toggle('enso-chat-wide', Boolean(state.chatWide));
 }
 
 function getDefaultLocale(): Locale {
@@ -118,6 +120,7 @@ const initialState = {
   customProxyUrl: '',
   openChangesOnFileEdit: false,
   compactReadOnlyTools: true,
+  chatWide: false,
   notifyMainAgentOnly: true,
   generationStallTimeoutMin: 0,
   backgroundImageEnabled: false,
@@ -238,6 +241,10 @@ export const useSettingsStore = create<SettingsState>()(
       setCustomProxyUrl: (customProxyUrl) => set({ customProxyUrl }),
       setOpenChangesOnFileEdit: (openChangesOnFileEdit) => set({ openChangesOnFileEdit }),
       setCompactReadOnlyTools: (compactReadOnlyTools) => set({ compactReadOnlyTools }),
+      setChatWide: (chatWide) => {
+        document.documentElement.classList.toggle('enso-chat-wide', chatWide);
+        set({ chatWide });
+      },
       setNotifyMainAgentOnly: (notifyMainAgentOnly) => set({ notifyMainAgentOnly }),
       setGenerationStallTimeoutMin: (minutes) =>
         set({

@@ -113,6 +113,8 @@ export const zhTranslations: Record<string, string> = {
   'Regular expression': '正则',
   'Previous match': '上一个',
   'Next match': '下一个',
+  'Use full chat width': '铺满两侧',
+  'Use reading width': '恢复两侧留白',
   'Toggle side panel': '折叠/展开右侧面板',
   'Toggle side panel fullscreen': '右侧面板全屏',
   'Expand side panel': '全屏右侧面板',

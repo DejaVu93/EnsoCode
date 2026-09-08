@@ -7,7 +7,7 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
-import { PanelRight } from 'lucide-react';
+import { FoldHorizontal, PanelRight, UnfoldHorizontal } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { BackgroundLayer } from '@/components/app/BackgroundLayer';
 import { TitleBar } from '@/components/app/TitleBar';
@@ -61,6 +61,7 @@ export default function App() {
   });
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === '1');
   const { t } = useI18n();
+  const chatWide = useSettingsStore((s) => s.chatWide);
   const activeConversationId = useSessionsStore((s) => s.activeId);
   const sideOpen = useSidePanelStore((s) =>
     activeConversationId ? Boolean(s.uiByConversation[activeConversationId]?.open) : false
@@ -231,21 +232,38 @@ export default function App() {
       <TitleBar
         title="EnsoCode"
         actions={
-          // 远程节点态没有右侧面板，隐藏开关避免死按钮
-          remoteNodeActive ? undefined : (
+          <>
             <button
               type="button"
               className={cn(
                 'flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-accent/50',
-                sideOpen ? 'text-foreground' : 'text-muted-foreground'
+                chatWide ? 'text-foreground' : 'text-muted-foreground'
               )}
-              onClick={toggleSidePanel}
-              aria-label={t('Toggle side panel')}
-              title={t('Toggle side panel')}
+              onClick={() => useSettingsStore.getState().setChatWide(!chatWide)}
+              aria-label={chatWide ? t('Use reading width') : t('Use full chat width')}
+              title={chatWide ? t('Use reading width') : t('Use full chat width')}
             >
-              <PanelRight className="h-4 w-4" />
+              {chatWide ? (
+                <FoldHorizontal className="h-4 w-4" />
+              ) : (
+                <UnfoldHorizontal className="h-4 w-4" />
+              )}
             </button>
-          )
+            {!remoteNodeActive && (
+              <button
+                type="button"
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-accent/50',
+                  sideOpen ? 'text-foreground' : 'text-muted-foreground'
+                )}
+                onClick={toggleSidePanel}
+                aria-label={t('Toggle side panel')}
+                title={t('Toggle side panel')}
+              >
+                <PanelRight className="h-4 w-4" />
+              </button>
+            )}
+          </>
         }
       />
       <UpdateBanner />
