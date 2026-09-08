@@ -57,6 +57,7 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   terminalFontWeight: { mode: 'portable' },
   terminalFontWeightBold: { mode: 'portable' },
   terminalShell: { mode: 'excluded', reason: 'platform-specific shell selection' },
+  worktreeRoot: { mode: 'excluded', reason: 'device-local worktree storage path' },
   favoriteTerminalThemes: { mode: 'portable' },
   statusLineSegments: { mode: 'portable' },
   loadLocalSkills: { mode: 'portable' },
@@ -329,7 +330,8 @@ export async function exportConfigToPath(
       rmSync(tempPath, { force: true });
     }
     return { ok: true, filePath };
-  } catch {
+  } catch (error) {
+    console.error('[configSync] export failed', error);
     return resultError('Unable to export configuration.');
   }
 }
