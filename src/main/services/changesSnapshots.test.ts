@@ -89,5 +89,9 @@ describe('changesSnapshots', () => {
       liveConversationIds({ 'enso-conversations': { state: { conversations: [] } } })
     ).toBeNull();
     expect(liveConversationIds({})).toBeNull();
+    // 会话表为空更可能是半截写入，不能拿来删光目录
+    expect(
+      liveConversationIds({ 'enso-conversations': { state: { conversations: {} } } })
+    ).toBeNull();
   });
 });

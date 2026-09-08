@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { isValidId } from './instructionStore';
 
 /** Changes 面板「Session」模式的编辑前快照：userData/changes-snapshots/<conversationId>.json */
-const isValidId = (id: string): boolean => /^[a-f0-9-]{36}$/i.test(id);
 
 const file = (dir: string, id: string): string => path.join(dir, `${id}.json`);
 
@@ -59,7 +59,9 @@ export function liveConversationIds(settings: unknown): Set<string> | null {
   if (!conversations || typeof conversations !== 'object' || Array.isArray(conversations)) {
     return null;
   }
-  return new Set(Object.keys(conversations));
+  const ids = Object.keys(conversations);
+  // 空表更可能是半截写入，宁可不删
+  return ids.length > 0 ? new Set(ids) : null;
 }
 
 /** 删掉已不存在会话的快照；非 uuid 命名的文件不动 */

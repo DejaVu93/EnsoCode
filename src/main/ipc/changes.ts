@@ -16,9 +16,10 @@ function conversationIdOf(request: unknown): string | null {
   return typeof id === 'string' && id.length > 0 ? id : null;
 }
 
-function snapshotsOf(request: unknown): Record<string, string> {
+/** 畸形入参返回 null 而非 {}：空对象在 service 层语义是删文件 */
+function snapshotsOf(request: unknown): Record<string, string> | null {
   const raw = (request as { snapshots?: unknown } | null)?.snapshots;
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (typeof value === 'string') out[key] = value;
@@ -48,6 +49,7 @@ export function registerChangesHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.CHANGES_SNAPSHOTS_WRITE, (_event, request: unknown): boolean => {
     pruneOnce();
     const id = conversationIdOf(request);
-    return id ? writeSnapshots(snapshotsDir(), id, snapshotsOf(request)) : false;
+    const snapshots = snapshotsOf(request);
+    return id && snapshots ? writeSnapshots(snapshotsDir(), id, snapshots) : false;
   });
 }
