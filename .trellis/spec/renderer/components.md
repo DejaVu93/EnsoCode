@@ -122,6 +122,10 @@
   `CODE_THEME` / `LANGS`，provider 引用同一份，不另开分叉。
 - 聊天 `EditDiff` 也已接池（它展开时是全文 diff，量和 Changes 面板同级）。只剩编辑态 `File edit`（FilesView）
   仍是 `disableWorkerPool`：每次击键重高亮，走 worker 会变成颜色晚半拍跟上，去掉前在真机验一次编辑回显。
+- **`fileDiff.cacheKey` 必须掺内容**：用 `lib/diffCacheKey.ts` 的 `diffCacheKey(name, old, new)` 覆盖。库默认只拿
+  文件名当 key（`parseDiffFromFile` 和 `FileDiff.render` 都会自动填），worker 池按 key 缓存高亮，同名不同内容
+  （Agent 连续改同一文件、聊天里多条同文件 edit）会拿旧结果套新 diff，直接抛
+  `DiffHunksRenderer.processDiffResult: deletionLine and additionLine are null`。
 - 只有 `index.html` 挂了 provider，设置窗没有；`index.html` CSP 的 `worker-src 'self' blob:` 是它的前提。
 - 验证方法：CDP `/json/list` 应出现 `type: worker`；prod 是 `file://`，模块 worker 照常可加载
   （已用 bogus 消息回 `Unknown request type` 验过）。
