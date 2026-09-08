@@ -24,6 +24,7 @@ import { Onboarding } from '@/components/onboarding/Onboarding';
 import { WorkspaceSearchDialog } from '@/components/search/WorkspaceSearchDialog';
 import { SidePanel } from '@/components/sidepanel/SidePanel';
 import { ToastProvider } from '@/components/ui/toast';
+import { useAutoArchiveScan } from '@/hooks/useAutoArchiveScan';
 import { useBackgroundImage } from '@/hooks/useBackgroundImage';
 import { useGenerationStallTimeout } from '@/hooks/useGenerationStallTimeout';
 import { useWindowsWindowChrome } from '@/hooks/useWindowsWindowChrome';
@@ -52,6 +53,7 @@ export default function App() {
   const onboarded = useSettingsStore((s) => s.onboarded);
   useBackgroundImage();
   useGenerationStallTimeout();
+  useAutoArchiveScan();
   const [searchOpen, setSearchOpen] = useState(false);
   const [closeRequestId, setCloseRequestId] = useState<string | null>(null);
   useWindowsWindowChrome();
