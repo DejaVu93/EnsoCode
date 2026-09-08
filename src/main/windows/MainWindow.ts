@@ -1,4 +1,4 @@
-import type { BrowserWindow } from 'electron';
+import { app, type BrowserWindow } from 'electron';
 import { attachAppCloseConfirm } from '../services/appCloseConfirm';
 import { createAppWindow, getWindowWebContents, sendToWindow } from './createAppWindow';
 
@@ -15,13 +15,17 @@ export function createMainWindow(): BrowserWindow {
     pinWorkbenchView: true,
   });
 
-  attachAppCloseConfirm(
-    mainWindow,
-    (channel, ...args) => {
-      if (mainWindow && !mainWindow.isDestroyed()) sendToWindow(mainWindow, channel, ...args);
-    },
-    () => getWindowWebContents(mainWindow as BrowserWindow)
-  );
+  // dev 不弹退出确认：终端 Ctrl+C 杀掉 electron-vite 后 Electron 会卡在确认框上变孤儿
+  // （主进程接不到 SIGINT，Chromium 直接转成 app.quit()）
+  if (app.isPackaged) {
+    attachAppCloseConfirm(
+      mainWindow,
+      (channel, ...args) => {
+        if (mainWindow && !mainWindow.isDestroyed()) sendToWindow(mainWindow, channel, ...args);
+      },
+      () => getWindowWebContents(mainWindow as BrowserWindow)
+    );
+  }
 
   mainWindow.on('closed', () => {
     mainWindow = null;
