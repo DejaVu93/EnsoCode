@@ -236,6 +236,51 @@ describe('SessionSupervisor deterministic child lifecycle', () => {
     expect(parentSession.prompt).not.toHaveBeenCalled();
   });
 
+  it('手动重读活动会话返回水位且不触发模型执行', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({ type: 'spawn-parent', identity: parent, cwd: '/workspace', model });
+    await waitFor(events, 'parent-ready');
+    expect(() =>
+      supervisor.handleCommand({
+        type: 'reload-session',
+        requestId: 'manual-1',
+        sessionId: parent.sessionId,
+      })
+    ).not.toThrow();
+    expect(events.findLast((event) => event.type === 'session-reloaded')).toMatchObject({
+      requestId: 'manual-1',
+      result: { ok: true, seq: expect.any(Number), snapshot: { identity: parent } },
+    });
+    expect((mocks.sessions[0] as ReturnType<typeof session>).prompt).not.toHaveBeenCalled();
+  });
+
+  it('手动重读不存在的会话返回明确失败而不创建会话', () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    expect(() =>
+      supervisor.handleCommand({
+        type: 'reload-session',
+        requestId: 'manual-2',
+        sessionId: 'missing',
+      })
+    ).not.toThrow();
+    expect(events).toContainEqual({
+      type: 'session-reloaded',
+      requestId: 'manual-2',
+      result: { ok: false, error: expect.any(String) },
+    });
+    expect(mocks.sessions).toHaveLength(0);
+  });
+
   it('persists custom entries outside buildSessionContext and restores them in snapshot', async () => {
     const events: AgentWorkerEvent[] = [];
     const supervisor = new SessionSupervisor({

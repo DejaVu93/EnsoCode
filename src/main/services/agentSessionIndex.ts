@@ -98,7 +98,10 @@ function coworkerView(coworker: CoworkerInfo): TeamOperationSuccess['data']['cow
 function identityOf(
   event: Exclude<
     AgentWorkerEvent,
-    { type: 'snapshot' } | { type: 'title-generated' } | { type: 'title-failed' } | McpWorkerEvent
+    | { type: 'snapshot' | 'session-reloaded' }
+    | { type: 'title-generated' }
+    | { type: 'title-failed' }
+    | McpWorkerEvent
   >
 ): SessionIdentity {
   return 'child' in event ? event.child : event.identity;
@@ -329,6 +332,8 @@ export class AgentSessionIndex {
       return accepted;
     }
 
+    // 手动读取结果不改变会话生命周期或 seq 权威。
+    if (event.type === 'session-reloaded') return false;
     // 标题总结与 MCP 旁路事件不属于任何 worker 会话（无 identity/seq），不进会话索引
     if (event.type === 'title-generated' || event.type === 'title-failed') return false;
     if (event.type === 'mcp-status' || event.type === 'mcp-tokens-refreshed') return false;

@@ -11,6 +11,7 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   ChildHistoryResult,
+  ConversationReloadResult,
   McpStatusPush,
   ParentHistoryTailResult,
   RendererAgentEvent,
@@ -46,6 +47,7 @@ import {
   promptChildSession,
   promptSession,
   releaseParentSession,
+  reloadSession,
   requestSnapshot,
   resolveAgentTypeSpawnConfig,
   resolveModelSelection,
@@ -69,6 +71,7 @@ import {
 } from '../services/agentHost';
 import { pickBrowserFileRoot, setBrowserFileRootResolver } from '../services/browserFileRoot';
 import { browserHost } from '../services/browserHost';
+import { reloadConversation } from '../services/conversationReload';
 import { searchFiles } from '../services/fileSearch';
 import { toStoredTokens } from '../services/mcpOAuth';
 import { getMcpOAuthStore } from '../services/mcpOAuthStore';
@@ -435,6 +438,9 @@ export function registerAgentHandlers(): void {
       getMcpOAuthStore().saveTokens(workerEvent.serverId, toStoredTokens(workerEvent.tokens));
       return;
     }
+    // 手动重读结果按 requestId 在 agentHost 结算给 invoke 等待者；无主的迟到结果直接丢弃，
+    // 绝不进普通事件流（renderer 的 snapshot 分支有 started / 审批副作用）
+    if (workerEvent.type === 'session-reloaded') return;
     dispatchService?.observe(workerEvent);
     if (workerEvent.type === 'turn-completed' || workerEvent.type === 'turn-failed') {
       const file = agentSessionIndex.sessionFile(workerEvent.identity);
@@ -579,6 +585,33 @@ export function registerAgentHandlers(): void {
     }
     return await readChildHistory(conversationId);
   });
+
+  // 手动重新读取会话：来源由 Main 按会话索引决定（worker 内存活着 → 带 seq 的快照，否则 safe journal）。
+  // 只读：不 spawn / resume，不动生命周期；失败回原因，渲染层自己决定保留旧内容。
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_CONVERSATION_RELOAD,
+    async (_event, request: unknown): Promise<ConversationReloadResult> => {
+      const conversationId = asRecord(request)?.conversationId;
+      if (!isNonEmptyString(conversationId)) {
+        return { ok: false, error: 'conversationId is required' };
+      }
+      return await reloadConversation(conversationId, {
+        isLive: (id) => {
+          const identity = agentSessionIndex.currentIdentity(id);
+          return Boolean(identity && agentSessionIndex.isReady(identity));
+        },
+        reloadLive: reloadSession,
+        // 离线正文的位置由会话种类决定：child 的在 safe journal，根会话的在 pi jsonl。
+        // 种类从 Main 自读的持久化元数据判断，不采信渲染层。
+        isChild: (id) => {
+          const persisted = agentSessionIndex.persistedConversation(id);
+          return isNonEmptyString(persisted?.parentId) || asRecord(persisted?.child) !== null;
+        },
+        readHistory: readChildHistory,
+        readParentTail: (id) => readParentHistoryTail(id),
+      });
+    }
+  );
 
   ipcMain.handle(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, async (_event, request: unknown) => {
     const record = asRecord(request);

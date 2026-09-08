@@ -599,6 +599,24 @@ export class SessionSupervisor {
   }
 
   handleCommand(command: AgentCommand): void {
+    if (command.type === 'reload-session') {
+      // 只读旁路：不得进入执行门、更新活动时间或触发模型调用。
+      const managed = this.sessions.get(command.sessionId);
+      const snapshot = managed
+        ? this.snapshotSessions().find(
+            (session) => session.identity.sessionId === command.sessionId
+          )
+        : undefined;
+      this.options.emit({
+        type: 'session-reloaded',
+        requestId: command.requestId,
+        result:
+          managed && snapshot
+            ? { ok: true, snapshot, seq: managed.seq }
+            : { ok: false, error: 'Session is no longer active.' },
+      });
+      return;
+    }
     if (command.type === 'snapshot') {
       const sessions = command.sessionId
         ? this.snapshotSessions().filter(
@@ -694,7 +712,9 @@ export class SessionSupervisor {
       });
   }
 
-  private async execute(command: Exclude<AgentCommand, { type: 'snapshot' }>): Promise<void> {
+  private async execute(
+    command: Exclude<AgentCommand, { type: 'snapshot' | 'reload-session' }>
+  ): Promise<void> {
     switch (command.type) {
       case 'spawn-parent':
         await this.spawn(

@@ -34,6 +34,7 @@ import type {
   McpServerSpawnConfig,
   ModelRef,
   ResolvedAgentTypeSpawnConfig,
+  SessionReloadResult,
   SpawnModelConfig,
   SubagentModelOption,
   ThinkingLevel,
@@ -66,6 +67,7 @@ import { readSettings } from '../ipc/settings';
 import { agentCommandDispatch } from './agentCommandDispatch';
 import { resolveGlobalInstruction } from './instructionStore';
 import { getMcpOAuthStore } from './mcpOAuthStore';
+import { PendingReloadRegistry } from './pendingReloads';
 import { pickSubagentModelRefs } from './subagentModels';
 
 export interface ResolvedModelSelection {
@@ -162,6 +164,9 @@ export function startAgentWorker(): void {
     const event = parseAgentWorkerEvent(raw);
     if (event) {
       resolveReleaseWaiters(event);
+      // 手动重读结果只回给发起 invoke 的等待者，不进普通事件流（renderer 的通用
+      // snapshot 分支会顺手改 started / 清 asks，手动刷新不能有这些副作用）
+      if (pendingReloads.settle(event)) return;
       onEvent?.(event);
     }
   });
@@ -171,6 +176,7 @@ export function startAgentWorker(): void {
       workerReady = false;
       workerExited = true;
     }
+    pendingReloads.failAll('agent worker exited');
     onEvent?.({ type: 'worker-exited' });
   });
 }
@@ -614,6 +620,24 @@ export function summarizeConversationTitle(
 
 export function abortSession(identity: SessionIdentity): { ok: boolean; error?: string } {
   return sendAgentCommand({ type: 'abort', identity });
+}
+
+const RELOAD_TIMEOUT_MS = 10_000;
+const pendingReloads = new PendingReloadRegistry({ timeoutMs: RELOAD_TIMEOUT_MS });
+
+/**
+ * 手动重读活会话：只在 worker 真正在线时下发，结果按 requestId 回流。
+ * worker 未就绪 / 已退出时不入队等待——「已入队」不是「已读到」，直接返回失败让调用方
+ * 走离线 safe journal 路径或提示用户。
+ */
+export function reloadSession(sessionId: string): Promise<SessionReloadResult> {
+  if (!worker || !workerReady) {
+    return Promise.resolve({ ok: false, error: 'Agent worker is not running.' });
+  }
+  const requestId = randomUUID();
+  const pending = pendingReloads.wait(requestId);
+  worker.postMessage({ type: 'reload-session', requestId, sessionId } satisfies AgentCommand);
+  return pending;
 }
 
 /** release 等待者：sessionId → resolve。parent-ended/worker-exited 到达时唤醒 */
