@@ -163,6 +163,23 @@ let lastScan: { scanId: string; byId: Map<string, Cached> } | null = null;
 **连通性测试会真实调用模型**（`max_tokens: 1` 的最小请求），会计费。
 没指定模型时退化为拉取模型列表，只验证鉴权和连通。改动这里要保持这个代价意识。
 
+### 模型列表鉴权兼容（不推导聊天鉴权）
+
+- 入口：`listModels(config: ProviderApiConfig): Promise<ListModelsResult>`。
+- 仅第三方 `anthropic-messages` 目录首次返回 **401** 时，在同一个已解析 URL
+  以 `Authorization: Bearer` 替换 `x-api-key` 再请求一次，保留 `anthropic-version`。
+  官方请求按 `URL.hostname === 'api.anthropic.com'` 判断，不按整段 URL 或子串判断。
+- 所有目录请求使用 `redirect: 'manual'`；3xx、403、429、5xx、网络异常和超时不触发
+  鉴权回退。不能带着密钥跟随重定向，也不能把目录兼容逻辑扩展到 `/messages`。
+- 成功响应必须是对象：Anthropic/OpenAI 含 `data` 数组，Google/Ollama 含 `models`
+  数组。坏 JSON、HTML、错误结构均返回 `ok: false`；合法空数组仍可成功。
+  非 2xx 不读取服务端响应体；异常继续脱敏。UI 在失败时不合并模型，空列表不删除旧行。
+- 回归测试见 `providerApi.test.ts`：第三方 401→200 两次且同 URL；官方 401 一次；
+  401→401 最多两次；非401和 AbortError 不回退；回退后的坏响应失败；
+  Google/Ollama 空数组兼容；消息请求无新增回退或 redirect 设置。
+- 错误：因为消息协议是 Anthropic，就认定目录必定接受 `x-api-key`。
+  正确：仅对已观察到的目录 401 做有限兼容，不猜测模型实际可调用性。
+
 ## 写入校验
 
 任何按渲染层传入的路径写文件，都必须先校验。`instructionStore.ts` 的两道：

@@ -4,6 +4,8 @@ import { net } from 'electron';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   extractModelEntries,
+  isOfficialAnthropicHost,
+  isValidModelListPayload,
   listModels,
   resolveBase,
   testProvider,
@@ -19,6 +21,34 @@ vi.mock('./proxyConfig', () => ({
 }));
 
 const originalNetFetch = net.fetch;
+
+function mockResponse(status: number, body?: unknown, statusText = 'OK'): Response {
+  return new Response(body !== undefined ? JSON.stringify(body) : null, {
+    status,
+    statusText,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+  });
+}
+
+describe('isOfficialAnthropicHost', () => {
+  it('识别官方 api.anthropic.com，不论是否有协议或路径', () => {
+    expect(isOfficialAnthropicHost('https://api.anthropic.com')).toBe(true);
+    expect(isOfficialAnthropicHost('https://api.anthropic.com/v1')).toBe(true);
+    expect(isOfficialAnthropicHost('http://api.anthropic.com/v1/models')).toBe(true);
+  });
+
+  it('不误判相似域名或第三方域名', () => {
+    expect(isOfficialAnthropicHost('https://not-anthropic.com')).toBe(false);
+    expect(isOfficialAnthropicHost('https://api.anthropic.com.evil.com')).toBe(false);
+    expect(isOfficialAnthropicHost('https://anthropic.com')).toBe(false);
+    expect(isOfficialAnthropicHost('https://api.anyrouter.top')).toBe(false);
+  });
+
+  it('非法或空 URL 安全返回 false', () => {
+    expect(isOfficialAnthropicHost('')).toBe(false);
+    expect(isOfficialAnthropicHost('not-a-url')).toBe(false);
+  });
+});
 
 describe('resolveBase', () => {
   const cfg = (baseUrl: string, api: ModelApiKind = 'openai-completions') => ({
@@ -66,6 +96,26 @@ describe('withVersionSegment', () => {
     expect(withVersionSegment('https://example.com/v1beta', 'v1')).toBe(
       'https://example.com/v1beta/v1'
     );
+  });
+});
+
+describe('isValidModelListPayload', () => {
+  it('Anthropic / OpenAI 要求根对象包含 data 数组', () => {
+    expect(isValidModelListPayload('anthropic-messages', { data: [] })).toBe(true);
+    expect(isValidModelListPayload('openai-completions', { data: [{ id: 'm1' }] })).toBe(true);
+    expect(isValidModelListPayload('openai-responses', { data: [] })).toBe(true);
+    expect(isValidModelListPayload('anthropic-messages', { data: 'not-array' })).toBe(false);
+    expect(isValidModelListPayload('anthropic-messages', {})).toBe(false);
+    expect(isValidModelListPayload('anthropic-messages', null)).toBe(false);
+    expect(isValidModelListPayload('anthropic-messages', [])).toBe(false);
+  });
+
+  it('Google / Ollama 要求根对象包含 models 数组', () => {
+    expect(isValidModelListPayload('google-generative-ai', { models: [] })).toBe(true);
+    expect(isValidModelListPayload('ollama', { models: [] })).toBe(true);
+    expect(isValidModelListPayload('google-generative-ai', { data: [] })).toBe(false);
+    expect(isValidModelListPayload('ollama', { models: null })).toBe(false);
+    expect(isValidModelListPayload('google-generative-ai', 'string')).toBe(false);
   });
 });
 
@@ -254,6 +304,351 @@ describe('远端错误边界', () => {
     expect(JSON.stringify([listed, tested])).toContain('[redacted]');
     vi.unstubAllGlobals();
   });
+
+  it('listModels 响应必须是对象且符合各协议要求的根数组，坏 JSON / HTML / 错误结构返回失败', async () => {
+    // 坏 JSON (如 HTML 页面或截断文本)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => {
+          throw new Error('Unexpected token < in JSON at position 0');
+        },
+      }))
+    );
+    const cfg = {
+      api: 'anthropic-messages' as const,
+      apiKey: 'k',
+      baseUrl: 'https://anyrouter.top',
+    };
+    const htmlRes = await listModels(cfg);
+    expect(htmlRes.ok).toBe(false);
+    expect(htmlRes.models).toEqual([]);
+    expect(htmlRes.error).toBe('Unexpected token < in JSON at position 0');
+
+    // 200 但顶层不是要求的数组 (如错误结构 { error: 'something' })
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ error: 'something went wrong' }),
+      }))
+    );
+    const structRes = await listModels(cfg);
+    expect(structRes.ok).toBe(false);
+    expect(structRes.models).toEqual([]);
+    expect(structRes.error).toBe('Invalid model list response format');
+
+    // 合法空数组返回 ok: true
+    vi.unstubAllGlobals();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        json: async () => ({ data: [] }),
+      }))
+    );
+    const emptyRes = await listModels(cfg);
+    expect(emptyRes.ok).toBe(true);
+    expect(emptyRes.models).toEqual([]);
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('listModels 集成行为与鉴权兼容', () => {
+  afterEach(() => {
+    net.fetch = originalNetFetch;
+    vi.unstubAllGlobals();
+  });
+
+  it('第三方 Anthropic 首次 401 时以 Bearer 重试一次同一 URL，成功解析模型', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse(401, undefined, 'Unauthorized'))
+      .mockResolvedValueOnce(mockResponse(200, { data: [{ id: 'claude-3-7-sonnet' }] }));
+    net.fetch = fetchMock;
+
+    const config = {
+      api: 'anthropic-messages' as const,
+      apiKey: 'sk-ant-thirdparty',
+      baseUrl: 'https://api.anyrouter.top',
+    };
+
+    const res = await listModels(config);
+    expect(res.ok).toBe(true);
+    expect(res.models).toEqual([{ id: 'claude-3-7-sonnet' }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const [firstCallUrl, firstCallInit] = fetchMock.mock.calls[0];
+    const [secondCallUrl, secondCallInit] = fetchMock.mock.calls[1];
+
+    expect(firstCallUrl).toBe('https://api.anyrouter.top/v1/models');
+    expect(secondCallUrl).toBe('https://api.anyrouter.top/v1/models');
+
+    expect(firstCallInit.headers).toEqual({
+      'x-api-key': 'sk-ant-thirdparty',
+      'anthropic-version': '2023-06-01',
+    });
+    expect(secondCallInit.headers).toEqual({
+      Authorization: 'Bearer sk-ant-thirdparty',
+      'anthropic-version': '2023-06-01',
+    });
+    expect(secondCallInit.headers['x-api-key']).toBeUndefined();
+  });
+
+  it('相似官方域名（如 api.anthropic.com.evil.com）不误判为官方，401 时仍以 Bearer 重试', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse(401, undefined, 'Unauthorized'))
+      .mockResolvedValueOnce(mockResponse(200, { data: [{ id: 'custom-claude' }] }));
+    net.fetch = fetchMock;
+
+    const res = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anthropic.com.evil.com',
+    });
+    expect(res.ok).toBe(true);
+    expect(res.models).toEqual([{ id: 'custom-claude' }]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('官方 Anthropic（包括默认空 baseUrl 与带 /v1 地址）401 一次结束，绝不重试 Bearer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(401, undefined, 'Unauthorized'));
+    net.fetch = fetchMock;
+
+    // 1. 默认空 baseUrl
+    const resDefault = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: '',
+    });
+    expect(resDefault.ok).toBe(false);
+    expect(resDefault.error).toBe('HTTP 401 Unauthorized');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 2. 显式官方 baseUrl
+    fetchMock.mockClear();
+    const resExplicit = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anthropic.com',
+    });
+    expect(resExplicit.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // 3. 官方带 /v1
+    fetchMock.mockClear();
+    const resWithV1 = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anthropic.com/v1',
+    });
+    expect(resWithV1.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('第三方 Anthropic 首次 401 第二次仍 401，恰好两次结束，不发第三次', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(401, undefined, 'Unauthorized'));
+    net.fetch = fetchMock;
+
+    const res = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anyrouter.top',
+    });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe('HTTP 401 Unauthorized');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    {
+      name: '403 Forbidden',
+      mock: () => Promise.resolve(mockResponse(403, undefined, 'Forbidden')),
+    },
+    {
+      name: '429 Too Many Requests',
+      mock: () => Promise.resolve(mockResponse(429, undefined, 'Too Many Requests')),
+    },
+    {
+      name: '500 Internal Server Error',
+      mock: () => Promise.resolve(mockResponse(500, undefined, 'Internal Server Error')),
+    },
+    {
+      name: 'AbortError (timeout)',
+      mock: () => {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        return Promise.reject(err);
+      },
+    },
+    { name: 'Network Error', mock: () => Promise.reject(new Error('connect ECONNREFUSED')) },
+  ])('第三方 Anthropic 遇到 $name 不进行重试，只请求一次', async ({ mock }) => {
+    const fetchMock = vi.fn(mock);
+    net.fetch = fetchMock;
+
+    const res = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anyrouter.top',
+    });
+    expect(res.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('第三方 Anthropic 401 回退 Bearer 后若返回坏 JSON 或错误结构，返回失败', async () => {
+    // 401 -> 200 坏 JSON (如 HTML)
+    const badJsonMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse(401, undefined, 'Unauthorized'))
+      .mockResolvedValueOnce(
+        new Response('<html>Bad Gateway</html>', {
+          status: 200,
+          statusText: 'OK',
+          headers: { 'Content-Type': 'text/html' },
+        })
+      );
+    net.fetch = badJsonMock;
+
+    const resBadJson = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anyrouter.top',
+    });
+    expect(resBadJson.ok).toBe(false);
+    expect(resBadJson.error).toContain('Unexpected token');
+    expect(badJsonMock).toHaveBeenCalledTimes(2);
+
+    // 401 -> 200 错误结构 (缺少 data 数组)
+    const badStructMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse(401, undefined, 'Unauthorized'))
+      .mockResolvedValueOnce(mockResponse(200, { error: { message: 'Invalid payload' } }));
+    net.fetch = badStructMock;
+
+    const resBadStruct = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anyrouter.top',
+    });
+    expect(resBadStruct.ok).toBe(false);
+    expect(resBadStruct.error).toBe('Invalid model list response format');
+    expect(badStructMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('Google 与 Ollama 协议：合法空 models 数组与正常 models 均能正确解析', async () => {
+    // Google: 空 models 与正常 models
+    const googleMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse(200, { models: [] }))
+      .mockResolvedValueOnce(
+        mockResponse(200, {
+          models: [{ name: 'models/gemini-2.0-flash', inputTokenLimit: 1048576 }],
+        })
+      );
+    net.fetch = googleMock;
+
+    const googleEmpty = await listModels({
+      api: 'google-generative-ai',
+      apiKey: 'k',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+    });
+    expect(googleEmpty.ok).toBe(true);
+    expect(googleEmpty.models).toEqual([]);
+
+    const googleModels = await listModels({
+      api: 'google-generative-ai',
+      apiKey: 'k',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+    });
+    expect(googleModels.ok).toBe(true);
+    expect(googleModels.models).toEqual([{ id: 'gemini-2.0-flash', contextWindow: 1048576 }]);
+
+    // Ollama: 空 models 与正常 models
+    const ollamaMock = vi
+      .fn()
+      .mockResolvedValueOnce(mockResponse(200, { models: [] }))
+      .mockResolvedValueOnce(mockResponse(200, { models: [{ name: 'llama3:8b' }] }));
+    net.fetch = ollamaMock;
+
+    const ollamaEmpty = await listModels({
+      api: 'ollama',
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:11434',
+    });
+    expect(ollamaEmpty.ok).toBe(true);
+    expect(ollamaEmpty.models).toEqual([]);
+
+    const ollamaModels = await listModels({
+      api: 'ollama',
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:11434',
+    });
+    expect(ollamaModels.ok).toBe(true);
+    expect(ollamaModels.models).toEqual([{ id: 'llama3:8b' }]);
+  });
+
+  it('其他协议（如 OpenAI）遇 401 不新增鉴权回退', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(401, undefined, 'Unauthorized'));
+    net.fetch = fetchMock;
+
+    const res = await listModels({
+      api: 'openai-completions',
+      apiKey: 'k',
+      baseUrl: 'https://api.openai.com/v1',
+    });
+    expect(res.ok).toBe(false);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('listModels 所有协议的标准请求及第三方回退均指定 redirect: manual，遇 3xx 返回失败而不泄漏凭据', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockResponse(302, undefined, 'Found'));
+    net.fetch = fetchMock;
+
+    // 1. Anthropic listModels 标准请求
+    const resAnthropic = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anyrouter.top',
+    });
+    expect(resAnthropic.ok).toBe(false);
+    expect(resAnthropic.error).toBe('HTTP 302 Found');
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+
+    // 2. OpenAI listModels 标准请求
+    fetchMock.mockClear();
+    await listModels({
+      api: 'openai-completions',
+      apiKey: 'k',
+      baseUrl: 'https://api.openai.com/v1',
+    });
+    expect(fetchMock.mock.calls[0][1].redirect).toBe('manual');
+
+    // 3. Anthropic 401 后 Bearer 回退请求也必须是 redirect: manual
+    fetchMock.mockReset();
+    fetchMock
+      .mockResolvedValueOnce(mockResponse(401, undefined, 'Unauthorized'))
+      .mockResolvedValueOnce(mockResponse(307, undefined, 'Temporary Redirect'));
+
+    const resFallbackRedirect = await listModels({
+      api: 'anthropic-messages',
+      apiKey: 'k',
+      baseUrl: 'https://api.anyrouter.top',
+    });
+    expect(resFallbackRedirect.ok).toBe(false);
+    expect(resFallbackRedirect.error).toBe('HTTP 307 Temporary Redirect');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][1].redirect).toBe('manual');
+  });
 });
 
 function requestBody(fetchMock: ReturnType<typeof vi.fn>): Record<string, unknown> {
@@ -271,6 +666,44 @@ describe('testProvider 探测请求', () => {
     vi.stubGlobal('fetch', fetchMock);
     return fetchMock;
   }
+
+  it('带 modelId 的 testProvider messages 遇 401 不进行重试或回退 Bearer', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await testProvider(
+      {
+        api: 'anthropic-messages',
+        apiKey: 'k',
+        baseUrl: 'https://api.anyrouter.top',
+      },
+      'claude-sonnet-4'
+    );
+    expect(res.ok).toBe(false);
+    expect(res.message).toBe('HTTP 401 Unauthorized');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const callInit = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect((callInit?.headers as Record<string, string>)?.['x-api-key']).toBe('k');
+    expect((callInit?.headers as Record<string, string>)?.Authorization).toBeUndefined();
+  });
+
+  it('testProvider 探测请求不添加 redirect: manual，保持共享 request 的原有行为', async () => {
+    const fetchMock = stubOkFetch();
+    await testProvider(
+      {
+        api: 'anthropic-messages',
+        apiKey: 'k',
+        baseUrl: 'https://api.anyrouter.top',
+      },
+      'claude-sonnet-4'
+    );
+    const callInit = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
+    expect(callInit?.redirect).toBeUndefined();
+  });
 
   it('Google 不传 maxOutputTokens: 1，避免 thinking 模型探测 502', async () => {
     const fetchMock = stubOkFetch();
