@@ -352,12 +352,12 @@ export class McpManager {
     const callTimeoutMs = mcpTimeoutMsOrDefault(server.callTimeoutMs, DEFAULT_MCP_CALL_TIMEOUT_MS);
     try {
       await withTimeout(
-        client.connect(this.createTransport(server, provider)),
+        client.connect(this.createTransport(server, provider), { timeout: connectTimeoutMs }),
         connectTimeoutMs,
         `connect ${server.name}`
       );
       ({ tools } = await withTimeout(
-        client.listTools(),
+        client.listTools(undefined, { timeout: connectTimeoutMs }),
         connectTimeoutMs,
         `listTools ${server.name}`
       ));
@@ -410,10 +410,15 @@ export class McpManager {
     let active = client;
     const invoke = (target: Client, params: unknown) =>
       withTimeout(
-        target.callTool({
-          name: tool.name,
-          arguments: (params ?? {}) as Record<string, unknown>,
-        }),
+        // SDK 内部请求默认 60s 超时，必须显式传入，否则外层 withTimeout 永远轮不到
+        target.callTool(
+          {
+            name: tool.name,
+            arguments: (params ?? {}) as Record<string, unknown>,
+          },
+          undefined,
+          { timeout: callTimeoutMs }
+        ),
         callTimeoutMs,
         `callTool ${name}`
       );
