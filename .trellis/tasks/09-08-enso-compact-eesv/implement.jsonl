@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "src/agent/ensoCompact/extension.ts", "reason": "编排入口：normalize→prune→facts→单趟/分块→patch"}
+{"file": "/tmp/pi-smart-compact/ARCHITECTURE.md", "reason": "参考实现 pi-smart-compact 的 EESV 管线说明（本地 clone）"}
