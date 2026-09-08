@@ -133,6 +133,7 @@ expect(store.getState().conversations.ended.messages).toHaveLength(before);
 `snapshot` 不是新输出：同代连续 running 保留 `runStartedAt` / `lastOutputAt` 与未完成工具尾巴；
 首次/新代 running 以接收时间建立起点但不伪造输出。同代 idle/failed 结算 activeMs，显式清空时钟。
 **不能只省略时钟字段**：store 浅合并投影会保留旧值。新代/终态清空 toolOutputs，同轮快照清掉已完成工具的旧输出。
+`toolOutputs` 非空是 watchdog 的活跃工具豁免：toolResult upsert 落地时必须删掉对应 key（含 `toolStartedAt`），否则任一工具流式过就把豁免拖到轮末。
 
 回归测试必须覆盖重复内容 + 更大 seq、historyBaseIndex 尾窗、快照前后重复 tool-output，以及 `{...old, ...projection}` 清理行为。
 

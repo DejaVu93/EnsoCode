@@ -208,6 +208,7 @@ export interface McpCandidate {
 缺省 enabled=true；false 保留描述和推理配置，仅移出候选。过滤必须在 provider/model 去重**之前**。
 候选由 Main 在 parent spawn 时下发，已有 parent 不热更新；UI 必须简短说明新启动会话生效，不打断现有子任务。
 便携 codec 的 SUBAGENT_MODEL_KEYS 必须包含 enabled；Enso 能力重建条目时不得遗漏已持久化 enabled。
+推理 `off` 保留 `thinkingLevel`（再开 on 直接恢复），只有 `follow` 清空——设置页与能力网关必须同口径。
 
 ### Validation & Error Matrix
 
