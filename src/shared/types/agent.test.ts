@@ -715,6 +715,14 @@ describe('标题总结命令与事件', () => {
     expect(parseAgentWorkerEvent({ ...event, extra: true })).toBeNull();
   });
 
+  it('snapshot 事件外壳保留 partial / sessionId：空 targeted 快照靠 sessionId 路由收回 started', () => {
+    const empty = { type: 'snapshot', sessions: [], partial: true, sessionId: 'evicted' };
+    expect(parseAgentWorkerEvent(empty)).toEqual(empty);
+    const full = { type: 'snapshot', sessions: [] };
+    expect(parseAgentWorkerEvent(full)).toEqual(full);
+    expect(parseAgentWorkerEvent({ type: 'snapshot', sessions: [{ bogus: true }] })).toBeNull();
+  });
+
   it('turn-failed 的 undelivered 只接受 true/缺省', () => {
     const event = { type: 'turn-failed', identity: parent, seq: 3, turnId: 't', error: 'stuck' };
     expect(parseAgentWorkerEvent(event)).toEqual(event);
