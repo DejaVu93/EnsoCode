@@ -1,9 +1,10 @@
 import { coworkerTabTone } from '@shared/conversationDotTone';
 import { BUILTIN_AGENT_TYPES } from '@shared/types/assets';
-import { Bot, Pencil, Plus, X } from 'lucide-react';
+import { Bot, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import * as React from 'react';
 import { ConversationStatusIndicator } from '@/components/chat/ConversationStatusIndicator';
 import { ConversationTitleEdit } from '@/components/chat/ConversationTitleEdit';
+import { reloadConversationFromMenu } from '@/components/chat/reloadConversationAction';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -62,6 +63,8 @@ export function CoworkerTabs({
           id={parent.id}
           label={parent.title || t('New conversation')}
           className={tabClass(displayedId === parent.id)}
+          reloadDisabled={parent.reloading === true || parent.spawning}
+          reloading={parent.reloading === true}
           onSelect={() => useSessionsStore.getState().selectTab(parent.id, undefined)}
         />
         {coworkers.map((coworker) => {
@@ -89,6 +92,8 @@ export function CoworkerTabs({
                 )}
                 leading={<Bot className="h-3 w-3 shrink-0" />}
                 trailing={<ConversationStatusIndicator tone={tone} size="sm" />}
+                reloadDisabled={coworker.reloading === true || coworker.spawning}
+                reloading={coworker.reloading === true}
                 onSelect={() => useSessionsStore.getState().selectTab(parent.id, coworker.id)}
               />
               {/* 关闭钉在 tab 内右端(hover 现身,button 让出留白),避免游离在 tab 外 */}
@@ -129,6 +134,8 @@ function RenameableTab({
   className,
   leading,
   trailing,
+  reloadDisabled,
+  reloading,
   onSelect,
 }: {
   id: string;
@@ -136,6 +143,9 @@ function RenameableTab({
   className: string;
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
+  /** 重读在途 / spawn 中禁用菜单项，避免与在途读取叠加 */
+  reloadDisabled: boolean;
+  reloading: boolean;
   onSelect: () => void;
 }) {
   const { t } = useI18n();
@@ -177,6 +187,13 @@ function RenameableTab({
         <ContextMenuItem onClick={() => setRenaming(true)}>
           <Pencil />
           {t('Rename')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={reloadDisabled}
+          onClick={() => void reloadConversationFromMenu(id, t)}
+        >
+          <RefreshCw className={reloading ? 'animate-spin' : undefined} />
+          {t('Reload conversation')}
         </ContextMenuItem>
       </ContextMenuPopup>
     </ContextMenu>

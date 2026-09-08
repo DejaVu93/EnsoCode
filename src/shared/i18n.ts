@@ -725,6 +725,8 @@ export const zhTranslations: Record<string, string> = {
   'Clean up worktree': '清理 worktree',
   'Clean up worktree?': '清理 worktree？',
   'Failed to clean up worktree': '清理 worktree 失败',
+  'Reload conversation': '重新读取会话',
+  'Failed to reload conversation': '重新读取会话失败',
   'Clean up': '清理',
   'Archive session and clean up worktree?': '归档会话并清理 worktree？',
   'The isolated worktree has unfinished work: {{warning}}. The session falls back to the main working tree.':

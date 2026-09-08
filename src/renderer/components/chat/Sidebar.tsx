@@ -41,6 +41,7 @@ import {
   Pencil,
   Pin,
   PinOff,
+  RefreshCw,
   Search,
   Settings,
   Sparkles,
@@ -68,6 +69,7 @@ import {
 import { GroupEditorDialog } from '@/components/chat/GroupEditorDialog';
 import { GroupSelector } from '@/components/chat/GroupSelector';
 import { ImportSessionDialog } from '@/components/chat/ImportSessionDialog';
+import { reloadConversationFromMenu } from '@/components/chat/reloadConversationAction';
 import { NodeSwitcher } from '@/components/nodes/NodeSwitcher';
 import {
   ContextMenu,
@@ -1820,6 +1822,8 @@ interface ConversationRowProps {
     titleSummaryPending?: boolean;
     /** 标题总结全部候选失败（标题后红叹号，点击重试） */
     titleSummaryError?: string;
+    /** 手动重读在途（菜单项禁用 + 图标转圈） */
+    reloading?: boolean;
   };
   active: boolean;
   hasRunningChild: boolean;
@@ -2002,6 +2006,13 @@ function ConversationRow({
         <ContextMenuItem onClick={() => setRenaming(true)}>
           <Pencil />
           {t('Rename')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={conversation.reloading === true || conversation.spawning}
+          onClick={() => void reloadConversationFromMenu(id, t)}
+        >
+          <RefreshCw className={conversation.reloading ? 'animate-spin' : undefined} />
+          {t('Reload conversation')}
         </ContextMenuItem>
         {!archived && (
           <ContextMenuItem onClick={() => onTogglePin(id)}>
