@@ -1,4 +1,5 @@
 import { isValidProxyUrl, type ProxyMode } from '@shared/proxy';
+import { type TerminalShell, terminalShellsForPlatform } from '@shared/terminalShell';
 import type { UpdateStatus } from '@shared/types/updater';
 import type { WindowsLocalShell } from '@shared/windowsLocalShell';
 import * as React from 'react';
@@ -17,6 +18,16 @@ import { GENERATION_STALL_TIMEOUT_MINUTES } from '@/stores/sessions/stallTimeout
 import { useSettingsStore } from '@/stores/settings';
 import { ConfigSyncSettings } from './ConfigSyncSettings';
 import { SmartCompactPicker } from './SmartCompactPicker';
+
+const TERMINAL_SHELL_LABELS: Record<Exclude<TerminalShell, 'auto'>, string> = {
+  cmd: 'Command Prompt',
+  powershell: 'Windows PowerShell',
+  pwsh: 'PowerShell 7 (pwsh)',
+  'git-bash': 'Git Bash',
+  zsh: 'zsh',
+  bash: 'bash',
+  fish: 'fish',
+};
 
 export function GeneralSettings() {
   const { language, setLanguage } = useSettingsStore();
@@ -50,6 +61,7 @@ export function GeneralSettings() {
       <SidePanelSection />
       <SmartCompactPicker />
       <WindowsLocalShellSection />
+      <TerminalShellSection />
       <ProxySection />
       <ConfigSyncSettings />
       <UpdateSection />
@@ -136,6 +148,48 @@ function SidePanelSection() {
           </SelectPopup>
         </Select>
       </div>
+    </div>
+  );
+}
+
+function TerminalShellSection() {
+  const { t } = useI18n();
+  const terminalShell = useSettingsStore((s) => s.terminalShell);
+  const setTerminalShell = useSettingsStore((s) => s.setTerminalShell);
+  const options = terminalShellsForPlatform(window.electronAPI.env.platform);
+  const labels = Object.fromEntries(
+    options.map((value) => [
+      value,
+      value === 'auto' ? t('System default') : TERMINAL_SHELL_LABELS[value],
+    ])
+  ) as Record<TerminalShell, string>;
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+      data-settings-row="general.terminalShell"
+    >
+      <div className="min-w-0">
+        <p className="text-sm">{t('Terminal shell')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t('Applies to new side panel terminals. SSH projects keep the remote login shell.')}
+        </p>
+      </div>
+      <Select
+        items={labels}
+        value={terminalShell}
+        onValueChange={(value) => setTerminalShell(value as TerminalShell)}
+      >
+        <SelectTrigger className="w-56">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectPopup>
+          {options.map((value) => (
+            <SelectItem key={value} value={value}>
+              {labels[value]}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
     </div>
   );
 }

@@ -184,6 +184,7 @@ function resultSettingField(capabilityId: string): string | null {
     'general.load-local-skills': 'loadLocalSkills',
     'general.load-harness-assets': 'loadHarnessAssets',
     'general.windows-local-shell': 'windowsLocalShell',
+    'general.terminal-shell': 'terminalShell',
     'general.automatic-updates': 'autoUpdate',
     'general.proxy-mode': 'proxyMode',
     'general.custom-proxy-url': 'customProxyUrl',
@@ -195,7 +196,6 @@ function resultSettingField(capabilityId: string): string | null {
     'appearance.terminal-font-family': 'terminalFontFamily',
     'appearance.terminal-font-weight': 'terminalFontWeight',
     'appearance.terminal-bold-weight': 'terminalFontWeightBold',
-    'appearance.terminal-shell': 'terminalShell',
     'appearance.favorite-terminal-themes': 'favoriteTerminalThemes',
     'appearance.status-line-segments': 'statusLineSegments',
     'providers.default-model': 'defaultModel',
@@ -713,7 +713,7 @@ export function createCapabilityHandlers(
       'terminalFontWeightBold',
       stringValue
     ),
-    'appearance.terminal-shell': settingValueHandler(services, 'terminalShell', (value) =>
+    'general.terminal-shell': settingValueHandler(services, 'terminalShell', (value) =>
       (TERMINAL_SHELLS as readonly unknown[]).includes(value)
     ),
     'appearance.favorite-terminal-themes': settingValueHandler(

@@ -194,6 +194,7 @@ describe('buildSettingsCatalog', () => {
   const staticIds = [
     'general.language',
     'general.windowsLocalShell',
+    'general.terminalShell',
     'general.openChangesOnFileEdit',
     'general.compactReadOnlyTools',
     'general.notifyMainAgentOnly',
@@ -203,7 +204,6 @@ describe('buildSettingsCatalog', () => {
     'general.updates',
     'shortcuts.root',
     'appearance.theme',
-    'appearance.terminalShell',
     'providers.root',
     'presets.root',
     'agents.root',

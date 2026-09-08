@@ -4,7 +4,7 @@ export const zhTranslations: Record<string, string> = {
   'Add to favorites': '添加收藏',
   Appearance: '外观',
   'Bold font weight': '粗体字重',
-  Shell: 'Shell',
+  'Terminal shell': '终端 Shell',
   'System default': '系统默认',
   'Applies to new side panel terminals. SSH projects keep the remote login shell.':
     '仅对新开的侧边栏终端生效。SSH 项目仍用远端登录 shell。',

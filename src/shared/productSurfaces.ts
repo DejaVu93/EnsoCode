@@ -40,6 +40,11 @@ export const PRODUCT_SURFACE_INVENTORY = {
     kind: 'setting',
     label: 'Windows local command shell',
   },
+  'general.terminal-shell': {
+    domain: 'general',
+    kind: 'setting',
+    label: 'Terminal shell',
+  },
   'general.automatic-updates': {
     domain: 'general',
     kind: 'setting',
@@ -76,11 +81,6 @@ export const PRODUCT_SURFACE_INVENTORY = {
     domain: 'appearance',
     kind: 'setting',
     label: 'Terminal bold font weight',
-  },
-  'appearance.terminal-shell': {
-    domain: 'appearance',
-    kind: 'setting',
-    label: 'Terminal shell',
   },
   'appearance.favorite-terminal-themes': {
     domain: 'appearance',

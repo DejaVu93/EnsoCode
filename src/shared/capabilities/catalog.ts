@@ -397,6 +397,15 @@ export const CAPABILITY_CATALOG = {
       additionalProperties: false,
     })
   ),
+  'general.terminal-shell': executable(
+    'general.terminal-shell',
+    reversibleGlobal('Read or change the shell used by new side panel terminals.', {
+      type: 'object',
+      properties: { value: { type: 'string', enum: [...TERMINAL_SHELLS] } },
+      required: ['value'],
+      additionalProperties: false,
+    })
+  ),
   'general.automatic-updates': executable(
     'general.automatic-updates',
     reversibleGlobal('Read or change automatic update downloads.', BOOLEAN_VALUE_INPUT_SCHEMA)
@@ -451,15 +460,6 @@ export const CAPABILITY_CATALOG = {
       'Read or change the terminal bold font weight.',
       FONT_WEIGHT_VALUE_INPUT_SCHEMA
     )
-  ),
-  'appearance.terminal-shell': executable(
-    'appearance.terminal-shell',
-    reversibleGlobal('Read or change the shell used by new side panel terminals.', {
-      type: 'object',
-      properties: { value: { type: 'string', enum: [...TERMINAL_SHELLS] } },
-      required: ['value'],
-      additionalProperties: false,
-    })
   ),
   'appearance.favorite-terminal-themes': executable(
     'appearance.favorite-terminal-themes',
@@ -1221,6 +1221,7 @@ export const CAPABILITY_HANDLER_CONTRACT: Readonly<Record<ExecutableCapabilityId
   'general.load-local-skills': true,
   'general.load-harness-assets': true,
   'general.windows-local-shell': true,
+  'general.terminal-shell': true,
   'general.automatic-updates': true,
   'general.proxy-mode': true,
   'general.custom-proxy-url': true,
@@ -1233,7 +1234,6 @@ export const CAPABILITY_HANDLER_CONTRACT: Readonly<Record<ExecutableCapabilityId
   'appearance.terminal-font-family': true,
   'appearance.terminal-font-weight': true,
   'appearance.terminal-bold-weight': true,
-  'appearance.terminal-shell': true,
   'appearance.favorite-terminal-themes': true,
   'appearance.status-line-segments': true,
   'providers.list': true,
