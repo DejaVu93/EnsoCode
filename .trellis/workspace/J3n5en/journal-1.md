@@ -849,3 +849,24 @@ Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 re
 ### Status
 
 [OK] **Completed**
+
+
+## Session 29: Changes 面板：diff 高亮移到 worker
+
+**Date**: 2026-09-08
+**Task**: Changes 面板：diff 高亮移到 worker
+**Branch**: `dev`
+
+### Summary
+
+会话→Git 切换仍卡 3-5s：profile 定位到 shiki JS 引擎主线程同步高亮 2054ms。挂 WorkerPoolContextProvider（?worker + worker.format es），ChangesView 去掉 disableWorkerPool；主线程 shiki 归零、下一帧 34ms；prod file:// 构建 worker 可加载。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2e62b33e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
