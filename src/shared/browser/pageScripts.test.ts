@@ -63,4 +63,10 @@ describe('design mode scripts', () => {
     expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("setProperty('height'");
     expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("'important'");
   });
+
+  it('hides freeze layer before host screenshot so the shot is the live viewport, not overlay chrome', () => {
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("freezeLayer.style.visibility = 'hidden'");
+    expect(PAGE_DESIGN_MODE_ENABLE_SCRIPT).toContain("freezeLayer.style.visibility = ''");
+    expect(PAGE_DESIGN_MODE_HIDE_SCRIPT).toContain('hide');
+  });
 });

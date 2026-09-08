@@ -515,6 +515,7 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     box.style.visibility = 'hidden';
     hint.style.visibility = 'hidden';
     tag.style.visibility = 'hidden';
+    freezeLayer.style.visibility = 'hidden';
   };
   const showChrome = () => {
     box.style.visibility = '';
@@ -825,8 +826,9 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     freezeImg.onload = ready;
     freezeImg.src = freezeUrl.indexOf('data:') === 0 ? freezeUrl : 'data:image/png;base64,' + freezeUrl;
     sizeCanvas();
-    freezeLayer.style.display = 'block';
     hide();
+    freezeLayer.style.visibility = '';
+    freezeLayer.style.display = 'block';
     if (freezeImg.complete) ready();
   };
   const startFreeze = () => {
@@ -834,6 +836,7 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     phase = 'freezing';
     hide();
     sizeCanvas();
+    freezeLayer.style.visibility = '';
     freezeLayer.style.display = 'block';
     freezeLayer.style.background = 'transparent';
     freezeImg.style.opacity = '1';

@@ -79,6 +79,32 @@ export function isBrowserPartition(name: string): boolean {
   return name.startsWith('persist:') && name.endsWith(PARTITION_SUFFIX);
 }
 
+export type PageScreenshotClip = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+};
+
+/** CDP `Page.captureScreenshot` 入参。冻帧必须拍当前合成视口，否则 fixed 顶栏会丢。 */
+export function pageScreenshotCdpParams(
+  clip?: PageScreenshotClip,
+  opts?: { captureBeyondViewport?: boolean }
+): {
+  format: 'png';
+  captureBeyondViewport: boolean;
+  fromSurface?: true;
+  clip?: PageScreenshotClip;
+} {
+  if (opts?.captureBeyondViewport === false) {
+    return clip
+      ? { format: 'png', captureBeyondViewport: false, fromSurface: true, clip }
+      : { format: 'png', captureBeyondViewport: false, fromSurface: true };
+  }
+  return { format: 'png', captureBeyondViewport: true, clip };
+}
+
 interface Tab {
   id: string;
   view: WebContentsView;
@@ -559,7 +585,7 @@ export class BrowserHost {
     if (msg.type === 'freeze-request') {
       await this.runGuest(tab, PAGE_DESIGN_MODE_HIDE_SCRIPT);
       try {
-        const shot = await this.screenshot(tab);
+        const shot = await this.screenshotClip(tab, undefined, { captureBeyondViewport: false });
         await this.runGuest(tab, pageDesignModeShowFrozenScript(shot.data));
       } catch {
         await this.runGuest(tab, pageDesignModeShowFrozenScript(''));
@@ -928,7 +954,7 @@ export class BrowserHost {
    */
   private async screenshot(tab: Tab, ref?: string): Promise<{ data: string; mimeType: string }> {
     assertDevtoolsIdle(tab.devtoolsOpen);
-    let clip: { x: number; y: number; width: number; height: number; scale: number };
+    let clip: PageScreenshotClip;
     if (ref) {
       this.assertRef(tab, ref);
       const box = (await tab.view.webContents.executeJavaScript(
@@ -955,14 +981,15 @@ export class BrowserHost {
 
   private async screenshotClip(
     tab: Tab,
-    clip: { x: number; y: number; width: number; height: number; scale: number }
+    clip?: PageScreenshotClip,
+    opts?: { captureBeyondViewport?: boolean }
   ): Promise<{ data: string; mimeType: string }> {
     assertDevtoolsIdle(tab.devtoolsOpen);
-    const shot = (await this.cdp(tab, 'Page.captureScreenshot', {
-      format: 'png',
-      captureBeyondViewport: true,
-      clip,
-    })) as { data?: unknown } | undefined;
+    const shot = (await this.cdp(
+      tab,
+      'Page.captureScreenshot',
+      pageScreenshotCdpParams(clip, opts)
+    )) as { data?: unknown } | undefined;
     if (typeof shot?.data !== 'string' || !shot.data) {
       throw new Error('Screenshot is empty; the page has not painted yet.');
     }
