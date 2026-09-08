@@ -80,8 +80,9 @@ const MAX_TITLE_CHARS = 80;
 export const TITLE_SYSTEM_PROMPT = [
   'You generate a short title for a coding conversation based on the user message.',
   'Rules:',
+  '- The title is a label naming the topic (like a git branch name or issue title), not a restatement or summary of the plan.',
   '- Reply with the title text only: no quotes, no trailing punctuation, no explanations.',
-  '- Keep it under 20 characters for CJK languages, or about 6 words for English.',
+  '- Keep it under 20 characters for CJK languages, or about 6 words for English. Never exceed 30 CJK characters or 10 words.',
 ].join('\n');
 
 export const ROLLING_TITLE_SYSTEM_PROMPT = [
@@ -92,9 +93,10 @@ export const ROLLING_TITLE_SYSTEM_PROMPT = [
   '- If the current title is still accurate, reply with the current title verbatim.',
   '- If the latest request only continues, confirms, or asks to proceed with the existing topic (e.g. "continue", "go ahead", "start implementing", "ok do it"), reply with the current title verbatim.',
   '- Never turn a single step or action of the latest turn into the title.',
+  '- The title is a label naming the topic (like a git branch name or issue title), not an answer to the user and not a restatement of the plan.',
   '- Only change the title when the conversation topic has clearly shifted or become more specific.',
   '- Reply with the title text only: no quotes, no trailing punctuation, no explanations.',
-  '- Keep it under 20 characters for CJK languages, or about 6 words for English.',
+  '- Keep it under 20 characters for CJK languages, or about 6 words for English. Never exceed 30 CJK characters or 10 words.',
   '- Write the title in the same language as the user messages.',
 ].join('\n');
 
