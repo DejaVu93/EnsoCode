@@ -72,6 +72,27 @@ function authoritativeLength(messages: readonly TimelineMessage[]): number {
 }
 
 /**
+ * 整段权威正文被替换时还要保留的乐观尾巴：新正文里已有同文 user 消息的视为已送达消费掉，
+ * 其余（仍在途的 steer/prompt）继续浮在权威消息之后。snapshot 与手动重读共用同一句律。
+ */
+export function retainedOptimisticTail(
+  local: readonly TimelineMessage[],
+  authoritative: readonly ProjectedMessage[]
+): TimelineMessage[] {
+  const leftover = leftoverSnapshotUserTexts(local, authoritative);
+  return local.filter((message) => {
+    if (!message.optimistic || message.role !== 'user') return false;
+    const text = textOf(message);
+    const matched = leftover.findIndex(
+      (delivered) => sameUserText(text, delivered) || sameUserText(delivered, text)
+    );
+    if (matched === -1) return true;
+    leftover.splice(matched, 1);
+    return false;
+  });
+}
+
+/**
  * message-upsert 的 index 是否落在本地权威区之外（会被 reducer 丢正文只推 seq）。
  * store 层据此判断正文已与 worker 脱节，需重新要 snapshot。
  */
@@ -272,17 +293,7 @@ export function applyAgentEvent(
     );
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
-    const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
-    const tail = state.messages.filter((message) => {
-      if (!message.optimistic || message.role !== 'user') return false;
-      const text = textOf(message);
-      const matched = leftover.findIndex(
-        (delivered) => sameUserText(text, delivered) || sameUserText(delivered, text)
-      );
-      if (matched === -1) return true;
-      leftover.splice(matched, 1);
-      return false;
-    });
+    const tail = retainedOptimisticTail(state.messages, snapshot.messages);
     const snapBase = snapshot.baseIndex ?? 0;
     const localBase = state.historyBaseIndex ?? 0;
     const authLen = authoritativeLength(state.messages);

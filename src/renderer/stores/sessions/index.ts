@@ -12,6 +12,7 @@ import type {
   DispatchMainEvent,
   ProjectAuthorityProjection,
   ProjectedMessage,
+  RendererAgentEvent,
   ThinkingLevel,
   TitleSummaryInput,
   TurnDigest,
@@ -77,6 +78,7 @@ import {
   type TimelineMessage,
   upsertOutOfRange,
 } from './reducer';
+import { applyConversationReload } from './reload';
 import { isPairViewed, nextUnread } from './unread';
 import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
 
@@ -84,6 +86,14 @@ import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from '.
 const lastViewedAt: Record<string, number> = {};
 const parentTailInFlight = new Set<string>();
 const olderHistoryInFlight = new Set<string>();
+/**
+ * 手动重读在途：同会话合并为一次 IPC；缓冲期间到达的实时事件，快照落地后按 seq 水位重放，
+ * 防止 IPC reply 晚于实时事件时旧快照把新消息抹掉。实时事件本身仍照常即时上屏。
+ */
+const reloadInFlight = new Map<
+  string,
+  { promise: Promise<string | null>; buffered: RendererAgentEvent[] }
+>();
 let evictTimer: ReturnType<typeof setTimeout> | null = null;
 /** 正文脱节时向 worker 补要 snapshot 的去抖：同一会话一轮重叠的 upsert 不重复要 */
 const snapshotResyncAt: Record<string, number> = {};
@@ -185,6 +195,8 @@ export interface Conversation extends SessionProjection {
   historyLoadAttempted?: boolean;
   /** 上滑翻页在途；不持久化 */
   historyLoading?: boolean;
+  /** 手动重读在途（菜单项禁用 / 反馈）；不持久化 */
+  reloading?: boolean;
   /** 当前 child TAB 的危险 capability ASK；不持久化。 */
   pendingCapabilityAsks?: CapabilityAskRequest[];
   /** allow ACK 后留在 child TAB 的 OAuth 宿主请求；不持久化。 */
@@ -282,6 +294,11 @@ interface SessionsState {
   resumeConversation(id: string): Promise<void>;
   /** 上滑加载更早历史：只读 jsonl，不 spawn */
   loadOlderHistory(id: string): Promise<void>;
+  /**
+   * 手动「重新读取会话」：绕过本地缓存向 Main 要权威正文（来源由 Main 选）。只读不 spawn，
+   * 不动草稿 / 排队 / started。同会话在途合并；失败保留旧正文并返回原因，成功返 null。
+   */
+  reloadConversation(id: string): Promise<string | null>;
   /** 登记一条手机端新建的会话（worker 侧已 spawn，这里只补桌面投影） */
   adoptPairSession(session: PairCreatedSession): void;
   /** 登记一条从外部应用导入的对话（选中后自动 resume 回放） */
@@ -912,6 +929,7 @@ export const useSessionsStore = create<SessionsState>()(
 
         const identity = event.type === 'capability-invoke' ? event.child : event.identity;
         const id = identity.sessionId;
+        reloadInFlight.get(id)?.buffered.push(event);
 
         if (event.type === 'coworker-update') {
           set((state) => {
@@ -2305,6 +2323,43 @@ export const useSessionsStore = create<SessionsState>()(
               set((state) => patch(state, id, { historyLoading: undefined }));
             }
           }
+        },
+
+        reloadConversation(id) {
+          const inFlight = reloadInFlight.get(id);
+          if (inFlight) return inFlight.promise;
+          const before = get().conversations[id];
+          if (!before) return Promise.resolve('Conversation not found.');
+          const entry: { buffered: RendererAgentEvent[]; promise: Promise<string | null> } = {
+            buffered: [],
+            promise: Promise.resolve(null),
+          };
+          entry.promise = (async (): Promise<string | null> => {
+            set((state) => patch(state, id, { reloading: true }));
+            try {
+              const result = await window.electronAPI.agent.reloadConversation(id);
+              if (!result.ok) return result.error;
+              const latest = get().conversations[id];
+              // 在途中被删除：丢弃，不复活。代际已变（重新 spawn）：旧代 live 快照不得覆盖新代
+              if (!latest || latest.generation !== before.generation) return null;
+              set((state) => {
+                const current = state.conversations[id];
+                if (!current) return state;
+                const next = applyConversationReload(current, id, result, entry.buffered);
+                return next === current ? state : patch(state, id, next as Conversation);
+              });
+              return null;
+            } catch (error) {
+              return error instanceof Error ? error.message : String(error);
+            } finally {
+              reloadInFlight.delete(id);
+              if (get().conversations[id]) {
+                set((state) => patch(state, id, { reloading: undefined }));
+              }
+            }
+          })();
+          reloadInFlight.set(id, entry);
+          return entry.promise;
         },
 
         async addImportedConversation(projectId, imported) {

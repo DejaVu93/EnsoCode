@@ -1,6 +1,7 @@
 import type { ChildSessionIdentity } from '@shared/builtinAgents';
 import type { CapabilityAskRequest } from '@shared/capabilities/types';
 import type {
+  ConversationReloadResult,
   DispatchMainEvent,
   ParentHistoryTailResult,
   RendererAgentEvent,
@@ -18,6 +19,12 @@ let sourceProjection: SourceAuthorityProjection = { projects: [], conversations:
 let nextConversationId = 'parent';
 const agentPrompt = vi.fn(async () => ({ ok: true }));
 const agentSpawn = vi.fn(async () => ({ ok: true }));
+const reloadConversation = vi.fn(
+  async (_conversationId: string): Promise<ConversationReloadResult> => ({
+    ok: false,
+    error: 'no',
+  })
+);
 const readParentHistoryTail = vi.fn(
   async (_conversationId?: string, _beforeIndex?: number): Promise<ParentHistoryTailResult> => ({
     ok: false,
@@ -149,6 +156,7 @@ vi.stubGlobal('window', {
       requestSnapshot,
       readParentHistoryTail,
       readChildHistory,
+      reloadConversation,
       prompt: agentPrompt,
       summarizeTitle,
       spawn: agentSpawn,
@@ -2502,5 +2510,157 @@ describe('parent history tail hydrate', () => {
     });
     const message = sessionsModule.useSessionsStore.getState().conversations.leave.messages[0];
     expect((message.content[0] as { text: string }).text).toBe('后半');
+  });
+});
+
+describe('manual conversation reload', () => {
+  beforeAll(async () => {
+    settingsModule ??= await import('../settings');
+    sessionsModule ??= await import('./index');
+  });
+
+  beforeEach(async () => {
+    reloadConversation.mockReset();
+    if (!sessionsModule.useSessionsStore.getState().conversations.parent) {
+      nextConversationId = 'parent';
+      sourceProjection = {
+        projects: [
+          { projectId: 'project', canonicalPath: '/workspace', state: 'active', version: 1 },
+        ],
+        conversations: [],
+      };
+      sessionsModule.useSessionsStore.setState({
+        conversations: {},
+        order: [],
+        activeId: null,
+        pendingAgentPrefill: undefined,
+      });
+      settingsModule.useSettingsStore.setState({
+        projects: [{ id: 'project', name: 'Project', path: '/workspace' }],
+      });
+      await seedParent();
+    }
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        live: {
+          ...state.conversations.parent,
+          id: 'live',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: false,
+          status: 'running',
+          generation: 'g1',
+          lastSeq: 5,
+          draftText: 'unsent draft',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'stale' }] }],
+        },
+      },
+      order: ['parent', 'live'],
+      activeId: 'live',
+    }));
+  });
+
+  const liveResult = (seq: number, text: string): ConversationReloadResult => ({
+    ok: true,
+    source: 'live',
+    seq,
+    snapshot: {
+      identity: { sessionId: 'live', generation: 'g1' },
+      status: 'running',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text }] }],
+      commands: [],
+    },
+  });
+  const textsOf = (id: string) =>
+    sessionsModule.useSessionsStore
+      .getState()
+      .conversations[id].messages.map((message) => (message.content[0] as { text: string }).text);
+
+  it('成功：权威正文替换，草稿与 started 保留，返回 null', async () => {
+    reloadConversation.mockResolvedValue(liveResult(9, 'fresh'));
+    const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(error).toBeNull();
+    expect(reloadConversation).toHaveBeenCalledWith('live');
+    const live = sessionsModule.useSessionsStore.getState().conversations.live;
+    expect(textsOf('live')).toEqual(['fresh']);
+    expect(live.draftText).toBe('unsent draft');
+    expect(live.started).toBe(true);
+    expect(live.lastSeq).toBe(9);
+    expect(live.reloading).toBeUndefined();
+  });
+
+  it('在途：reloading 标记，同会话并发合并为一次 IPC', async () => {
+    let resolveReload: ((value: ConversationReloadResult) => void) | undefined;
+    reloadConversation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const first = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    const second = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBe(true);
+    expect(reloadConversation).toHaveBeenCalledTimes(1);
+    resolveReload?.(liveResult(9, 'fresh'));
+    expect(await Promise.all([first, second])).toEqual([null, null]);
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
+  });
+
+  it('在途期间到达的实时事件既即时上屏，也在快照落地后按水位重放', async () => {
+    let resolveReload: ((value: ConversationReloadResult) => void) | undefined;
+    reloadConversation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const pending = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    onAgentEvent?.({
+      type: 'message-upsert',
+      identity: { sessionId: 'live', generation: 'g1' },
+      seq: 10,
+      index: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'after' }] },
+    });
+    expect(textsOf('live')).toEqual(['stale', 'after']);
+    resolveReload?.(liveResult(9, 'fresh'));
+    await pending;
+    expect(textsOf('live')).toEqual(['fresh', 'after']);
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.lastSeq).toBe(10);
+  });
+
+  it('失败：正文不变，返回错误原因', async () => {
+    reloadConversation.mockResolvedValue({ ok: false, error: 'History file is missing.' });
+    const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(error).toBe('History file is missing.');
+    expect(textsOf('live')).toEqual(['stale']);
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
+  });
+
+  it('会话在途中被删除：结果丢弃，不复活', async () => {
+    let resolveReload: ((value: ConversationReloadResult) => void) | undefined;
+    reloadConversation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const pending = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    sessionsModule.useSessionsStore.setState((state) => {
+      const { live: _live, ...rest } = state.conversations;
+      return { conversations: rest, order: ['parent'], activeId: 'parent' };
+    });
+    resolveReload?.(liveResult(9, 'fresh'));
+    await pending;
+    expect(sessionsModule.useSessionsStore.getState().conversations.live).toBeUndefined();
+  });
+
+  it('IPC 抛异常：当失败处理，不留 reloading', async () => {
+    reloadConversation.mockRejectedValue(new Error('ipc down'));
+    const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(error).toBe('ipc down');
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
   });
 });
