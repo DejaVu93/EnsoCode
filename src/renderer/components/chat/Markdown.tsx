@@ -161,8 +161,10 @@ export const markdownComponents: Components = {
     const end = node?.position?.end?.offset;
     const raw = start !== undefined && end !== undefined ? text.slice(start, end) : null;
     return (
-      <div className="group/table relative my-2 overflow-x-auto">
-        <table className="w-full border-collapse text-xs">{children}</table>
+      <div className="group/table relative my-2 min-w-0 max-w-full overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch]">
+        <table className="w-max min-w-full border-collapse text-xs [overflow-wrap:normal]">
+          {children}
+        </table>
         {raw && !streaming && (
           <CopyButton
             text={raw}
@@ -173,9 +175,13 @@ export const markdownComponents: Components = {
     );
   },
   th: ({ children }) => (
-    <th className="border-b border-border px-2 py-1 text-left font-medium">{children}</th>
+    <th className="whitespace-nowrap border-b border-border px-2 py-1 text-left font-medium">
+      {children}
+    </th>
   ),
-  td: ({ children }) => <td className="border-b border-border/50 px-2 py-1">{children}</td>,
+  td: ({ children }) => (
+    <td className="whitespace-nowrap border-b border-border/50 px-2 py-1">{children}</td>
+  ),
   hr: () => <hr className="my-3 border-border" />,
 };
 

@@ -25,10 +25,12 @@ vi.mock('@/components/chat/Markdown', () => {
     ),
     table: ({ children }: { children?: React.ReactNode }) => <table>{children}</table>,
     th: ({ children }: { children?: React.ReactNode }) => (
-      <th className="border-b border-border px-2 py-1 text-left font-medium">{children}</th>
+      <th className="whitespace-nowrap border-b border-border px-2 py-1 text-left font-medium">
+        {children}
+      </th>
     ),
     td: ({ children }: { children?: React.ReactNode }) => (
-      <td className="border-b border-border/50 px-2 py-1">{children}</td>
+      <td className="whitespace-nowrap border-b border-border/50 px-2 py-1">{children}</td>
     ),
     code: ({ children }: { children?: React.ReactNode }) => <code>{children}</code>,
     pre: ({ children }: { children?: React.ReactNode }) => <pre>{children}</pre>,
