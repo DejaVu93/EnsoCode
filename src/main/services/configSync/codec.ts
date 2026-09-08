@@ -670,19 +670,6 @@ function assertPlainBundle(bundle: ConfigSyncBundle): void {
   }
 }
 
-function validateUniqueNames(entries: RecordValue[], category: string): void {
-  const names = new Set<string>();
-  for (const entry of entries) {
-    const name =
-      typeof entry.name === 'string'
-        ? entry.name.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
-        : '';
-    if (!name) continue;
-    if (names.has(name)) throw new Error(`Duplicate ${category} name`);
-    names.add(name);
-  }
-}
-
 function validateReferences(
   state: RecordValue,
   providers: RecordValue[],
@@ -708,12 +695,6 @@ function validateReferences(
   uniqueIds(providers, 'provider');
   uniqueIds(agentTypes, 'agent type');
   uniqueIds(subagentModels, 'subagent model');
-  validateUniqueNames(providers, 'provider');
-  validateUniqueNames(skills, 'skill');
-  validateUniqueNames(mcpServers, 'MCP server');
-  validateUniqueNames(instructions, 'instruction');
-  validateUniqueNames(presets, 'preset');
-  validateUniqueNames(agentTypes, 'agent type');
   const checkIds = (value: unknown, known: Set<string>, label: string) => {
     for (const id of idList(value, label))
       if (!known.has(id)) throw new Error(`Unknown ${label} reference`);

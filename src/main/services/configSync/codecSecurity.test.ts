@@ -138,14 +138,19 @@ describe('config sync codec security limits', () => {
     expect(() => validateBundle(input)).toThrow();
   });
 
-  it('拒绝同类实体中的重复规范化名称', () => {
+  it('同类实体以 id 为身份，允许重复名称但拒绝重复 id', () => {
     const input = bundle();
     input.state.skills = [skill('one', 'Same'), skill('two', ' ＳＡＭＥ ')];
     input.resources.skills = [
       { id: 'one', files: [{ path: 'SKILL.md', content: '' }] },
       { id: 'two', files: [{ path: 'SKILL.md', content: '' }] },
     ];
-    expect(() => validateBundle(input)).toThrow();
+    expect(() => validateBundle(input)).not.toThrow();
+
+    const dupIds = bundle();
+    dupIds.state.skills = [skill('one', 'A'), skill('one', 'B')];
+    dupIds.resources.skills = [{ id: 'one', files: [{ path: 'SKILL.md', content: '' }] }];
+    expect(() => validateBundle(dupIds)).toThrow(/duplicate/i);
   });
 
   it('拒绝与 transport 不匹配的 MCP 配置和未知内置禁用项', () => {

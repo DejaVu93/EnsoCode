@@ -96,30 +96,36 @@ describe('config sync merge identity and reference mapping', () => {
     );
   });
 
-  it('名称匹配存在多个本机候选时拒绝静默覆盖', () => {
-    expect(() =>
-      planImport(
-        current({
-          skills: [
-            { id: 'one', name: 'same' },
-            { id: 'two', name: ' SAME ' },
-          ],
-        }),
-        bundle({
-          skills: [
-            {
-              id: 'remote',
-              name: 'same',
-              description: '',
-              path: '',
-              source: 'import',
-              enabled: true,
-            },
-          ],
-        }),
-        'merge'
-      )
-    ).toThrow(/ambiguous/i);
+  it('名称匹配存在多个本机候选时不猜测覆盖，作为新增条目导入', () => {
+    const result = planImport(
+      current({
+        skills: [
+          { id: 'one', name: 'same' },
+          { id: 'two', name: ' SAME ' },
+        ],
+      }),
+      bundle({
+        skills: [
+          {
+            id: 'remote',
+            name: 'same',
+            description: '',
+            path: '',
+            source: 'import',
+            enabled: true,
+          },
+        ],
+      }),
+      'merge'
+    );
+    expect((result.state.skills as { id: string }[]).map((skill) => skill.id)).toEqual([
+      'one',
+      'two',
+      'remote',
+    ]);
+    expect(result.summary).toContainEqual(
+      expect.objectContaining({ category: 'skills', added: 1, updated: 0 })
+    );
   });
 
   it('replace 仅替换同步白名单并保留其它设置字段', () => {

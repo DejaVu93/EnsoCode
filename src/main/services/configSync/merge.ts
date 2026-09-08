@@ -167,25 +167,24 @@ function planCategory(
     }
   }
 
+  // 名称只是 id 缺失时的匹配兜底；两侧任一侧重名即视为歧义，回落为新增而不猜。
+  const incomingNameCount = new Map<string, number>();
+  for (const source of incoming) {
+    const name = normalizedName(source.name);
+    if (name) incomingNameCount.set(name, (incomingNameCount.get(name) ?? 0) + 1);
+  }
   const entries: PlannedEntry[] = [];
   const idMap = Object.create(null) as Record<string, string>;
   const claimedDestinations = new Set<string>();
-  const incomingNames = new Set<string>();
   for (const source of incoming) {
-    const sourceName = normalizedName(source.name);
-    if (sourceName && incomingNames.has(sourceName)) {
-      throw new Error(`Ambiguous imported ${category} name`);
-    }
-    if (sourceName) incomingNames.add(sourceName);
     const sourceId = requiredId(source, category);
     const exact = byId.get(sourceId) ?? [];
     if (exact.length > 1) throw new Error(`Ambiguous ${category} id`);
-    let existing = exact[0];
+    let existing: JsonRecord | undefined = exact[0];
     if (!existing) {
       const name = normalizedName(source.name);
-      const matches = name ? (byName.get(name) ?? []) : [];
-      if (matches.length > 1) throw new Error(`Ambiguous ${category} name`);
-      existing = matches[0];
+      const matches = name && incomingNameCount.get(name) === 1 ? (byName.get(name) ?? []) : [];
+      existing = matches.length === 1 ? matches[0] : undefined;
     }
     const destinationId = existing ? requiredId(existing, category) : safeNewId(sourceId, used);
     if (claimedDestinations.has(destinationId)) {
