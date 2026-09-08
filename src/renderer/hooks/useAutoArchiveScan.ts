@@ -17,19 +17,27 @@ function scanMergedWorktrees(enabled: boolean): void {
   void useSessionsStore.getState().refreshWorktreeStatuses();
 }
 
-/** 主窗：两边 persist 水合后、以及闲置天数 / 已合并开关变化后各扫一次。设置窗不挂。 */
+function scanDeleteArchived(days: number): void {
+  if (!bothHydrated() || !(days > 0)) return;
+  useSessionsStore.getState().autoDeleteStaleArchived();
+}
+
+/** 主窗：两边 persist 水合后、以及归档相关设置变化后各扫一次。设置窗不挂。 */
 export function useAutoArchiveScan(): void {
   const idleDays = useSettingsStore((state) => state.autoArchiveIdleDays);
   const mergedEnabled = useSettingsStore((state) => state.autoArchiveMergedWorktrees);
+  const deleteDays = useSettingsStore((state) => state.autoDeleteArchivedDays);
   useEffect(() => {
     if (bothHydrated()) {
       scanIdleArchive(idleDays);
       scanMergedWorktrees(mergedEnabled);
+      scanDeleteArchived(deleteDays);
       return;
     }
     const scan = () => {
       scanIdleArchive(idleDays);
       scanMergedWorktrees(mergedEnabled);
+      scanDeleteArchived(deleteDays);
     };
     const unsubs = [
       useSessionsStore.persist.onFinishHydration(scan),
@@ -38,5 +46,5 @@ export function useAutoArchiveScan(): void {
     return () => {
       for (const unsub of unsubs) unsub();
     };
-  }, [idleDays, mergedEnabled]);
+  }, [idleDays, mergedEnabled, deleteDays]);
 }

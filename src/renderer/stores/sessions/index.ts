@@ -68,7 +68,11 @@ import {
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
 import { cachedPartializeSessions } from './persistSnapshot';
-import { isActiveTone, staleUnarchivedConversationIds } from './pinned';
+import {
+  isActiveTone,
+  staleArchivedConversationIdsToDelete,
+  staleUnarchivedConversationIds,
+} from './pinned';
 import { remapConversationProjectIds } from './projectAuthorityRemap';
 import {
   applyAgentEvent,
@@ -287,6 +291,8 @@ interface SessionsState {
   autoArchiveStaleConversations(now?: number): void;
   /** 已合并隔离 worktree：开关开时 cleanup 后归档；exists===false 只归档 */
   autoCleanupMergedWorktrees(now?: number): Promise<void>;
+  /** 归档超期自动删除：days<=0 no-op，否则对候选走 removeConversation */
+  autoDeleteStaleArchived(now?: number): void;
   dispatchAgent(
     typeKey: AgentTypeKey,
     task: AgentDispatchTask,
@@ -1910,6 +1916,20 @@ export const useSessionsStore = create<SessionsState>()(
             if (error) continue;
             archive(id);
           }
+        },
+
+        autoDeleteStaleArchived(now = Date.now()) {
+          const days = useSettingsStore.getState().autoDeleteArchivedDays;
+          if (!(days > 0)) return;
+          const { order, conversations, activeId } = get();
+          const ids = staleArchivedConversationIdsToDelete(
+            order,
+            conversations,
+            days,
+            now,
+            activeId
+          );
+          for (const id of ids) get().removeConversation(id);
         },
 
         removeConversation(id) {
