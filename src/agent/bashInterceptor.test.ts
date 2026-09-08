@@ -49,6 +49,17 @@ describe('checkBashInterception', () => {
     expect(checkBashInterception('git show HEAD:file.ts', tools).block).toBe(false);
   });
 
+  it('keeps a piped stdin consumer allowed across a newline after |', () => {
+    for (const command of [
+      "git show abc |\n  grep -n -B3 -A3 'worker'",
+      "git show abc | \\\n  grep -n -B3 -A3 'worker'",
+      'git show abc | grep -n worker |\n  head -5',
+    ]) {
+      expect(checkBashInterception(command, tools).block, command).toBe(false);
+    }
+    expect(checkBashInterception('git show abc &&\n  grep -n worker file', tools).block).toBe(true);
+  });
+
   it('does not block when the suggested tool is unavailable', () => {
     expect(checkBashInterception('cat file.ts', ['bash']).block).toBe(false);
   });
