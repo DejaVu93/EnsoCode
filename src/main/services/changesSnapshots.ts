@@ -38,7 +38,12 @@ export function writeSnapshots(
     fs.mkdirSync(dir, { recursive: true });
     const tmp = `${target}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(snapshots), 'utf8');
-    fs.renameSync(tmp, target);
+    try {
+      fs.renameSync(tmp, target);
+    } catch (error) {
+      fs.rmSync(tmp, { force: true });
+      throw error;
+    }
     return true;
   } catch {
     return false;

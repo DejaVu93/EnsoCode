@@ -59,6 +59,12 @@ describe('changesSnapshots', () => {
     expect(readSnapshots(dir, ID)).toEqual(snapshots);
   });
 
+  it('原子写失败时不遗留临时文件', () => {
+    fs.mkdirSync(path.join(tmp, `${ID}.json`));
+    expect(writeSnapshots(tmp, ID, { a: 'old' })).toBe(false);
+    expect(fs.existsSync(path.join(tmp, `${ID}.json.tmp`))).toBe(false);
+  });
+
   it('写入空快照会删除已有文件', () => {
     writeSnapshots(tmp, ID, { a: 'old' });
     expect(writeSnapshots(tmp, ID, {})).toBe(true);
