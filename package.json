@@ -55,6 +55,7 @@
     "level": "^10.0.0",
     "lucide-react": "^1.33.0",
     "mermaid": "^11.17.2",
+    "node-datachannel": "^0.33.2",
     "node-pty": "^1.1.0",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
