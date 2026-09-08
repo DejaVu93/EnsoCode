@@ -612,7 +612,7 @@ function displayedConversation(state: ReturnType<typeof useSessionsStore.getStat
 }
 
 /** 终态错误后续跑：已 spawn 且非 running 才显示（手机 stub started=false 自动隐藏） */
-function RetryTurnButton() {
+export function RetryTurnButton() {
   const { t } = useI18n();
   const host = useChatHost();
   const canRetry = useSessionsStore((state) => {

@@ -23,7 +23,7 @@ import {
 import { useSettingsStore } from '@/stores/settings';
 import { ChatSearchHighlightContext } from './highlightQuery';
 import { NavRail } from './NavRail';
-import { isCompactRow, TimelineRow } from './TimelineRow';
+import { isCompactRow, RetryTurnButton, TimelineRow } from './TimelineRow';
 
 /** 消息列/输入区共用的列：阶梯 max-w + 水平 padding。padding 必须在列上而不是 @container 上，否则两侧查询宽度差 2rem，会在断点附近上下错位。默认到 4xl 保持原阅读宽度，更宽再逐级加档。 */
 export const CHAT_COL =
@@ -359,7 +359,12 @@ export function MessageTimeline({
           )}
         </div>
       )}
-      {error && <p className="text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>}
+      {error && (
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>
+          <RetryTurnButton />
+        </div>
+      )}
     </div>
   );
 
