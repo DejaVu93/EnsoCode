@@ -22,7 +22,13 @@ import type { DefaultModelRef } from '../defaultModel';
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
 import { parseSmartCompactMode } from '../smartCompactMode';
 import { WINDOWS_LOCAL_SHELLS, type WindowsLocalShell } from '../windowsLocalShell';
-import { MODEL_API_KINDS, type ModelApiKind, type ModelCapabilityOverrides } from './llm';
+import {
+  MODEL_API_KINDS,
+  type ModelApiKind,
+  type ModelCapabilityOverrides,
+  type ModelReasoningOverride,
+  type ModelThinkingLevelOverride,
+} from './llm';
 import { type AgentDispatchTask, parseAgentDispatchTask } from './mentions';
 
 export type { ChildSessionIdentity, SessionIdentity } from '../builtinAgents';
@@ -147,6 +153,9 @@ export interface AgentTypeSpawnConfig {
   model?: SpawnModelConfig;
   /** true = agent_pick：主 agent 必须传 model，禁止继承；false/缺省 = 固定模型或跟随会话，不允许自选覆盖 */
   allowModelOverride?: boolean;
+  /** 类型级推理覆盖：赢过模型条目预设，输给派发 thinking；缺省 = 跟随 */
+  reasoning?: ModelReasoningOverride;
+  thinkingLevel?: ModelThinkingLevelOverride;
 }
 
 /**

@@ -79,8 +79,8 @@ import { CheckpointManager, withCheckpoint } from './checkpoint/manager';
 import { createRemoteCheckpointHost } from './checkpoint/remoteHost';
 import {
   type ChildThinkingLevel,
+  pickChildReasoningOverride,
   resolveChildReasoning,
-  thinkingToOverride,
 } from './childReasoning';
 import {
   collectContextOccupancy,
@@ -1376,9 +1376,9 @@ export class SessionSupervisor {
       }) => {
         const selectedModel = modelOverride ?? resolved?.model ?? agentType?.model ?? model;
         const base = await resolveBaseModelOrRefresh(runtime, selectedModel);
-        // 派发 thinking 赢过条目预设，再赢过父会话；缺省跟随父
+        // 派发 thinking > 类型预设 > 模型条目预设 > 父会话
         const childReasoning = resolveChildReasoning(
-          thinkingOverride ? thinkingToOverride(thinkingOverride) : selectedModel,
+          pickChildReasoningOverride(thinkingOverride, agentType, selectedModel),
           reasoningEnabled,
           thinkingLevel
         );

@@ -49,7 +49,14 @@ import {
   type Preset,
   type SkillEntry,
 } from '@shared/types/assets';
-import type { ModelEntry, ModelProvider } from '@shared/types/llm';
+import {
+  MODEL_REASONING_OVERRIDES,
+  MODEL_THINKING_LEVEL_OVERRIDES,
+  type ModelEntry,
+  type ModelProvider,
+  type ModelReasoningOverride,
+  type ModelThinkingLevelOverride,
+} from '@shared/types/llm';
 import type { AgentDispatchTask } from '@shared/types/mentions';
 import { parseWindowsLocalShell } from '@shared/windowsLocalShell';
 import { app, type UtilityProcess, utilityProcess } from 'electron';
@@ -807,6 +814,13 @@ function configuredAgentTypes(
         ? { mcpServers: [...resources.mcpServers] }
         : {}),
       ...(bound?.ok ? { model: bound.selection.config } : {}),
+      // 非法值不透传（与 pickSubagentModelRefs 同口径）
+      ...(MODEL_REASONING_OVERRIDES.includes(entry.reasoning as ModelReasoningOverride)
+        ? { reasoning: entry.reasoning }
+        : {}),
+      ...(MODEL_THINKING_LEVEL_OVERRIDES.includes(entry.thinkingLevel as ModelThinkingLevelOverride)
+        ? { thinkingLevel: entry.thinkingLevel }
+        : {}),
     };
   });
   return [...builtins, ...customs];

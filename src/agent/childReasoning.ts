@@ -56,6 +56,23 @@ export function thinkingToOverride(thinking: ChildThinkingLevel): ChildReasoning
 }
 
 /**
+ * 合并子会话推理覆盖来源：派发 thinking > 类型预设 > 模型条目预设；逐字段回落。
+ */
+export function pickChildReasoningOverride(
+  dispatched: ChildThinkingLevel | undefined,
+  agentTypeOverride: ChildReasoningOverride | undefined,
+  modelOverride: ChildReasoningOverride | undefined
+): ChildReasoningOverride {
+  if (dispatched) return thinkingToOverride(dispatched);
+  const reasoning = agentTypeOverride?.reasoning ?? modelOverride?.reasoning;
+  const thinkingLevel = agentTypeOverride?.thinkingLevel ?? modelOverride?.thinkingLevel;
+  return {
+    ...(reasoning ? { reasoning } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
+  };
+}
+
+/**
  * 子会话推理决策：派发 thinking / 条目级覆盖赢过父会话；
  * 缺省 = 跟随父。关闭时档位恒为 'off'（pi 不发 thinking）。
  */

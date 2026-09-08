@@ -1,6 +1,6 @@
 import { ENSO_AGENT_TYPE_KEY, isReservedAgentTypeName } from '@shared/builtinAgents';
 import type { AgentTypeEntry, AgentTypeModelMode } from '@shared/types';
-import { hasProviderCredentials } from '@shared/types';
+import { hasProviderCredentials, MODEL_THINKING_LEVEL_OVERRIDES } from '@shared/types';
 import { BUILTIN_AGENT_TYPES } from '@shared/types/assets';
 import { AlertCircle, Bot, Pencil, Plus, Sparkles, Trash2 } from 'lucide-react';
 import * as React from 'react';
@@ -152,6 +152,7 @@ export function AgentTypeList({ hasSubagentModels = true }: { hasSubagentModels?
             : mode === 'fixed'
               ? `${provider?.name ?? '?'} / ${entry.modelId}`
               : t('Follows the conversation model');
+        const thinkingChoice = thinkingChoiceOf(entry);
 
         return (
           <div key={entry.id} className="flex items-center gap-3 rounded-md border px-3 py-2.5">
@@ -166,6 +167,9 @@ export function AgentTypeList({ hasSubagentModels = true }: { hasSubagentModels?
               </p>
               <p className="truncate text-muted-foreground text-xs">
                 {modeLabel}
+                {thinkingChoice
+                  ? ` · ${t('Thinking level')}: ${thinkingChoice === 'off' ? t('Off') : thinkingChoice}`
+                  : ''}
                 {entry.description ? ` · ${entry.description}` : ''}
               </p>
             </div>
@@ -200,6 +204,22 @@ export function AgentTypeList({ hasSubagentModels = true }: { hasSubagentModels?
   );
 }
 
+/** 类型级推理选项：'' 跟随 / 'off' 关 / 档位；与派发 thinking 参数同值域 */
+type ThinkingChoice = '' | 'off' | (typeof MODEL_THINKING_LEVEL_OVERRIDES)[number];
+
+const thinkingChoiceOf = (seed?: Pick<AgentTypeEntry, 'reasoning' | 'thinkingLevel'>) =>
+  seed?.reasoning === 'off' ? 'off' : (seed?.thinkingLevel ?? '');
+
+// 显式写 undefined：updateAgentType 是浅合并，否则改回「跟随」时旧值残留
+const thinkingChoiceToFields = (
+  choice: ThinkingChoice
+): Pick<AgentTypeEntry, 'reasoning' | 'thinkingLevel'> =>
+  choice === ''
+    ? { reasoning: undefined, thinkingLevel: undefined }
+    : choice === 'off'
+      ? { reasoning: 'off', thinkingLevel: undefined }
+      : { reasoning: 'on', thinkingLevel: choice };
+
 const slugify = (value: string): string =>
   value
     .toLowerCase()
@@ -233,6 +253,7 @@ export function AgentTypeEditDialog({
   const initialMode: AgentTypeModelMode =
     seed?.modelMode ?? (seed?.providerId && seed?.modelId ? 'fixed' : 'agent_pick');
   const [modelMode, setModelMode] = React.useState<AgentTypeModelMode>(initialMode);
+  const [thinking, setThinking] = React.useState<ThinkingChoice>(thinkingChoiceOf(seed));
   const [name, setName] = React.useState(seed?.name ?? '');
   const [description, setDescription] = React.useState(seed?.description ?? '');
   const [systemPrompt, setSystemPrompt] = React.useState(seed?.systemPrompt ?? '');
@@ -261,6 +282,7 @@ export function AgentTypeEditDialog({
       skillIds,
       mcpServerIds,
       ...(modelMode === 'fixed' && providerId && modelId ? { providerId, modelId } : {}),
+      ...thinkingChoiceToFields(thinking),
     };
     if (entry) updateAgentType(entry.id, payload);
     else addAgentType(payload);
@@ -315,6 +337,22 @@ export function AgentTypeEditDialog({
               </option>
               <option value="follow">{t('Follow conversation')}</option>
               <option value="fixed">{t('Fixed model')}</option>
+            </select>
+          </Field>
+          <Field>
+            <FieldLabel>{t('Thinking level')}</FieldLabel>
+            <select
+              value={thinking}
+              onChange={(e) => setThinking(e.target.value as ThinkingChoice)}
+              className="h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none"
+            >
+              <option value="">{t('Inherit (model entry or conversation)')}</option>
+              <option value="off">{t('Off')}</option>
+              {MODEL_THINKING_LEVEL_OVERRIDES.map((level) => (
+                <option key={level} value={level}>
+                  {level}
+                </option>
+              ))}
             </select>
           </Field>
           {modelMode === 'fixed' && (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseModelThinkingRef,
+  pickChildReasoningOverride,
   resolveChildReasoning,
   resolveChildThinkingInput,
   thinkingToOverride,
@@ -77,6 +78,32 @@ describe('resolveChildThinkingInput', () => {
     expect(() => resolveChildThinkingInput('OpenAI/gpt-cheap:high', 'ultra')).toThrow(
       'unknown thinking "ultra". Available: [off, minimal, low, medium, high, xhigh, max] or omit to inherit.'
     );
+  });
+});
+
+describe('pickChildReasoningOverride', () => {
+  it('派发 thinking 赢过类型预设与模型条目', () => {
+    expect(
+      pickChildReasoningOverride(
+        'off',
+        { reasoning: 'on', thinkingLevel: 'high' },
+        { reasoning: 'on', thinkingLevel: 'low' }
+      )
+    ).toEqual({ reasoning: 'off' });
+  });
+
+  it('类型预设赢过模型条目；缺省字段回落到模型条目', () => {
+    expect(
+      pickChildReasoningOverride(
+        undefined,
+        { reasoning: 'on', thinkingLevel: 'high' },
+        { reasoning: 'off', thinkingLevel: 'low' }
+      )
+    ).toEqual({ reasoning: 'on', thinkingLevel: 'high' });
+    expect(pickChildReasoningOverride(undefined, {}, { thinkingLevel: 'low' })).toEqual({
+      thinkingLevel: 'low',
+    });
+    expect(pickChildReasoningOverride(undefined, undefined, undefined)).toEqual({});
   });
 });
 
