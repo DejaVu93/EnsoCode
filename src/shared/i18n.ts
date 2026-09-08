@@ -908,6 +908,7 @@ export const zhTranslations: Record<string, string> = {
   'Search models': '搜索模型',
   'No models found': '没有匹配的模型',
   'Import session': '导入会话',
+  'More actions': '更多操作',
   'Pick a conversation from a local AI app under {{name}}.':
     '从本地 AI 应用导入 {{name}} 项目下的对话历史。',
   'No sessions found for this project': '没有找到该项目的会话',

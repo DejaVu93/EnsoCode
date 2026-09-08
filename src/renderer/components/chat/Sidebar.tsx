@@ -34,6 +34,7 @@ import {
   Layers,
   Loader2,
   MessageSquarePlus,
+  MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
   Pencil,
@@ -369,6 +370,8 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   };
 
   const [importProject, setImportProject] = useState<Project | null>(null);
+  // 项目行展开了次级操作(导入/归档/删除)的项目 id
+  const [expandedActions, setExpandedActions] = useState<string | null>(null);
   // 待确认的删除动作(项目连带其对话 / 单个对话)
   const [pendingRemove, setPendingRemove] = useState<
     | { kind: 'project'; project: Project; conversationIds: string[] }
@@ -936,35 +939,54 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                   >
                                     <MessageSquarePlus className="h-3.5 w-3.5" />
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setImportProject(project)}
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    title={t('Import session')}
-                                  >
-                                    <HardDriveDownload className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleArchiveProject(project.id)}
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    title={t('Archive project')}
-                                  >
-                                    <Archive className="h-3.5 w-3.5" />
-                                  </button>
+                                  {expandedActions === project.id && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => setImportProject(project)}
+                                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                        title={t('Import session')}
+                                      >
+                                        <HardDriveDownload className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleArchiveProject(project.id)}
+                                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                        title={t('Archive project')}
+                                      >
+                                        <Archive className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setPendingRemove({
+                                            kind: 'project',
+                                            project,
+                                            conversationIds: projectConversations,
+                                          })
+                                        }
+                                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                                        title={t('Remove project')}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() =>
-                                      setPendingRemove({
-                                        kind: 'project',
-                                        project,
-                                        conversationIds: projectConversations,
-                                      })
+                                      setExpandedActions((current) =>
+                                        current === project.id ? null : project.id
+                                      )
                                     }
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                                    title={t('Remove project')}
+                                    className={cn(
+                                      'shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground',
+                                      expandedActions === project.id && 'bg-muted text-foreground'
+                                    )}
+                                    title={t('More actions')}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5" />
+                                    <MoreHorizontal className="h-3.5 w-3.5" />
                                   </button>
                                 </div>
                                 <AnimatePresence initial={false}>
