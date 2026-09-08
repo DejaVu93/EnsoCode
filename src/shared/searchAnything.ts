@@ -163,6 +163,12 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
   { id: 'general.updates', category: 'general', title: 'Updates' },
   { id: 'shortcuts.root', category: 'shortcuts', title: 'Shortcuts' },
   { id: 'appearance.theme', category: 'appearance', title: 'Theme' },
+  {
+    id: 'appearance.terminalShell',
+    category: 'appearance',
+    title: 'Terminal shell',
+    description: 'Shell launched by new side panel terminals',
+  },
   { id: 'providers.root', category: 'providers', title: 'Model Providers' },
   { id: 'presets.root', category: 'presets', title: 'Presets' },
   { id: 'agents.root', category: 'agents', title: 'Agent types' },

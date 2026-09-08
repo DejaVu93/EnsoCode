@@ -6,6 +6,7 @@ import type {
 import type { Locale } from '@shared/i18n';
 import type { ProxyMode } from '@shared/proxy';
 import type { StatusLineSegmentId } from '@shared/statusLine';
+import type { TerminalShell } from '@shared/terminalShell';
 import type {
   AgentTypeEntry,
   InstructionEntry,
@@ -80,6 +81,7 @@ export interface SettingsState {
   terminalFontFamily: string;
   terminalFontWeight: FontWeight;
   terminalFontWeightBold: FontWeight;
+  terminalShell: TerminalShell;
   favoriteTerminalThemes: string[];
 
   /**
@@ -226,6 +228,7 @@ export interface SettingsState {
   setTerminalFontFamily: (family: string) => void;
   setTerminalFontWeight: (weight: FontWeight) => void;
   setTerminalFontWeightBold: (weight: FontWeight) => void;
+  setTerminalShell: (value: TerminalShell) => void;
   toggleFavoriteTerminalTheme: (theme: string) => void;
   setLoadLocalSkills: (value: boolean) => void;
   setLoadHarnessAssets: (value: boolean) => void;

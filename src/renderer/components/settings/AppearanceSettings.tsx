@@ -1,4 +1,5 @@
 import { IMAGE_EXTENSIONS, VIDEO_EXTENSIONS } from '@shared/localImage';
+import { type TerminalShell, terminalShellsForPlatform } from '@shared/terminalShell';
 import {
   ChevronLeft,
   ChevronRight,
@@ -47,6 +48,16 @@ import {
   useSettingsStore,
 } from '@/stores/settings';
 import { fontWeightOptions } from './constants';
+
+const TERMINAL_SHELL_LABELS: Record<Exclude<TerminalShell, 'auto'>, string> = {
+  cmd: 'Command Prompt',
+  powershell: 'Windows PowerShell',
+  pwsh: 'PowerShell 7 (pwsh)',
+  'git-bash': 'Git Bash',
+  zsh: 'zsh',
+  bash: 'bash',
+  fish: 'fish',
+};
 
 /** 背景图设置区：百分比滑块行（拖动时本地预览，松手才写 store，避免拖动中频繁 IPC） */
 function PercentSliderRow({
@@ -617,10 +628,19 @@ export function AppearanceSettings() {
     setTerminalFontWeight,
     terminalFontWeightBold,
     setTerminalFontWeightBold,
+    terminalShell,
+    setTerminalShell,
     favoriteTerminalThemes,
     toggleFavoriteTerminalTheme,
   } = useSettingsStore();
   const { t } = useI18n();
+  const terminalShellOptions = terminalShellsForPlatform(window.electronAPI.env.platform);
+  const terminalShellItems = Object.fromEntries(
+    terminalShellOptions.map((value) => [
+      value,
+      value === 'auto' ? t('System default') : TERMINAL_SHELL_LABELS[value],
+    ])
+  ) as Record<TerminalShell, string>;
 
   const themeModeOptions: {
     value: Theme;
@@ -865,6 +885,35 @@ export function AppearanceSettings() {
             ))}
           </SelectPopup>
         </Select>
+      </div>
+
+      {/* Terminal Shell */}
+      <div
+        className="grid grid-cols-[100px_1fr] items-center gap-4"
+        data-settings-row="appearance.terminalShell"
+      >
+        <span className="text-sm font-medium">{t('Shell')}</span>
+        <div className="flex flex-col gap-1">
+          <Select
+            items={terminalShellItems}
+            value={terminalShell}
+            onValueChange={(v) => setTerminalShell(v as TerminalShell)}
+          >
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup>
+              {terminalShellOptions.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {terminalShellItems[value]}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            {t('Applies to new side panel terminals. SSH projects keep the remote login shell.')}
+          </p>
+        </div>
       </div>
 
       {/* Background Image */}

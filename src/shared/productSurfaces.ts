@@ -77,6 +77,11 @@ export const PRODUCT_SURFACE_INVENTORY = {
     kind: 'setting',
     label: 'Terminal bold font weight',
   },
+  'appearance.terminal-shell': {
+    domain: 'appearance',
+    kind: 'setting',
+    label: 'Terminal shell',
+  },
   'appearance.favorite-terminal-themes': {
     domain: 'appearance',
     kind: 'setting',

@@ -56,6 +56,7 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   terminalFontFamily: { mode: 'portable' },
   terminalFontWeight: { mode: 'portable' },
   terminalFontWeightBold: { mode: 'portable' },
+  terminalShell: { mode: 'excluded', reason: 'platform-specific shell selection' },
   favoriteTerminalThemes: { mode: 'portable' },
   statusLineSegments: { mode: 'portable' },
   loadLocalSkills: { mode: 'portable' },

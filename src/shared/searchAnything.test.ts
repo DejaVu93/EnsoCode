@@ -203,6 +203,7 @@ describe('buildSettingsCatalog', () => {
     'general.updates',
     'shortcuts.root',
     'appearance.theme',
+    'appearance.terminalShell',
     'providers.root',
     'presets.root',
     'agents.root',

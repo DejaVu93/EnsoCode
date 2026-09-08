@@ -10,6 +10,7 @@ import {
   normalizeStatusLineSegments,
   type StatusLineSegmentId,
 } from '@shared/statusLine';
+import { parseTerminalShell } from '@shared/terminalShell';
 import type { SourceAuthorityProjection } from '@shared/types/agent';
 import { parseUsageModelPricing } from '@shared/usage/pricing';
 import { parseWindowsLocalShell } from '@shared/windowsLocalShell';
@@ -105,6 +106,7 @@ const initialState = {
   terminalFontFamily: 'ui-monospace, SF Mono, Menlo, Monaco, Consolas, monospace',
   terminalFontWeight: 'normal' as FontWeight,
   terminalFontWeightBold: '500' as FontWeight,
+  terminalShell: 'auto' as const,
   favoriteTerminalThemes: [] as string[],
   statusLineSegments: [...DEFAULT_STATUS_LINE_SEGMENTS] as StatusLineSegmentId[],
   loadLocalSkills: true,
@@ -216,6 +218,8 @@ export const useSettingsStore = create<SettingsState>()(
 
       setTerminalFontWeight: (terminalFontWeight) => set({ terminalFontWeight }),
       setTerminalFontWeightBold: (terminalFontWeightBold) => set({ terminalFontWeightBold }),
+      setTerminalShell: (terminalShell) =>
+        set({ terminalShell: parseTerminalShell(terminalShell) }),
 
       toggleFavoriteTerminalTheme: (theme) =>
         set((state) => ({
@@ -738,6 +742,10 @@ export const useSettingsStore = create<SettingsState>()(
         const windowsLocalShell = parseWindowsLocalShell(s.windowsLocalShell);
         if (windowsLocalShell !== s.windowsLocalShell) {
           useSettingsStore.setState({ windowsLocalShell });
+        }
+        const terminalShell = parseTerminalShell(s.terminalShell);
+        if (terminalShell !== s.terminalShell) {
+          useSettingsStore.setState({ terminalShell });
         }
         const smartCompactMode = parseSmartCompactMode(s.smartCompactMode) ?? 'auto';
         if (smartCompactMode !== s.smartCompactMode) {

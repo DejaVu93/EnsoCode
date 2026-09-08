@@ -1,5 +1,6 @@
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
 import { STATUS_LINE_SEGMENT_IDS } from '../statusLine';
+import { TERMINAL_SHELLS } from '../terminalShell';
 import { BUILTIN_AGENT_TYPES, BUILTIN_TOOLS } from '../types';
 import type {
   AvailabilityRequirement,
@@ -450,6 +451,15 @@ export const CAPABILITY_CATALOG = {
       'Read or change the terminal bold font weight.',
       FONT_WEIGHT_VALUE_INPUT_SCHEMA
     )
+  ),
+  'appearance.terminal-shell': executable(
+    'appearance.terminal-shell',
+    reversibleGlobal('Read or change the shell used by new side panel terminals.', {
+      type: 'object',
+      properties: { value: { type: 'string', enum: [...TERMINAL_SHELLS] } },
+      required: ['value'],
+      additionalProperties: false,
+    })
   ),
   'appearance.favorite-terminal-themes': executable(
     'appearance.favorite-terminal-themes',
@@ -1223,6 +1233,7 @@ export const CAPABILITY_HANDLER_CONTRACT: Readonly<Record<ExecutableCapabilityId
   'appearance.terminal-font-family': true,
   'appearance.terminal-font-weight': true,
   'appearance.terminal-bold-weight': true,
+  'appearance.terminal-shell': true,
   'appearance.favorite-terminal-themes': true,
   'appearance.status-line-segments': true,
   'providers.list': true,
