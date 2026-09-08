@@ -40,6 +40,12 @@ describe('extractTitle：模型回复 → 可用标题', () => {
     expect(extractTitle(assistant('\n修复登录页 bug\n\n这个标题概括了…'))).toBe('修复登录页 bug');
   });
 
+  it('剥掉模型控制 token（<|eos|> 之类）', () => {
+    expect(extractTitle(assistant('修复登录页 bug<|eos|>'))).toBe('修复登录页 bug');
+    expect(extractTitle(assistant('<|im_start|>修复登录页 bug<|im_end|>'))).toBe('修复登录页 bug');
+    expect(extractTitle(assistant('<|eos|>'))).toBe('');
+  });
+
   it('忽略 thinking 片段，只取 text 片段', () => {
     expect(
       extractTitle({

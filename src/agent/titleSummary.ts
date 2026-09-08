@@ -224,6 +224,12 @@ export function buildTurnDigest(
   return { firstUserText, userText, assistantText };
 }
 
+/**
+ * 模型控制 token：部分 provider 会把 `<|eos|>` / `<|im_end|>` 之类原样吐进正文，
+ * 不剥掉就会跟着写进标题。
+ */
+const SPECIAL_TOKEN = /<\|[^|>]*\|>/g;
+
 /** 模型习惯性包裹的引号/书名号对 */
 const QUOTE_PAIRS: [string, string][] = [
   ['"', '"'],
@@ -250,7 +256,8 @@ export function extractTitle(message: unknown): string {
         ? String((part as { text?: unknown }).text ?? '')
         : ''
     )
-    .join('');
+    .join('')
+    .replace(SPECIAL_TOKEN, '');
   // 模型可能附加解释：只取首个非空行
   const line = text.split('\n').find((candidate) => candidate.trim().length > 0) ?? '';
   let title = line.trim();
