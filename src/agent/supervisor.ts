@@ -138,8 +138,8 @@ import {
 } from './structuredYield';
 import { createSubagentTool, lastAssistantText } from './subagent';
 import {
+  buildInitialTitleUserText,
   buildRollingTitleUserText,
-  buildTitleUserText,
   buildTurnDigest,
   describeTitleModel,
   extractTitle,
@@ -3048,7 +3048,7 @@ export class SessionSupervisor {
           content:
             command.input.kind === 'rolling'
               ? buildRollingTitleUserText(command.input)
-              : buildTitleUserText(command.input.text),
+              : buildInitialTitleUserText(command.input.text),
           timestamp: Date.now(),
         },
       ],

@@ -1,6 +1,7 @@
 import type { ProjectedMessage, SpawnModelConfig } from '@shared/types/agent';
 import { describe, expect, it } from 'vitest';
 import {
+  buildInitialTitleUserText,
   buildRollingTitleUserText,
   buildTitleUserText,
   buildTurnDigest,
@@ -69,7 +70,7 @@ describe('extractTitle：模型回复 → 可用标题', () => {
   });
 });
 
-describe('buildTitleUserText：送给模型的用户消息', () => {
+describe('buildTitleUserText：送给模型的用户消息（清洗后的用户原文）', () => {
   it('原样保留短消息', () => {
     expect(buildTitleUserText('帮我修 bug')).toBe('帮我修 bug');
   });
@@ -121,6 +122,29 @@ describe('buildTitleUserText：送给模型的用户消息', () => {
   });
 });
 
+describe('buildInitialTitleUserText：initial 模式送给模型的 user text', () => {
+  it('把用户原文包进带标签的框，模型才不会把「先别动手，只说方案」当成对自己的指令去回答', () => {
+    const text = buildInitialTitleUserText(
+      '帮我把侧栏拖拽改成 dnd-kit。先别动手, 只说一下你打算怎么做, 三句话以内。'
+    );
+    expect(text).toContain('Opening request');
+    expect(text).toContain('帮我把侧栏拖拽改成 dnd-kit。先别动手, 只说一下你打算怎么做, 三句话以内。');
+    // 框的标签在原文之前，原文不再是消息的第一行
+    expect(text.indexOf('Opening request')).toBeLessThan(text.indexOf('帮我把侧栏拖拽'));
+  });
+
+  it('输入先过 buildTitleUserText 清洗：引用块与跳转前缀被剥掉', () => {
+    const raw =
+      '[Referenced past chat "旧会话" — transcript file: /tmp/s.jsonl (pi session jsonl; read it if relevant)] 从这里继续，修一下这个新bug';
+    const text = buildInitialTitleUserText(raw);
+    expect(text).toContain('从这里继续，修一下这个新bug');
+    expect(text).not.toContain('Referenced past chat');
+  });
+
+  it('清洗后为空 → 空串（调用方据此跳过）', () => {
+    expect(buildInitialTitleUserText('   ')).toBe('');
+  });
+});
 describe('buildTurnDigest：本轮消息 → 压缩摘要', () => {
   const user = (text: string): ProjectedMessage => ({
     role: 'user',
@@ -305,9 +329,9 @@ describe('buildRollingTitleUserText：滚动模式送给模型的 user text', ()
     expect(text).toContain('帮我把登录页的 bug 修一下');
     expect(text.indexOf('Opening request')).toBeLessThan(text.indexOf('Current title'));
     expect(text).toContain('Current title: 修复登录 bug');
-    expect(text).toContain('Latest user request:');
+    expect(text).toContain('Latest user request');
     expect(text).toContain('这个修复有通用性吗');
-    expect(text).toContain('Latest assistant conclusion:');
+    expect(text).toContain('Latest assistant conclusion');
     expect(text).toContain('只影响登录路径');
   });
 
@@ -330,7 +354,7 @@ describe('buildRollingTitleUserText：滚动模式送给模型的 user text', ()
       userText: '',
       assistantText: 'a',
     });
-    expect(text).toContain('Latest user request:');
+    expect(text).toContain('Latest user request');
     expect(text).toContain('(none)');
     expect(text).toContain('a');
   });
@@ -343,7 +367,7 @@ describe('buildRollingTitleUserText：滚动模式送给模型的 user text', ()
       userText: 'u',
       assistantText: '',
     });
-    expect(text).toContain('Latest assistant conclusion:');
+    expect(text).toContain('Latest assistant conclusion');
     expect(text).toContain('(none)');
     expect(text).toContain('u');
   });
