@@ -107,6 +107,7 @@ import { applyHashlineSessionTools } from './hashline/sessionTools';
 import { InMemorySnapshotStore } from './hashline/snapshots';
 import { wrapHashlineEditDefinition } from './hashline/tools';
 import { withHashlineWrite } from './hashline/withWrite';
+import { type ContextMessage, pruneHistoricalImages } from './imageContext';
 import { McpManager } from './mcp';
 import { createMessageCoworkerTool } from './messageCoworker';
 import { createMessageMainTool } from './messageMain';
@@ -303,9 +304,21 @@ function createSessionResourceLoader(options: {
     noSkills: options.noSkills,
     ...(options.noExtensions ? { noExtensions: true } : {}),
     ...(skillPaths.length > 0 ? { additionalSkillPaths: skillPaths } : {}),
-    ...(!options.noExtensions && (options.exploreFold || options.smartCompactEnabled)
-      ? {
-          extensionFactories: [
+    // noExtensions 只挡磁盘上的项目/全局扩展；inline factory 不受影响，图片修剪对所有会话生效
+    extensionFactories: [
+      {
+        name: 'image-context',
+        hidden: true,
+        factory: (pi) => {
+          pi.on('context', (event) => ({
+            messages: pruneHistoricalImages(
+              event.messages as unknown as ContextMessage[]
+            ) as unknown as typeof event.messages,
+          }));
+        },
+      } satisfies InlineExtension,
+      ...(!options.noExtensions && (options.exploreFold || options.smartCompactEnabled)
+        ? [
             ...(options.exploreFold
               ? [
                   {
@@ -329,9 +342,9 @@ function createSessionResourceLoader(options: {
                   }),
                 ]
               : []),
-          ],
-        }
-      : {}),
+          ]
+        : []),
+    ],
     agentsFilesOverride: options.remoteAgentsFiles
       ? () => ({
           agentsFiles: [
