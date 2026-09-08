@@ -1,8 +1,0 @@
-⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
-
-
-[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
-[2m      Tests [22m [1m[31m6 failed[39m[22m[2m | [22m[33m82 skipped[39m[90m (88)[39m
-[2m   Start at [22m 14:57:50
-[2m   Duration [22m 1.63s[2m (transform 483ms, setup 0ms, import 211ms, tests 1.13s, environment 0ms)[22m
-
