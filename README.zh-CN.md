@@ -13,6 +13,10 @@
 </p>
 
 <p align="center">
+  <a href="https://enso.j3.do/">官网</a> • <a href="https://t.me/EnsoAI_news">更新频道</a> • <a href="https://t.me/EnsoCode_Official">讨论群组</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/license-MIT-5c6bc0?style=flat-square" alt="MIT" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="macOS, Windows, Linux" />
   <img src="https://img.shields.io/badge/runtime-Electron%20%2B%20pi-blue?style=flat-square" alt="Electron + pi" />
@@ -138,6 +142,14 @@ pnpm typecheck    # TypeScript 类型检查
 pnpm lint         # Biome 静态代码规范检查
 pnpm test         # 运行 Vitest 单元测试套件
 ```
+
+---
+
+## 🔗 相关链接
+
+- 官网：[enso.j3.do](https://enso.j3.do/)
+- 更新频道：[t.me/EnsoAI_news](https://t.me/EnsoAI_news)
+- 讨论群组：[t.me/EnsoCode_Official](https://t.me/EnsoCode_Official)
 
 ---
 

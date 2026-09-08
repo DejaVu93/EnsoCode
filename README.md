@@ -13,6 +13,10 @@
 </p>
 
 <p align="center">
+  <a href="https://enso.j3.do/">Website</a> • <a href="https://t.me/EnsoAI_news">News Channel</a> • <a href="https://t.me/EnsoCode_Official">Community</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/license-MIT-5c6bc0?style=flat-square" alt="MIT" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-555?style=flat-square" alt="macOS, Windows, Linux" />
   <img src="https://img.shields.io/badge/runtime-Electron%20%2B%20pi-blue?style=flat-square" alt="Electron + pi" />
@@ -137,6 +141,14 @@ pnpm typecheck    # TypeScript verification
 pnpm lint         # Biome check & linting
 pnpm test         # Run Vitest test suites
 ```
+
+---
+
+## 🔗 Links
+
+- Website: [enso.j3.do](https://enso.j3.do/)
+- News channel: [t.me/EnsoAI_news](https://t.me/EnsoAI_news)
+- Community group: [t.me/EnsoCode_Official](https://t.me/EnsoCode_Official)
 
 ---
 
