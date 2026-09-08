@@ -1250,10 +1250,7 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
               {t('Assistant reviewing…')}
             </span>
           ) : item.state === 'running' && item.startedAt !== null ? (
-            <RunningElapsed
-              itemKey={item.key}
-              since={item.startedAt ?? undefined}
-            />
+            <RunningElapsed itemKey={item.key} since={item.startedAt ?? undefined} />
           ) : (
             (item.agentMeta || item.durationMs !== null) && (
               <span className="shrink-0 font-mono text-[10px] text-muted-foreground/70 tabular-nums">

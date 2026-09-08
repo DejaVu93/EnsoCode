@@ -28,9 +28,9 @@ const makeGate = (mode: GateMode = 'supervised', options?: { review?: ReviewFn }
 
 describe('summarizeApproval', () => {
   it('file-edit 的 Hashline 参数只显示文件头路径', () => {
-    expect(
-      summarizeApproval('file-edit', { input: '[/repo/a.ts#ABCD]\nPUT 1.=1:\n+x' })
-    ).toBe('/repo/a.ts');
+    expect(summarizeApproval('file-edit', { input: '[/repo/a.ts#ABCD]\nPUT 1.=1:\n+x' })).toBe(
+      '/repo/a.ts'
+    );
   });
 });
 

@@ -2,6 +2,7 @@ import type { AgentTypeKey } from '@shared/builtinAgents';
 import type { CapabilityAskRequest } from '@shared/capabilities/types';
 import { parseCompactCommand } from '@shared/compactCommand';
 import { type DefaultModelRef, defaultApprovalMode, resolveChatModel } from '@shared/defaultModel';
+import { isContinuationTurn } from '@shared/titleContinuation';
 import type {
   ApprovalMode,
   AttachedImage,
@@ -18,7 +19,6 @@ import type {
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
 import type { PairCreatedSession } from '@shared/types/pair';
 import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
-import { isContinuationTurn } from '@shared/titleContinuation';
 // 纯逻辑模块(仅类型级依赖),store 引用不破坏 node 环境测试
 import {
   cleanTitleSummarySource,
@@ -1765,7 +1765,10 @@ export const useSessionsStore = create<SessionsState>()(
           ) {
             return;
           }
-          const model = { providerId: conversation.lastProviderId, modelId: conversation.lastModelId };
+          const model = {
+            providerId: conversation.lastProviderId,
+            modelId: conversation.lastModelId,
+          };
           const currentTitle = conversation.title.trim();
           if (conversation.lastTurnDigest && currentTitle) {
             requestTitleSummary(

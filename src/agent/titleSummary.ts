@@ -1,12 +1,12 @@
 /** 会话标题总结：一次性补全的输入与输出处理（纯函数，供 supervisor 调用）。 */
 
+import { isContinuationTurn } from '@shared/titleContinuation';
 import type {
   ProjectedMessage,
   SpawnModelConfig,
   TitleSummaryInput,
   TurnDigest,
 } from '@shared/types/agent';
-import { isContinuationTurn } from '@shared/titleContinuation';
 
 /** 送给模型的用户消息上限：标题只需要开头，长指令全文只会烧 token */
 const MAX_INPUT_CHARS = 2000;
@@ -27,7 +27,8 @@ export function titleSummaryTimeoutMs(index: number): number {
 const SENTENCE_END = /[。．！!？?]|\.(?=\s|$)/g;
 /** CJK 句终标点：句中出现一次就是叙述（半角 . 不算——v2.5 / dnd-kit.js 里的点不是句号） */
 const CJK_SENTENCE_END = /[。！？]/;
-const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/g;
+const CJK_CHAR =
+  /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/g;
 /** 标题长度上限：prompt 要求 CJK < 20 字 / 英文 ~6 词，留两倍余量；再长就是方案复述不是标题 */
 const MAX_CJK_TITLE_CHARS = 40;
 const MAX_LATIN_TITLE_WORDS = 12;

@@ -9,11 +9,11 @@ import {
   extractTitle,
   ROLLING_TITLE_SYSTEM_PROMPT,
   TITLE_SUMMARY_TIMEOUTS_MS,
-  titleRejectReason,
-  titleSummaryTimeoutMs,
   TURN_DIGEST_ASSISTANT_MAX,
   TURN_DIGEST_FIRST_USER_MAX,
   TURN_DIGEST_USER_MAX,
+  titleRejectReason,
+  titleSummaryTimeoutMs,
 } from './titleSummary';
 
 const assistant = (text: string, stopReason = 'stop') => ({
@@ -128,7 +128,9 @@ describe('buildInitialTitleUserText：initial 模式送给模型的 user text', 
       '帮我把侧栏拖拽改成 dnd-kit。先别动手, 只说一下你打算怎么做, 三句话以内。'
     );
     expect(text).toContain('Opening request');
-    expect(text).toContain('帮我把侧栏拖拽改成 dnd-kit。先别动手, 只说一下你打算怎么做, 三句话以内。');
+    expect(text).toContain(
+      '帮我把侧栏拖拽改成 dnd-kit。先别动手, 只说一下你打算怎么做, 三句话以内。'
+    );
     // 框的标签在原文之前，原文不再是消息的第一行
     expect(text.indexOf('Opening request')).toBeLessThan(text.indexOf('帮我把侧栏拖拽'));
   });
@@ -463,7 +465,9 @@ describe('titleRejectReason：结果像不像标题', () => {
     expect(titleRejectReason('字'.repeat(40))).toBeNull();
     expect(titleRejectReason('字'.repeat(41))).toBe('model did not return a title');
     expect(titleRejectReason(Array(12).fill('word').join(' '))).toBeNull();
-    expect(titleRejectReason(Array(13).fill('word').join(' '))).toBe('model did not return a title');
+    expect(titleRejectReason(Array(13).fill('word').join(' '))).toBe(
+      'model did not return a title'
+    );
     // 中英混排按 CJK 占比判：以中文为主的标题夹英文术语按字数算
     expect(titleRejectReason('侧栏拖拽用 dnd-kit 改造')).toBeNull();
   });

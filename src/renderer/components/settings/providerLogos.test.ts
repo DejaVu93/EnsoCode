@@ -26,9 +26,7 @@ describe('向导厂商 logo', () => {
     expect(resolveProviderLogo('kimi-coding', 'Kimi')).toEqual(moonshot);
     expect(resolveProviderLogo('github-copilot', 'GitHub Copilot')?.kind).toBe('mark');
     expect(resolveProviderLogo('cursor', 'Cursor')?.kind).toBe('mark');
-    expect(resolveProviderLogo('zai', 'Z.AI')).toEqual(
-      resolveProviderLogo('zhipu', 'Zhipu AI')
-    );
+    expect(resolveProviderLogo('zai', 'Z.AI')).toEqual(resolveProviderLogo('zhipu', 'Zhipu AI'));
   });
 
   it('未知扩展厂商用展示名首字母，没有名称时用 id', () => {

@@ -666,7 +666,13 @@ describe('标题总结命令与事件', () => {
     ).toBeNull();
     const emptyAnchor = {
       ...summarizeRolling,
-      input: { kind: 'rolling', currentTitle: 't', firstUserText: '', userText: 'x', assistantText: 'y' },
+      input: {
+        kind: 'rolling',
+        currentTitle: 't',
+        firstUserText: '',
+        userText: 'x',
+        assistantText: 'y',
+      },
     };
     expect(parseAgentCommand(emptyAnchor)).toEqual(emptyAnchor);
   });
@@ -850,7 +856,9 @@ describe('标题总结命令与事件', () => {
       parseAgentWorkerEvent({ ...base, digest: { firstUserText: 'f', userText: 'u' } })
     ).toBeNull();
     // 旧两键形状：缺 firstUserText 即拒绝，不做兼容层
-    expect(parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a' } })).toBeNull();
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a' } })
+    ).toBeNull();
     expect(parseAgentWorkerEvent({ ...base, digest: 'nope' })).toBeNull();
     expect(
       parseAgentWorkerEvent({
