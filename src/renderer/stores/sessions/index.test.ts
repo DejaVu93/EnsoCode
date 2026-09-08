@@ -2073,6 +2073,160 @@ describe('parent history tail hydrate', () => {
     expect(readParentHistoryTail).toHaveBeenCalledWith('empty');
   });
 
+  function seedReleasable(id: string) {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        [id]: {
+          ...state.conversations.parent,
+          id,
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: false,
+          status: 'idle',
+          generation: 'g1',
+          lastSeq: 0,
+          sessionFile: `/tmp/${id}.jsonl`,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+          customEntries: [{ kind: 'agent-completed', at: 1 } as never],
+          historyBaseIndex: 3,
+        },
+      },
+      order: ['parent', id],
+      activeId: 'parent',
+    }));
+  }
+
+  it('worker 释放冷会话（parent-ended）时清掉可能掉队的正文，切回走尾窗', () => {
+    seedReleasable('released');
+    onAgentEvent?.({
+      type: 'parent-ended',
+      identity: { sessionId: 'released', generation: 'g1' },
+      seq: 9,
+      reason: 'evicted',
+    });
+    const released = sessionsModule.useSessionsStore.getState().conversations.released;
+    expect(released.started).toBe(false);
+    expect(released.messages).toEqual([]);
+    expect(released.customEntries).toEqual([]);
+    expect(released.historyBaseIndex).toBeUndefined();
+    readParentHistoryTail.mockClear();
+    sessionsModule.useSessionsStore.getState().selectConversation('released');
+    expect(readParentHistoryTail).toHaveBeenCalledWith('released');
+  });
+
+  it('worker 释放热会话（刚离开）时正文可信，保留', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    seedReleasable('warm');
+    sessionsModule.useSessionsStore.getState().selectConversation('warm');
+    sessionsModule.useSessionsStore.getState().selectConversation('parent');
+    vi.setSystemTime(2_000);
+    onAgentEvent?.({
+      type: 'parent-ended',
+      identity: { sessionId: 'warm', generation: 'g1' },
+      seq: 9,
+      reason: 'released',
+    });
+    const warm = sessionsModule.useSessionsStore.getState().conversations.warm;
+    expect(warm.started).toBe(false);
+    expect(warm.messages).toHaveLength(1);
+    expect(warm.historyBaseIndex).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it('partial snapshot 不往冷会话灌正文，但 worker 持有即 started', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        phoneFed: {
+          ...state.conversations.parent,
+          id: 'phoneFed',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: false,
+          spawning: false,
+          status: 'idle',
+          generation: undefined,
+          sessionFile: '/tmp/phoneFed.jsonl',
+          messages: [],
+          customEntries: [],
+        },
+      },
+      order: ['parent', 'phoneFed'],
+      activeId: 'parent',
+    }));
+    onAgentEvent?.({
+      type: 'snapshot',
+      partial: true,
+      sessions: [
+        {
+          identity: { sessionId: 'phoneFed', generation: 'g1' },
+          status: 'idle',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '手机灌进来的' }] }],
+          commands: [],
+        },
+      ],
+    });
+    const phoneFed = sessionsModule.useSessionsStore.getState().conversations.phoneFed;
+    expect(phoneFed.messages).toEqual([]);
+    expect(phoneFed.started).toBe(true);
+    expect(phoneFed.generation).toBe('g1');
+  });
+
+  it('空 partial snapshot 带 sessionId：目标不在 worker 则收回 started，正在看就清空并读尾窗', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        gone: {
+          ...state.conversations.parent,
+          id: 'gone',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: false,
+          status: 'idle',
+          sessionFile: '/tmp/gone.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['parent', 'gone'],
+      activeId: 'gone',
+    }));
+    readParentHistoryTail.mockClear();
+    onAgentEvent?.({ type: 'snapshot', partial: true, sessionId: 'gone', sessions: [] });
+    const gone = sessionsModule.useSessionsStore.getState().conversations.gone;
+    expect(gone.started).toBe(false);
+    expect(gone.messages).toEqual([]);
+    expect(readParentHistoryTail).toHaveBeenCalledWith('gone');
+  });
+
+  it('空 partial snapshot 带 sessionId：spawning 中的会话不动', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        reviving: {
+          ...state.conversations.parent,
+          id: 'reviving',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: true,
+          status: 'idle',
+          sessionFile: '/tmp/reviving.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['parent', 'reviving'],
+      activeId: 'parent',
+    }));
+    onAgentEvent?.({ type: 'snapshot', partial: true, sessionId: 'reviving', sessions: [] });
+    const reviving = sessionsModule.useSessionsStore.getState().conversations.reviving;
+    expect(reviving.started).toBe(true);
+    expect(reviving.messages).toHaveLength(1);
+  });
+
   it('在会话里坐超 TTL 再离开，TTL 内后台 upsert 仍写入', () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000);

@@ -668,8 +668,9 @@ export const useSessionsStore = create<SessionsState>()(
               const conversation = conversations[id];
               const snapshot = alive.get(id);
               if (snapshot) {
-                const keepBody =
-                  event.partial === true || isMessageCacheHot(id, viewed, lastViewedAt, now);
+                // 只看热度：手机 subscribe/history 触发的 targeted 快照也会广播到桌面，
+                // partial 就留正文会把当时的半截灌进冷会话，之后 upsert 又因冷被丢，半截常驻
+                const keepBody = isMessageCacheHot(id, viewed, lastViewedAt, now);
                 const next = applyAgentEvent(conversation, id, event);
                 const title = conversation.title || firstUserText(next) || '';
                 conversations[id] = {
@@ -700,7 +701,14 @@ export const useSessionsStore = create<SessionsState>()(
                 };
                 continue;
               }
-              if (partial || !conversation.started) continue;
+              // targeted 快照回空 = worker 已释放该会话（闲置回收 / 重启）：收回 started，
+              // 否则后续 prompt 绕过 spawn 直发空会话；正在看的话清掉旧正文让尾窗补
+              const absentTarget =
+                partial &&
+                event.sessionId === id &&
+                !conversation.spawning &&
+                (conversation.started || Boolean(conversation.sessionFile));
+              if (!absentTarget && (partial || !conversation.started)) continue;
               conversations[id] = conversation.sessionFile
                 ? {
                     ...conversation,
@@ -709,6 +717,19 @@ export const useSessionsStore = create<SessionsState>()(
                     error: undefined,
                     pendingCapabilityAsks: [],
                     activeOauthAsk: undefined,
+                    // 只有渲染层原以为 worker 还持有（started）时本地正文才可能掉队；
+                    // 浏览态（尾窗上屏、started=false）的正文是 jsonl 来的，不动
+                    ...(absentTarget &&
+                    conversation.started &&
+                    id === viewed &&
+                    hasAuthoritativeMessages(conversation.messages)
+                      ? {
+                          messages: [],
+                          customEntries: [],
+                          historyBaseIndex: undefined,
+                          historyLoading: undefined,
+                        }
+                      : {}),
                   }
                 : {
                     ...conversation,
@@ -722,6 +743,17 @@ export const useSessionsStore = create<SessionsState>()(
           });
           if (event.partial) {
             for (const session of event.sessions) continueGoal(session.identity.sessionId);
+            if (event.sessionId) {
+              const state = get();
+              const target = state.conversations[event.sessionId];
+              if (
+                target &&
+                viewedFromState(state) === event.sessionId &&
+                needsHistoryHydration(target)
+              ) {
+                void hydrateParentHistoryTail(event.sessionId);
+              }
+            }
           }
           return;
         }
@@ -1077,6 +1109,18 @@ export const useSessionsStore = create<SessionsState>()(
               : {}),
             ...(event.type === 'parent-ended' || event.type === 'child-ended'
               ? { started: false, pendingCapabilityAsks: [], activeOauthAsk: undefined }
+              : {}),
+            // worker 释放冷会话：冷缓存期间 upsert 已被丢，本地正文可能掉队，而回收定时器只在切会话时
+            // 武装、夜里不再切就永远不清。这里直接清掉，切回时走 jsonl 尾窗；热正文可信，保留
+            ...(event.type === 'parent-ended' &&
+            !isMessageCacheHot(id, viewedFromState(state), lastViewedAt, Date.now()) &&
+            (next.messages.length > 0 || next.customEntries.length > 0)
+              ? {
+                  messages: [],
+                  customEntries: [],
+                  historyBaseIndex: undefined,
+                  historyLoading: undefined,
+                }
               : {}),
             // spawn IPC ack 时已乐观置 started:true；拒绝到达不清回 false 的话，
             // 重发会绕过 spawn 分支直接 prompt 到 worker 里不存在的会话，重试无声失败。
@@ -2580,6 +2624,7 @@ useSessionsStore.subscribe((state) => {
   const conversation = viewed ? state.conversations[viewed] : undefined;
   if (viewed && conversation && needsWorkerSnapshot(conversation)) {
     if (needsHistoryHydration(conversation)) void hydrateParentHistoryTail(viewed);
+    // worker 若还持有，快照比尾窗完整（审批 / 进行中轮次）；回空则由 sessionId 路由收回 started
     void window.electronAPI.agent.requestSnapshot(viewed);
   }
   if (evictTimer) clearTimeout(evictTimer);
