@@ -811,12 +811,13 @@ describe('applyAgentEvent approval-request reviewing', () => {
 });
 
 describe('applyAgentEvent tool-output', () => {
-  const toolOutput = (seq: number, output: string): RendererAgentEvent => ({
+  const toolOutput = (seq: number, output: string, startedAt?: number): RendererAgentEvent => ({
     type: 'tool-output',
     identity: identity(),
     seq,
     toolCallId: 't1',
     output,
+    ...(startedAt === undefined ? {} : { startedAt }),
   });
 
   it('累积工具增量输出快照（后到覆盖先到）', () => {
@@ -827,10 +828,7 @@ describe('applyAgentEvent tool-output', () => {
   });
 
   it('startedAt 只在首次出现时记下，后续增量覆盖不改起点', () => {
-    const first = applyAgentEvent(base, 's1', {
-      ...toolOutput(1, ''),
-      startedAt: 1_000,
-    });
+    const first = applyAgentEvent(base, 's1', toolOutput(1, '', 1_000));
     expect(first.toolStartedAt).toEqual({ t1: 1_000 });
     const second = applyAgentEvent(first, 's1', toolOutput(2, 'line'));
     expect(second.toolOutputs).toEqual({ t1: 'line' });

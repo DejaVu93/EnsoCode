@@ -53,7 +53,7 @@ describe('applyCompletedWrites', () => {
   it('seeds historical writes without requesting a refresh', () => {
     const result = applyCompletedWrites([write({ key: 'old' })], null);
     expect(result.refreshRels).toEqual([]);
-    expect([...result.nextSeen]).toEqual(['old']);
+    expect([...(result.nextSeen ?? [])]).toEqual(['old']);
   });
 
   it('refreshes only newly completed writes', () => {
@@ -62,7 +62,7 @@ describe('applyCompletedWrites', () => {
       new Set(['old'])
     );
     expect(result.refreshRels).toEqual(['src/b.ts']);
-    expect(result.nextSeen.has('new')).toBe(true);
+    expect(result.nextSeen?.has('new')).toBe(true);
   });
 
   it('ignores edit and speculative write', () => {
@@ -71,7 +71,7 @@ describe('applyCompletedWrites', () => {
       new Set()
     );
     expect(result.refreshRels).toEqual([]);
-    expect(result.nextSeen.size).toBe(0);
+    expect(result.nextSeen?.size).toBe(0);
   });
 
   it('refreshes a completed empty write', () => {
