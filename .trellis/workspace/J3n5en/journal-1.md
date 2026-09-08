@@ -870,3 +870,45 @@ Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 re
 ### Status
 
 [OK] **Completed**
+
+
+## Session 30: 侧栏增量展开与自动归档
+
+**Date**: 2026-09-08
+**Task**: 侧栏增量展开与自动归档
+**Branch**: `dev`
+
+### Summary
+
+侧栏按 15 条增量展开；闲置默认 30 天自动归档；已合并 worktree 清理与超期删除默认关。主窗水合后扫描，设置窗不挂。
+
+### Main Changes
+
+- revealedExtras 替换布尔展开，桌面与手机各露 15 条
+- 三项设置进 persist / config-sync / GeneralSettings，删除项写明不可恢复
+- R2 批量标归档不碰磁盘；R3 status 刷新后 cleanup；R4 走 removeConversation
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0894a446` | (see git log) |
+| `1c3d0b14` | (see git log) |
+| `fbe5c9df` | (see git log) |
+| `f4f4298b` | (see git log) |
+| `9b1a4bf8` | (see git log) |
+| `ed72cf8d` | (see git log) |
+| `4d9d1be5` | (see git log) |
+| `90061245` | (see git log) |
+
+### Testing
+
+- [OK] autoArchive / autoCleanupMerged / autoDeleteArchived + 候选纯函数 + typecheck 全绿
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 无。任务已归档。

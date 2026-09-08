@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 29
+- **Total Sessions**: 30
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~753 | Active |
+| `journal-1.md` | ~914 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 30 | 2026-09-08 | 侧栏增量展开与自动归档 | `0894a446`, `1c3d0b14`, `fbe5c9df`, `f4f4298b`, `9b1a4bf8`, `ed72cf8d`, `4d9d1be5`, `90061245` | `dev` |
 | 29 | 2026-09-08 | Changes 面板：diff 高亮移到 worker | `2e62b33e` | `dev` |
 | 28 | 2026-09-08 | Changes 面板卡顿：快照移出 localStorage | `3992bf19` | `dev` |
 | 27 | 2026-09-08 | 滚动标题总结锚定会话主旨 + 标题守卫/prompt 补漏 | `d745308`, `ed62b3c`, `6595a6d`, `abac9d3`, `86a078d`, `67385c4`, `373fc80` | `dev` |
