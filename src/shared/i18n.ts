@@ -163,6 +163,8 @@ export const zhTranslations: Record<string, string> = {
   'Stopped after repeated stalls': '多次卡住后已停止',
   'No file changes in this conversation yet.': '本会话还没有文件改动。',
   'No changes relative to HEAD.': '相对 HEAD 没有改动。',
+  'Collapse all': '全部折叠',
+  'Expand all': '全部展开',
   'Not a git repository.': '不是 git 仓库。',
   'Git diff is not available for this workspace.': '当前工作区不支持 Git diff。',
   'Terminal appearance': '终端外观',
