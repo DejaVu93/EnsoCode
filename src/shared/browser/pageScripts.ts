@@ -173,9 +173,15 @@ export const PAGE_LOCK_OVERLAY_SCRIPT = `(() => {
   return 'ok';
 })()`;
 
+/** 幂等；只有确认节点真的没了才返回 'ok'，宿主据此才敢落 locked=false。 */
 export const PAGE_UNLOCK_OVERLAY_SCRIPT = `(() => {
-  document.getElementById(${JSON.stringify(LOCK_OVERLAY_ID)})?.remove();
-  return 'ok';
+  const ID = ${JSON.stringify(LOCK_OVERLAY_ID)};
+  for (let i = 0; i < 8; i++) {
+    const el = document.getElementById(ID);
+    if (!el) return 'ok';
+    el.remove();
+  }
+  return document.getElementById(ID) ? 'stuck' : 'ok';
 })()`;
 
 export const pageSelectOptionScript = (ref: string, values: string[]): string => `(() => {

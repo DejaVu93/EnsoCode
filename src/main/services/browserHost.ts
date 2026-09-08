@@ -508,12 +508,22 @@ export class BrowserHost {
     for (const listener of this.closeListeners) listener(tab.ownerSessionId, tabId);
   }
 
+  /** 加锁只作用于当前 tab；释放要覆盖会话下全部 tab，否则切过 tab 会留下永远锁死的孤儿。 */
   async setLocked(sessionId: string, locked: boolean): Promise<void> {
-    const tab = this.mustTab(sessionId);
-    if (locked && tab.designMode) await this.setDesignMode(tab.id, false);
-    tab.locked = locked;
-    await this.syncLockOverlay(tab);
-    this.emitState(sessionId, tab.id);
+    const current = this.mustTab(sessionId);
+    if (locked) {
+      if (current.designMode) await this.setDesignMode(current.id, false);
+      current.locked = true;
+      await this.syncLockOverlay(current);
+      this.emitState(sessionId, current.id);
+      return;
+    }
+    for (const tab of this.tabs.values()) {
+      if (tab.ownerSessionId !== sessionId) continue;
+      // 遮罩没真删掉就不谎报 unlocked，用户可以再按一次
+      if (await this.removeLockOverlay(tab)) tab.locked = false;
+      this.emitState(tab.ownerSessionId, tab.id);
+    }
   }
 
   async setDesignMode(tabId: string, enabled: boolean): Promise<BrowserTabState> {
@@ -650,11 +660,23 @@ export class BrowserHost {
     return this.screenshot(tab);
   }
 
-  private async syncLockOverlay(tab: Tab): Promise<void> {
+  /** 返回 guest 页是否已对齐到目标状态。 */
+  private async syncLockOverlay(tab: Tab, locked = tab.locked): Promise<boolean> {
     const contents = tab.view.webContents;
-    if (contents.isDestroyed() || !tab.ready) return;
-    const script = tab.locked ? PAGE_LOCK_OVERLAY_SCRIPT : PAGE_UNLOCK_OVERLAY_SCRIPT;
-    await contents.executeJavaScript(script, true).catch(() => {});
+    // 页面已销毁 / 还没 ready：没有文档就没有遮罩，解锁视为已达成
+    if (contents.isDestroyed() || !tab.ready) return !locked;
+    const script = locked ? PAGE_LOCK_OVERLAY_SCRIPT : PAGE_UNLOCK_OVERLAY_SCRIPT;
+    const result = await contents.executeJavaScript(script, true).catch(() => undefined);
+    return result === 'ok';
+  }
+
+  /** 导航竞态会让一次 executeJavaScript 直接拒绝，重试几次再判定失败。 */
+  private async removeLockOverlay(tab: Tab): Promise<boolean> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await this.syncLockOverlay(tab, false)) return true;
+      await sleep(50);
+    }
+    return false;
   }
 
   getSession(): Session {
@@ -787,7 +809,8 @@ export class BrowserHost {
       case 'lock': {
         const locked = !(isRecord(params) && params.release === true);
         await this.setLocked(sessionId, locked);
-        return { locked };
+        // 解锁可能失败（遮罩没删掉），如实回报真实状态
+        return { locked: this.mustTab(sessionId).locked };
       }
     }
   }
@@ -1074,12 +1097,14 @@ export class BrowserHost {
       push();
     });
     contents.on('did-finish-load', () => {
-      if (tab.locked) void this.syncLockOverlay(tab);
+      // 始终对齐：history / BFCache 带回来的残留遮罩也要清掉
+      void this.syncLockOverlay(tab);
       if (tab.designMode) void this.runGuest(tab, PAGE_DESIGN_MODE_ENABLE_SCRIPT);
     });
     contents.once('dom-ready', () => {
       tab.ready = true;
       this.layout();
+      if (tab.locked) void this.syncLockOverlay(tab);
       if (tab.designMode) void this.runGuest(tab, PAGE_DESIGN_MODE_ENABLE_SCRIPT);
     });
     // window.open / target=_blank：本 tab 内导航，不弹系统浏览器

@@ -8,12 +8,38 @@ import {
   PAGE_UNLOCK_OVERLAY_SCRIPT,
 } from './pageScripts';
 
+const runUnlock = (nodes: { id: string }[]): unknown => {
+  const document = {
+    getElementById: (id: string) => {
+      const el = nodes.find((n) => n.id === id);
+      return el ? { remove: () => nodes.splice(nodes.indexOf(el), 1) } : null;
+    },
+  };
+  return new Function('document', `return ${PAGE_UNLOCK_OVERLAY_SCRIPT}`)(document);
+};
+
 describe('lock overlay scripts', () => {
   it('installs a full-page overlay and can remove it', () => {
     expect(PAGE_LOCK_OVERLAY_SCRIPT).toContain('enso-browser-lock-overlay');
     expect(PAGE_LOCK_OVERLAY_SCRIPT).toContain('preventDefault');
     expect(PAGE_UNLOCK_OVERLAY_SCRIPT).toContain('enso-browser-lock-overlay');
     expect(PAGE_UNLOCK_OVERLAY_SCRIPT).toContain('.remove()');
+  });
+
+  it('unlock is idempotent and only reports ok when the node is really gone', () => {
+    expect(runUnlock([])).toBe('ok');
+    const nodes = [{ id: 'enso-browser-lock-overlay' }, { id: 'enso-browser-lock-overlay' }];
+    expect(runUnlock(nodes)).toBe('ok');
+    expect(nodes).toHaveLength(0);
+  });
+
+  it('unlock reports failure when the overlay survives removal', () => {
+    const document = {
+      getElementById: (id: string) =>
+        id === 'enso-browser-lock-overlay' ? { remove: () => {} } : null,
+    };
+    const result = new Function('document', `return ${PAGE_UNLOCK_OVERLAY_SCRIPT}`)(document);
+    expect(result).not.toBe('ok');
   });
 });
 
