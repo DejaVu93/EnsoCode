@@ -939,55 +939,68 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                   >
                                     <MessageSquarePlus className="h-3.5 w-3.5" />
                                   </button>
-                                  {expandedActions === project.id && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() => setImportProject(project)}
-                                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                        title={t('Import session')}
-                                      >
-                                        <HardDriveDownload className="h-3.5 w-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => toggleArchiveProject(project.id)}
-                                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                        title={t('Archive project')}
-                                      >
-                                        <Archive className="h-3.5 w-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          setPendingRemove({
-                                            kind: 'project',
-                                            project,
-                                            conversationIds: projectConversations,
-                                          })
-                                        }
-                                        className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                                        title={t('Remove project')}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </button>
-                                    </>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setExpandedActions((current) =>
-                                        current === project.id ? null : project.id
-                                      )
-                                    }
-                                    className={cn(
-                                      'shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground',
-                                      expandedActions === project.id && 'bg-muted text-foreground'
-                                    )}
-                                    title={t('More actions')}
+                                  {/* 展开的次级操作随焦点离开自动收起 */}
+                                  <div
+                                    className="contents"
+                                    onBlur={(event) => {
+                                      if (
+                                        expandedActions === project.id &&
+                                        !event.currentTarget.contains(event.relatedTarget)
+                                      ) {
+                                        setExpandedActions(null);
+                                      }
+                                    }}
                                   >
-                                    <MoreHorizontal className="h-3.5 w-3.5" />
-                                  </button>
+                                    {expandedActions === project.id && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => setImportProject(project)}
+                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          title={t('Import session')}
+                                        >
+                                          <HardDriveDownload className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleArchiveProject(project.id)}
+                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          title={t('Archive project')}
+                                        >
+                                          <Archive className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setPendingRemove({
+                                              kind: 'project',
+                                              project,
+                                              conversationIds: projectConversations,
+                                            })
+                                          }
+                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                                          title={t('Remove project')}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedActions((current) =>
+                                          current === project.id ? null : project.id
+                                        )
+                                      }
+                                      className={cn(
+                                        'shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground',
+                                        expandedActions === project.id && 'bg-muted text-foreground'
+                                      )}
+                                      title={t('More actions')}
+                                    >
+                                      <MoreHorizontal className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
                                 <AnimatePresence initial={false}>
                                   {!folded && (
