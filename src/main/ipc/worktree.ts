@@ -6,7 +6,9 @@
 import path from 'node:path';
 import { IPC_CHANNELS } from '@shared/types';
 import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import { resolveWorktreeRoot } from '@shared/worktreeRoot';
 import { app, ipcMain } from 'electron';
+import { readSettingsState } from '../services/agentHost';
 import { WorktreeRegistry } from '../services/worktree/registry';
 import {
   createSessionWorktree,
@@ -21,7 +23,10 @@ import { getSourceAuthorityRegistry } from './agent';
 let registry: WorktreeRegistry | null = null;
 
 function worktreesRoot(): string {
-  return path.join(app.getPath('userData'), 'worktrees');
+  return resolveWorktreeRoot(
+    readSettingsState()?.worktreeRoot,
+    path.join(app.getPath('userData'), 'worktrees')
+  );
 }
 
 function ensureRegistry(): WorktreeRegistry {

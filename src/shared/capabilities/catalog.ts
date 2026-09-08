@@ -406,6 +406,18 @@ export const CAPABILITY_CATALOG = {
       additionalProperties: false,
     })
   ),
+  'general.worktree-root': executable(
+    'general.worktree-root',
+    reversibleGlobal(
+      'Read or change the root directory hosting isolated session worktrees. Empty string restores the default under app data. Must be an absolute path.',
+      {
+        type: 'object',
+        properties: { value: { type: 'string' } },
+        required: ['value'],
+        additionalProperties: false,
+      }
+    )
+  ),
   'general.automatic-updates': executable(
     'general.automatic-updates',
     reversibleGlobal('Read or change automatic update downloads.', BOOLEAN_VALUE_INPUT_SCHEMA)
@@ -1222,6 +1234,7 @@ export const CAPABILITY_HANDLER_CONTRACT: Readonly<Record<ExecutableCapabilityId
   'general.load-harness-assets': true,
   'general.windows-local-shell': true,
   'general.terminal-shell': true,
+  'general.worktree-root': true,
   'general.automatic-updates': true,
   'general.proxy-mode': true,
   'general.custom-proxy-url': true,

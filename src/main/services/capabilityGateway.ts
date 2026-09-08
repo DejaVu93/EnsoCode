@@ -42,6 +42,7 @@ import type {
 } from '@shared/types/oauthProviders';
 import type { RecentProject } from '@shared/types/project';
 import type { ListModelsResult, TestProviderResult } from '@shared/types/providerApi';
+import { isAbsolutePathLike } from '@shared/worktreeRoot';
 import type { TeamExecutionGuard } from './agentDispatchService';
 import type { AgentSessionIndex } from './agentSessionIndex';
 import { createSecretSet, type SecretSet } from './secretRedactor';
@@ -185,6 +186,7 @@ function resultSettingField(capabilityId: string): string | null {
     'general.load-harness-assets': 'loadHarnessAssets',
     'general.windows-local-shell': 'windowsLocalShell',
     'general.terminal-shell': 'terminalShell',
+    'general.worktree-root': 'worktreeRoot',
     'general.automatic-updates': 'autoUpdate',
     'general.proxy-mode': 'proxyMode',
     'general.custom-proxy-url': 'customProxyUrl',
@@ -715,6 +717,11 @@ export function createCapabilityHandlers(
     ),
     'general.terminal-shell': settingValueHandler(services, 'terminalShell', (value) =>
       (TERMINAL_SHELLS as readonly unknown[]).includes(value)
+    ),
+    'general.worktree-root': settingValueHandler(
+      services,
+      'worktreeRoot',
+      (value) => typeof value === 'string' && (value === '' || isAbsolutePathLike(value))
     ),
     'appearance.favorite-terminal-themes': settingValueHandler(
       services,

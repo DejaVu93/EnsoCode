@@ -45,6 +45,11 @@ export const PRODUCT_SURFACE_INVENTORY = {
     kind: 'setting',
     label: 'Terminal shell',
   },
+  'general.worktree-root': {
+    domain: 'general',
+    kind: 'setting',
+    label: 'Worktree root directory',
+  },
   'general.automatic-updates': {
     domain: 'general',
     kind: 'setting',
