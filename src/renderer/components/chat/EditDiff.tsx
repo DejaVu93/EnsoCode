@@ -6,7 +6,7 @@ import { reconstructOld } from '@/lib/sessionChanges';
 import type { EditBlock } from '@/stores/sessions/timeline';
 import { CODE_THEME, ensureHighlighter } from './codeHighlighter';
 
-/** 主题跟随系统深浅色，split 左右分栏 + 词级高亮，纯 JS 高亮器（免 WASM，适配 electron-vite） */
+/** 主题跟随系统深浅色，split 左右分栏 + 词级高亮，纯 JS 高亮器（免 WASM）；高亮走根部 DiffWorkerPool */
 const DIFF_OPTIONS = {
   themeType: 'system',
   theme: CODE_THEME,
@@ -79,5 +79,5 @@ function DiffView({ name, oldText, newText }: { name: string; oldText: string; n
     () => parseDiffFromFile({ name, contents: oldText }, { name, contents: newText }),
     [name, oldText, newText]
   );
-  return <FileDiff fileDiff={fileDiff} disableWorkerPool options={DIFF_OPTIONS} />;
+  return <FileDiff fileDiff={fileDiff} options={DIFF_OPTIONS} />;
 }
