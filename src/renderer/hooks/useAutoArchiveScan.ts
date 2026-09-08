@@ -6,15 +6,13 @@ function bothHydrated(): boolean {
   return useSessionsStore.persist.hasHydrated() && useSettingsStore.persist.hasHydrated();
 }
 
-function scanIdleArchive(idleDays: number): void {
+function scanIdleArchive(idleDays: number, mergedEnabled: boolean): void {
   if (!bothHydrated()) return;
   if (!(idleDays > 0)) return;
-  useSessionsStore.getState().autoArchiveStaleConversations();
-}
-
-function scanMergedWorktrees(enabled: boolean): void {
-  if (!bothHydrated() || !enabled) return;
-  void useSessionsStore.getState().refreshWorktreeStatuses();
+  void (async () => {
+    if (mergedEnabled) await useSessionsStore.getState().refreshWorktreeStatuses();
+    await useSessionsStore.getState().autoArchiveStaleConversations();
+  })();
 }
 
 function scanDeleteArchived(days: number): void {
@@ -29,14 +27,12 @@ export function useAutoArchiveScan(): void {
   const deleteDays = useSettingsStore((state) => state.autoDeleteArchivedDays);
   useEffect(() => {
     if (bothHydrated()) {
-      scanIdleArchive(idleDays);
-      scanMergedWorktrees(mergedEnabled);
+      scanIdleArchive(idleDays, mergedEnabled);
       scanDeleteArchived(deleteDays);
       return;
     }
     const scan = () => {
-      scanIdleArchive(idleDays);
-      scanMergedWorktrees(mergedEnabled);
+      scanIdleArchive(idleDays, mergedEnabled);
       scanDeleteArchived(deleteDays);
     };
     const unsubs = [

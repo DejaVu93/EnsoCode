@@ -224,7 +224,7 @@ function AutoArchiveSection() {
         rowId="general.autoArchiveMergedWorktrees"
         title={t('Clean up merged worktrees')}
         description={t(
-          'When a session worktree is merged and clean, remove the isolated directory and archive the conversation.'
+          'When archiving idle conversations, also remove isolated worktrees that are merged and clean.'
         )}
         checked={autoArchiveMergedWorktrees}
         onChange={setAutoArchiveMergedWorktrees}

@@ -16,6 +16,8 @@ type CandidateHelpers = {
     now: number;
     idleDays: number;
     activeId?: string | null;
+    cleanupMergedWorktrees?: boolean;
+    worktreeStatuses?: Record<string, { exists: boolean; dirty: boolean; ahead: number }>;
   }) => string[];
   staleArchivedConversationIdsToDelete: (
     order: readonly string[],
@@ -203,13 +205,22 @@ describe('项目归档(会话自身 archived 标记不动)', () => {
 describe('自动归档与删除候选', () => {
   const day = 86_400_000;
   const now = 40 * day;
-  const candidates = (order: string[], conversations: Record<string, Minimal>, activeId = '') =>
+  const candidates = (
+    order: string[],
+    conversations: Record<string, Minimal>,
+    activeId = '',
+    extra: {
+      cleanupMergedWorktrees?: boolean;
+      worktreeStatuses?: Record<string, { exists: boolean; dirty: boolean; ahead: number }>;
+    } = {}
+  ) =>
     candidateHelpers.staleUnarchivedConversationIds?.({
       order,
       conversations,
       now,
       idleDays: 30,
       activeId,
+      ...extra,
     });
 
   it('闲置归档设为从不时没有候选', () => {
@@ -241,6 +252,48 @@ describe('自动归档与删除候选', () => {
       ordinary: conv('p1', 0),
     };
     expect(candidates(Object.keys(items), items, 'active')).toEqual(['ordinary']);
+  });
+
+  const CLEAN = { exists: true, dirty: false, ahead: 0 };
+
+  it('清理已合并开：已合并且干净的闲置隔离会话进入候选', () => {
+    const items = {
+      isolated: conv('p1', 0, undefined, { worktree: { path: '/wt' } }),
+      ordinary: conv('p1', 0),
+    };
+    expect(
+      candidates(Object.keys(items), items, '', {
+        cleanupMergedWorktrees: true,
+        worktreeStatuses: { isolated: CLEAN },
+      })
+    ).toEqual(['isolated', 'ordinary']);
+  });
+
+  it('清理已合并开：dirty / ahead / 未知 status 仍排除隔离会话', () => {
+    const items = {
+      dirty: conv('p1', 0, undefined, { worktree: { path: '/d' } }),
+      ahead: conv('p1', 0, undefined, { worktree: { path: '/a' } }),
+      unknown: conv('p1', 0, undefined, { worktree: { path: '/u' } }),
+    };
+    expect(
+      candidates(Object.keys(items), items, '', {
+        cleanupMergedWorktrees: true,
+        worktreeStatuses: {
+          dirty: { exists: true, dirty: true, ahead: 0 },
+          ahead: { exists: true, dirty: false, ahead: 2 },
+        },
+      })
+    ).toEqual([]);
+  });
+
+  it('清理已合并开：worktree 已不存在的闲置隔离会话进入候选', () => {
+    const items = { gone: conv('p1', 0, undefined, { worktree: { path: '/gone' } }) };
+    expect(
+      candidates(Object.keys(items), items, '', {
+        cleanupMergedWorktrees: true,
+        worktreeStatuses: { gone: { exists: false, dirty: false, ahead: 0 } },
+      })
+    ).toEqual(['gone']);
   });
 
   it('排除运行、等待、失败、未读、启动中及有运行子项的会话', () => {

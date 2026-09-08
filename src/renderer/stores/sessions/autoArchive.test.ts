@@ -1,7 +1,6 @@
 /**
- * R2 闲置自动归档的 store 动作测试。契约见
- * docs/project-history/09-08-sidebar-auto-archive/design.md：只批量 patch 归档字段，
- * 不碰磁盘（不 cleanupWorktree / worktree.remove / agent.release / removeConversation）。
+ * 闲置自动归档的 store 动作测试。普通会话只 patch 归档字段。
+ * 清理已合并开关开时，闲置且已合并干净的隔离会话先 cleanup 再归档。
  */
 
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -80,7 +79,9 @@ const DAY = 86_400_000;
 const NOW = 1_800_000_000_000;
 
 /** 待实现的动作：用可选签名取，避免 typecheck 卡在实现之前 */
-type AutoArchiveAction = { autoArchiveStaleConversations?: (now?: number) => void };
+type AutoArchiveAction = {
+  autoArchiveStaleConversations?: (now?: number) => void | Promise<void>;
+};
 const action = () => sessions.useSessionsStore.getState() as unknown as AutoArchiveAction;
 
 function conv(id: string, ageDays: number, extra: Record<string, unknown> = {}) {
@@ -98,13 +99,29 @@ function conv(id: string, ageDays: number, extra: Record<string, unknown> = {}) 
   };
 }
 
-function seed(conversations: Record<string, unknown>, idleDays: number) {
+const CLEAN = { exists: true, dirty: false, ahead: 0 };
+const WT = { conversationId: 'iso', path: '/managed/iso', branch: 'enso/iso' };
+
+function seed(
+  conversations: Record<string, unknown>,
+  idleDays: number,
+  extra: {
+    merged?: boolean;
+    worktreeStatuses?: Record<string, unknown>;
+    activeId?: string | null;
+  } = {}
+) {
   sessions.useSessionsStore.setState({
     conversations,
     order: Object.keys(conversations),
-    activeId: null,
+    activeId: extra.activeId ?? null,
+    worktreeStatuses: extra.worktreeStatuses ?? {},
   } as never);
-  settings.useSettingsStore.setState({ autoArchiveIdleDays: idleDays } as never);
+  settings.useSettingsStore.setState({
+    autoArchiveIdleDays: idleDays,
+    autoArchiveMergedWorktrees: extra.merged ?? false,
+    projects: [{ id: 'project', name: 'Project', path: '/workspace' }],
+  } as never);
 }
 
 beforeEach(() => {
@@ -166,5 +183,64 @@ describe('autoArchiveStaleConversations', () => {
     expect(after.plain.archived).toBe(true);
     expect(wtRemove).not.toHaveBeenCalled();
     expect(agentRelease).not.toHaveBeenCalled();
+  });
+
+  it('清理已合并开 + 闲置干净：cleanup 后归档', async () => {
+    seed({ iso: conv('iso', 40, { worktree: WT }) }, 30, {
+      merged: true,
+      worktreeStatuses: { iso: CLEAN },
+    });
+    await action().autoArchiveStaleConversations?.(NOW);
+    expect(wtRemove).toHaveBeenCalledWith('iso');
+    const iso = sessions.useSessionsStore.getState().conversations.iso;
+    expect(iso.worktree).toBeUndefined();
+    expect(iso).toMatchObject({ archived: true, archivedAt: NOW });
+  });
+
+  it('清理已合并开但未达闲置天数：不清理不归档', async () => {
+    seed({ iso: conv('iso', 10, { worktree: WT }) }, 30, {
+      merged: true,
+      worktreeStatuses: { iso: CLEAN },
+    });
+    await action().autoArchiveStaleConversations?.(NOW);
+    const iso = sessions.useSessionsStore.getState().conversations.iso;
+    expect(iso.archived).toBeUndefined();
+    expect(iso.worktree).toBeDefined();
+    expect(wtRemove).not.toHaveBeenCalled();
+  });
+
+  it('清理已合并开 + dirty：不清理不归档', async () => {
+    seed({ iso: conv('iso', 40, { worktree: WT }) }, 30, {
+      merged: true,
+      worktreeStatuses: { iso: { exists: true, dirty: true, ahead: 0 } },
+    });
+    await action().autoArchiveStaleConversations?.(NOW);
+    expect(sessions.useSessionsStore.getState().conversations.iso.archived).toBeUndefined();
+    expect(wtRemove).not.toHaveBeenCalled();
+  });
+
+  it('清理已合并开 + worktree 已不存在：直接归档且不调 remove', async () => {
+    seed({ iso: conv('iso', 40, { worktree: WT }) }, 30, {
+      merged: true,
+      worktreeStatuses: { iso: { exists: false, dirty: false, ahead: 0 } },
+    });
+    await action().autoArchiveStaleConversations?.(NOW);
+    expect(sessions.useSessionsStore.getState().conversations.iso).toMatchObject({
+      archived: true,
+      archivedAt: NOW,
+    });
+    expect(wtRemove).not.toHaveBeenCalled();
+  });
+
+  it('清理失败：不归档，worktree 保留', async () => {
+    seed({ iso: conv('iso', 40, { worktree: WT }) }, 30, {
+      merged: true,
+      worktreeStatuses: { iso: CLEAN },
+    });
+    wtRemove.mockResolvedValueOnce({ ok: false, error: 'worktree busy' } as never);
+    await action().autoArchiveStaleConversations?.(NOW);
+    const iso = sessions.useSessionsStore.getState().conversations.iso;
+    expect(iso.archived).toBeUndefined();
+    expect(iso.worktree).toBeDefined();
   });
 });

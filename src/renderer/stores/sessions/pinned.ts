@@ -1,4 +1,6 @@
 import { conversationDotTone, conversationHasRunningChild } from '@shared/conversationDotTone';
+import type { WorktreeStatus } from '@shared/types/worktree';
+import { worktreeReadyToAutoCleanup } from './worktree';
 
 /**
  * 侧栏会话分组的排序纯函数。各栏目内按最后活跃时间倒序
@@ -213,7 +215,8 @@ const DAY_MS = 86_400_000;
 
 /**
  * 闲置自动归档候选。idleDays=0 为从不。
- * 排除已归档、置顶、当前打开、隔离 worktree、Active 态。
+ * 排除已归档、置顶、当前打开、Active 态。
+ * 隔离 worktree 默认排除；cleanupMergedWorktrees 开时，已合并干净或目录已不存在的可入选。
  */
 export function staleUnarchivedConversationIds(input: {
   order: readonly string[];
@@ -221,8 +224,18 @@ export function staleUnarchivedConversationIds(input: {
   now: number;
   idleDays: number;
   activeId?: string | null;
+  cleanupMergedWorktrees?: boolean;
+  worktreeStatuses?: Record<string, Pick<WorktreeStatus, 'exists' | 'dirty' | 'ahead'> | undefined>;
 }): string[] {
-  const { order, conversations, now, idleDays, activeId } = input;
+  const {
+    order,
+    conversations,
+    now,
+    idleDays,
+    activeId,
+    cleanupMergedWorktrees,
+    worktreeStatuses,
+  } = input;
   if (!(idleDays > 0)) return [];
   const cutoff = now - idleDays * DAY_MS;
   return order.filter((id) => {
@@ -230,7 +243,12 @@ export function staleUnarchivedConversationIds(input: {
     if (!conversation || conversation.archived === true) return false;
     if (conversation.pinned === true) return false;
     if (activeId && id === activeId) return false;
-    if (conversation.worktree) return false;
+    if (conversation.worktree) {
+      if (!cleanupMergedWorktrees) return false;
+      const status = worktreeStatuses?.[id];
+      if (!status) return false;
+      if (status.exists !== false && !worktreeReadyToAutoCleanup(status)) return false;
+    }
     if (isActiveTone(id, conversations)) return false;
     return lastActiveAt(conversation) <= cutoff;
   });

@@ -450,4 +450,12 @@ describe('refreshWorktreeStatuses', () => {
       ahead: 3,
     });
   });
+
+  it('刷新状态不自动清理已合并 worktree', async () => {
+    const id = await seedIsolatedConversation();
+    settings.useSettingsStore.setState({ autoArchiveMergedWorktrees: true } as never);
+    await sessions.useSessionsStore.getState().refreshWorktreeStatuses();
+    expect(wtRemove).not.toHaveBeenCalled();
+    expect(sessions.useSessionsStore.getState().conversations[id].archived).toBeUndefined();
+  });
 });

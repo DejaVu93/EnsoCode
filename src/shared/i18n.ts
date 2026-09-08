@@ -177,8 +177,8 @@ export const zhTranslations: Record<string, string> = {
   'Move conversations that have been idle this long into Archived. Does not delete them.':
     '将闲置超过此天数的会话移入已归档，不会删除。',
   'Clean up merged worktrees': '清理已合并 worktree',
-  'When a session worktree is merged and clean, remove the isolated directory and archive the conversation.':
-    '会话 worktree 已合并且工作树干净时，删除隔离目录并归档该会话。',
+  'When archiving idle conversations, also remove isolated worktrees that are merged and clean.':
+    '归档闲置会话时，一并清理已合并且干净的隔离 worktree。',
   'Delete archived conversations after': '归档超过此天数后删除',
   'Permanently delete conversations that have been archived longer than this. This cannot be undone. Choosing a positive value deletes already-overdue archived conversations immediately.':
     '永久删除归档超过此天数的会话，不可恢复。改成正数会立即删除已超期的归档。',
