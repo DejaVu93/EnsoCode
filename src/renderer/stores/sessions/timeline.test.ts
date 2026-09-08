@@ -153,6 +153,41 @@ describe('buildTimeline', () => {
     });
   });
 
+  it('edit 执行失败时不合成 diff：文件没改，不能显示成已应用', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'e-err',
+              name: 'edit',
+              arguments: {
+                path: 'src/a.ts',
+                input: '[src/a.ts#ABCD]\nPUT 1.=1:\n+x',
+                oldText: 'world',
+                newText: 'hello',
+              },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'e-err',
+          toolName: 'edit',
+          isError: true,
+          content: [
+            { type: 'text', text: 'edit accepts either hashline input or replace edits, not both' },
+          ],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({ name: 'edit', state: 'error', edits: null });
+  });
+
   it('replace edit 没有 editDiff 时继续使用参数中的路径与 edits', () => {
     const timeline = buildTimeline(
       [

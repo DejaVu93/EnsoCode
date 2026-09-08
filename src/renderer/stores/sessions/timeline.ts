@@ -498,9 +498,11 @@ function buildMessageTimeline(
                 : running
                   ? 'ok'
                   : 'error',
-            edits:
-              extractEdits(part.name, part.arguments) ??
-              extractHashlineDiff(part.name, result?.editDiff),
+            // 执行失败 = 文件没改，参数里的意图 diff 不能显示成已应用
+            edits: result?.isError
+              ? null
+              : (extractEdits(part.name, part.arguments) ??
+                extractHashlineDiff(part.name, result?.editDiff)),
             writeContent: extractWriteContent(part.name, part.arguments),
             todos: result?.todos ?? null,
             durationMs: result?.durationMs ?? null,
