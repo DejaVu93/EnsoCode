@@ -779,3 +779,25 @@ Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 re
 ### Status
 
 [OK] **Completed**
+[OK] **Completed**
+
+
+## Session 26: ask_user 问号等待态
+
+**Date**: 2026-09-08
+**Task**: ask_user 问号等待态
+**Branch**: `dev`
+
+### Summary
+
+完成三个桌面入口的琥珀色问号等待态，25例状态测试通过，typecheck与Biome通过。全量测试仍失败，用户明确授权先提交本功能，详见任务verification.md。未触碰其它任务修改。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `70ac0dd` | (see git log) |
+
+### Status
+
+[OK] **Completed**
