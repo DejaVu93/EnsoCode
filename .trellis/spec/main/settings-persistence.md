@@ -158,6 +158,11 @@ useSettingsStore.setState({ projects: next });
 - 大段文本（指令文件内容）→ `userData/instructions/<id>.md`，
   settings 里只存元数据。理由：settings.json 每次设置变更都整体重写，
   塞进几十 KB 文本会让每次写入都变重。
+- Changes 面板的编辑前快照 → `userData/changes-snapshots/<conversationId>.json`
+  （`services/changesSnapshots.ts`，IPC `changes:snapshots-*`，只收 uuid）。同理也**不进 localStorage**：
+  它曾随 `enso-side-panel` 一起 persist，实测单 key 长到 5.7 MB，zustand persist 每次 `set()`
+  都全量 `JSON.stringify` + 同步 `localStorage.setItem`，拖侧栏宽度都卡。已删会话的快照在首次 IPC
+  时按 `enso-conversations` 会话表清一次；会话表读不到或为空一律不删。
 
 ## 会话流式持久化的内存上限
 

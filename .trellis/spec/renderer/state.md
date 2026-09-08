@@ -1,6 +1,11 @@
 # 状态管理规范
 
-两个主 store：设置持久化的 `stores/settings/` 与会话元数据持久化的 `stores/sessions/`。右侧面板另有 `stores/sidePanel/`：dock 布局与各会话的开关/宽度 persist 到 localStorage，`fullscreen` 只活在内存里。
+两个主 store：设置持久化的 `stores/settings/` 与会话元数据持久化的 `stores/sessions/`。右侧面板另有 `stores/sidePanel/`：dock 布局与各会话的开关/宽度/Changes 模式 persist 到 localStorage，`fullscreen`、`browserHoles` 只活在内存里。
+
+`snapshotsByConversation`（Changes「Session」模式的编辑前全文）也是运行态：按会话 `loadSnapshots` 惰性从主进程回读，
+`saveSnapshots` 写内存 + IPC 落盘。会话键不存在 = 尚未回读，此时 `ChangesView` **不得聚合也不得保存**——否则用当前磁盘
+内容 reconstruct 出的 old 会盖掉磁盘上更早的快照；回读失败要标成已加载（空），不然面板永远空白。
+为什么不能 persist 见 [../main/settings-persistence.md](../main/settings-persistence.md) “不适合放这里的数据”。
 
 ```
 stores/settings/
