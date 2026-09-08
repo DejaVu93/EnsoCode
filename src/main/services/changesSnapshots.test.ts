@@ -8,8 +8,12 @@ const ID = '4aade2cb-d2a1-47c3-a4a2-848f28571a97';
 const OTHER_ID = '11111111-2222-3333-4444-555555555555';
 let tmp: string;
 
-beforeEach(() => { tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'enso-changes-')); });
-afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
+beforeEach(() => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'enso-changes-'));
+});
+afterEach(() => {
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
 
 describe('changesSnapshots', () => {
   it('文件不存在时返回空快照', () => {
