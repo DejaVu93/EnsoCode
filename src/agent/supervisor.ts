@@ -605,7 +605,7 @@ export class SessionSupervisor {
       this.options.emit({
         type: 'snapshot',
         sessions,
-        ...(command.sessionId ? { partial: true } : {}),
+        ...(command.sessionId ? { partial: true, sessionId: command.sessionId } : {}),
       });
       return;
     }

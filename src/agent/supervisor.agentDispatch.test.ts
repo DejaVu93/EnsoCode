@@ -280,6 +280,23 @@ describe('SessionSupervisor deterministic child lifecycle', () => {
       type: 'snapshot',
       sessions: [expect.objectContaining({ identity: parent, customEntries: [entry] })],
     });
+    expect(snapshot).not.toHaveProperty('sessionId');
+  });
+
+  it('targeted snapshot 带回请求的 sessionId，会话不在 worker 时 sessions 为空仍可路由', () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({ type: 'snapshot', sessionId: 'evicted' });
+    expect(events.at(-1)).toEqual({
+      type: 'snapshot',
+      sessions: [],
+      partial: true,
+      sessionId: 'evicted',
+    });
   });
 
   it('keeps ordinary coding prompts unchanged and only explicit message_main enters parent context', async () => {

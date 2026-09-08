@@ -988,7 +988,8 @@ export type AgentWorkerEvent =
       entry: AgentSessionCustomEntry;
     }
   | McpWorkerEvent
-  | { type: 'snapshot'; sessions: SessionSnapshot[]; partial?: boolean };
+  /** sessionId：targeted 快照回带请求目标；sessions 为空时 renderer 据此收回 started */
+  | { type: 'snapshot'; sessions: SessionSnapshot[]; partial?: boolean; sessionId?: string };
 
 /** MCP 连接旁路事件：无 identity/seq，不属于任何会话，Main 走独立 IPC 通道转发 */
 export type McpWorkerEvent =
