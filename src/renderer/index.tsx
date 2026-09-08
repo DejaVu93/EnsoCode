@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
+import { DiffWorkerPool } from './components/chat/DiffWorkerPool';
 import { useRemoteNodesStore } from './stores/remoteNodes';
 import { useSessionsStore } from './stores/sessions';
 import { useSettingsStore } from './stores/settings';
@@ -19,6 +20,8 @@ if (import.meta.env.DEV) {
 
 createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <DiffWorkerPool>
+      <App />
+    </DiffWorkerPool>
   </React.StrictMode>
 );

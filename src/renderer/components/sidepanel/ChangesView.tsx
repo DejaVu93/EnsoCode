@@ -242,7 +242,6 @@ export function ChangesView({
         ) : (
           <CodeView
             items={items}
-            disableWorkerPool
             style={CODE_VIEW_STYLE}
             options={CODE_VIEW_OPTIONS}
             renderCustomHeader={renderCustomHeader}

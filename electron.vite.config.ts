@@ -48,6 +48,8 @@ export default defineConfig({
         '@enso/pair': pairAlias,
       },
     },
+    // diff 高亮 worker（@pierre/diffs）含动态 import，iife 格式打不了，需 es
+    worker: { format: 'es' },
     build: {
       rollupOptions: {
         input: {

@@ -5,7 +5,7 @@ import { preloadHighlighter } from '@pierre/diffs';
 export const CODE_THEME = { dark: 'github-dark', light: 'github-light' } as const;
 
 /** 预热覆盖常见源码类型；未列出的语言回退纯文本 */
-const LANGS = [
+export const LANGS = [
   'markdown',
   'typescript',
   'tsx',
