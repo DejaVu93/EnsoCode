@@ -23,13 +23,22 @@ export function titleSummaryTimeoutMs(index: number): number {
   return TITLE_SUMMARY_TIMEOUTS_MS[clamped];
 }
 
-/** 句终标点：用于判断模型是否返回了一段叙述而非标题 */
-const SENTENCE_END = /[。．.！!？?]/g;
+/** 句终标点：用于判断模型是否返回了一段叙述而非标题。半角 . 只在后接空白/结尾时才算（v2.5 / dnd-kit.js 不是句号） */
+const SENTENCE_END = /[。．！!？?]|\.(?=\s|$)/g;
+/** CJK 句终标点：句中出现一次就是叙述（半角 . 不算——v2.5 / dnd-kit.js 里的点不是句号） */
+const CJK_SENTENCE_END = /[。！？]/;
+const CJK_CHAR = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff66-\uff9f\uac00-\ud7af]/g;
+/** 标题长度上限：prompt 要求 CJK < 20 字 / 英文 ~6 词，留两倍余量；再长就是方案复述不是标题 */
+const MAX_CJK_TITLE_CHARS = 40;
+const MAX_LATIN_TITLE_WORDS = 12;
 
 /**
  * 结果合法性守卫：extractTitle 之上再判“像不像标题”。返回 null 表示合法。
- * composer 类 agent 模型会把“输出标题”当任务去干，返回“继续排查…我先查看…”这种多句叙述；
- * 不拦下来会被截成烂标题当成功写回。判据：含 ≥ 2 个句终标点且最后一个标点后仍有内容。
+ * 模型不听 prompt 的三种真机形态，三条判据各拦一种：
+ * 1. composer 把“输出标题”当任务去干，返回“继续排查…我先查看…”多句叙述 → 含 ≥ 2 个句终标点且最后一个后仍有内容；
+ * 2. 滚动总结时模型先回答用户再接方案（“主侧栏。我会把…”）→ 句中出现 CJK 句细标点；
+ * 3. 模型把方案整段复述成一句（60 字无句号）→ 长度超上限。
+ * 不拦下来都会被截成烂标题当成功写回。
  */
 export function titleRejectReason(title: string): string | null {
   const trimmed = title.trim();
@@ -39,6 +48,15 @@ export function titleRejectReason(title: string): string | null {
     const last = ends[ends.length - 1];
     const lastIndex = last.index ?? -1;
     if (lastIndex >= 0 && lastIndex < trimmed.length - 1) return 'model did not return a title';
+  }
+  const cjkEnd = trimmed.search(CJK_SENTENCE_END);
+  if (cjkEnd >= 0 && cjkEnd < trimmed.length - 1) return 'model did not return a title';
+  const cjkCount = (trimmed.match(CJK_CHAR) ?? []).length;
+  const cjkDominant = cjkCount > 0 && cjkCount * 2 >= trimmed.replace(/\s+/g, '').length;
+  if (cjkDominant) {
+    if (trimmed.length > MAX_CJK_TITLE_CHARS) return 'model did not return a title';
+  } else if (trimmed.split(/\s+/).length > MAX_LATIN_TITLE_WORDS) {
+    return 'model did not return a title';
   }
   return null;
 }

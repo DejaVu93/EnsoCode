@@ -413,6 +413,36 @@ describe('titleRejectReason：结果像不像标题', () => {
       titleRejectReason('I will look at the code first. Then I will check the fix. Finally verify')
     ).toBe('model did not return a title');
   });
+
+  it('句中出现 CJK 句终标点（不在末尾）→ 叙述而非标题；半角 . 不算（v2.5 / dnd-kit.js）', () => {
+    // 真机 gpt-5.4-mini 滚动总结产出：首句是对用户的回答，后面接方案叙述
+    expect(
+      titleRejectReason('主侧栏。我会把会话列表和 CoworkerTabs 的标签都切到同一套 dnd-kit')
+    ).toBe('model did not return a title');
+    expect(titleRejectReason('修好了！接下来看登录页')).toBe('model did not return a title');
+    expect(titleRejectReason('升级 dnd-kit.js 到 v6.1')).toBeNull();
+  });
+
+  it('远超 prompt 要求的长度 → did not return a title（CJK > 40 字 / 其它 > 12 词）', () => {
+    // 真机 gpt-5.4-mini initial 产出：60 字的方案复述，只含一个句中逗号、无句终标点
+    expect(
+      titleRejectReason(
+        '用 dnd-kit 替换侧栏会话列表的 HTML5 拖拽，保留现有排序和交互语义，只改拖拽层实现，避免影响会话数据结构和列表渲染'
+      )
+    ).toBe('model did not return a title');
+    expect(
+      titleRejectReason(
+        'Replace the sidebar HTML5 drag and drop with dnd-kit while keeping ordering semantics intact and untouched'
+      )
+    ).toBe('model did not return a title');
+    // 边界：40 字 CJK / 12 词英文放过（prompt 要求 20 字 / 6 词，留两倍余量）
+    expect(titleRejectReason('字'.repeat(40))).toBeNull();
+    expect(titleRejectReason('字'.repeat(41))).toBe('model did not return a title');
+    expect(titleRejectReason(Array(12).fill('word').join(' '))).toBeNull();
+    expect(titleRejectReason(Array(13).fill('word').join(' '))).toBe('model did not return a title');
+    // 中英混排按 CJK 占比判：以中文为主的标题夹英文术语按字数算
+    expect(titleRejectReason('侧栏拖拽用 dnd-kit 改造')).toBeNull();
+  });
 });
 
 describe('describeTitleModel：人可读模型标识', () => {
