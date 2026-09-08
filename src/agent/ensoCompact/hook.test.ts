@@ -2,15 +2,87 @@ import { describe, expect, it } from 'vitest';
 import { createEnsoCompactFactory } from './extension';
 
 type Hook = (event: unknown, ctx: unknown) => unknown;
+type Result = { compaction?: { summary?: string; tokensBefore?: number } } | undefined;
+const answer = (text: string) => ({ content: [{ type: 'text', text }] });
+const promptText = (request: unknown) =>
+  ((request as { messages?: Array<{ content?: unknown }> }).messages ?? [])
+    .flatMap((m) =>
+      Array.isArray(m.content)
+        ? m.content
+            .filter((b: { type?: string }) => b.type === 'text')
+            .map((b: { text?: string }) => b.text ?? '')
+        : [String(m.content ?? '')]
+    )
+    .join('\n');
+const hookFor = (options: unknown) => {
+  let handler: Hook | undefined;
+  createEnsoCompactFactory(options as never)({
+    on(name: string, fn: (...args: never[]) => unknown) {
+      if (name === 'session_before_compact') handler = fn as Hook;
+    },
+  } as never);
+  return () => handler;
+};
+const bigMessages = () =>
+  Array.from({ length: 30 }, (_, i) => [
+    {
+      role: 'assistant',
+      content: [
+        { type: 'text', text: 'z'.repeat(3000) },
+        { type: 'toolCall', id: `r${i}`, name: 'read', arguments: { path: `${i}.ts` } },
+      ],
+    },
+    {
+      role: 'toolResult',
+      toolCallId: `r${i}`,
+      toolName: 'read',
+      content: [{ type: 'text', text: 'ok' }],
+    },
+  ]).flat();
+const isChunk = (prompt: string) => /CHUNK \d+\/\d+/.test(prompt) && !prompt.includes('IMMUTABLE');
+async function run(
+  messages: unknown[],
+  respond: (prompt: string) => unknown,
+  previousSummary?: string,
+  signal = new AbortController().signal
+) {
+  const handler = hookFor({ mode: 'fast', summaryModel: { provider: 'enso-test', id: 'cheap' } })();
+  const branch = Array.from({ length: 3 }, (_, i) => ({
+    type: 'message',
+    message: { role: 'user', content: `dummy-${i}` },
+  }));
+  const prompts: string[] = [];
+  const result = await handler?.(
+    {
+      reason: 'manual',
+      branchEntries: branch,
+      preparation: {
+        tokensBefore: 1000,
+        firstKeptEntryId: 'keep',
+        messagesToSummarize: messages,
+        previousSummary,
+      },
+      signal,
+    },
+    {
+      sessionManager: { getBranch: () => branch },
+      model: { id: 'session' },
+      modelRegistry: {
+        find: () => ({ id: 'cheap', provider: 'enso-test' }),
+        complete: async (_model: unknown, request: unknown) => {
+          const prompt = promptText(request);
+          prompts.push(prompt);
+          return respond(prompt);
+        },
+      },
+    }
+  );
+  return { prompts, result: result as Result };
+}
 
 describe('enso compact hook', () => {
   it('过短会话让出原生', async () => {
-    let handler: Hook | undefined;
-    createEnsoCompactFactory({ mode: 'balanced' })({
-      on(name: string, fn: (...args: never[]) => unknown) {
-        if (name === 'session_before_compact') handler = fn as Hook;
-      },
-    } as never);
+    const handler = hookFor({ mode: 'balanced' })();
     const result = await handler?.(
       {
         reason: 'manual',
@@ -25,17 +97,11 @@ describe('enso compact hook', () => {
     );
     expect(result).toBeUndefined();
   });
-
   it('手动 compact 不因占用低而让出，并交 fromHook 摘要', async () => {
-    let handler: Hook | undefined;
-    createEnsoCompactFactory({
+    const handler = hookFor({
       mode: 'fast',
       summaryModel: { provider: 'enso-test', id: 'cheap' },
-    })({
-      on(name: string, fn: (...args: never[]) => unknown) {
-        if (name === 'session_before_compact') handler = fn as Hook;
-      },
-    } as never);
+    })();
     const branch = [
       {
         type: 'message',
@@ -56,14 +122,95 @@ describe('enso compact hook', () => {
         model: { id: 'session' },
         modelRegistry: {
           find: () => ({ id: 'cheap', provider: 'enso-test' }),
-          complete: async () => ({
-            content: [{ type: 'text', text: '# Progress\n- started' }],
-          }),
+          complete: async () => answer('# Progress\n- started'),
         },
       }
-    )) as { compaction?: { summary?: string; tokensBefore?: number } } | undefined;
+    )) as Result;
     expect(result?.compaction?.tokensBefore).toBe(800);
     expect(result?.compaction?.summary).toMatch(/Goal/);
     expect(result?.compaction?.summary).toMatch(/dark mode/);
+  });
+  it('使用顶层消息全量正文和上次摘要', async () => {
+    const messages = [
+      { role: 'user', content: 'Goal: fix compaction' },
+      { role: 'assistant', content: [{ type: 'text', text: 'checked serialize' }] },
+      { role: 'user', content: 'LAST-USER-LINE' },
+    ];
+    const { prompts, result } = await run(
+      messages,
+      () => answer('## Goal\nfix\n## Progress\n### Done\n- [x] a'),
+      'PREV-SUMMARY-TEXT'
+    );
+    expect(prompts).toHaveLength(1);
+    for (const text of ['LAST-USER-LINE', 'checked serialize', 'PREV-SUMMARY-TEXT'])
+      expect(prompts[0]).toContain(text);
+    expect(result?.compaction?.summary).toContain('## Progress');
+  });
+  it('超出单趟预算时分块后组装', async () => {
+    const { prompts, result } = await run(bigMessages(), (prompt) =>
+      answer(
+        isChunk(prompt) ? '### CHUNK ok' : '## Goal\nassembled\n## Progress\n### Done\n- [x] a'
+      )
+    );
+    const chunks = prompts.filter(isChunk).length;
+    expect(prompts.length).toBe(chunks + 1);
+    expect(prompts.length).toBeGreaterThanOrEqual(3);
+    expect(result?.compaction?.summary).toContain('assembled');
+  });
+  it('首个分块失败仍返回摘要', async () => {
+    let failed = false;
+    const { result } = await run(bigMessages(), (prompt) => {
+      if (isChunk(prompt) && !failed) {
+        failed = true;
+        throw new Error('chunk failed');
+      }
+      return answer(isChunk(prompt) ? '### CHUNK ok' : '## Goal\nassembled\n## Progress');
+    });
+    expect(failed).toBe(true);
+    expect(result).toBeDefined();
+    expect(result?.compaction?.summary).toContain('## Goal');
+  });
+  it('组装失败时返回确定性摘要', async () => {
+    const { result } = await run(bigMessages(), (prompt) => {
+      if (!isChunk(prompt)) throw new Error('assemble failed');
+      return answer('### CHUNK ok');
+    });
+    expect(result?.compaction?.summary).toContain('## Goal');
+    expect(result?.compaction?.summary).toContain('## Progress');
+  });
+  it('显式空压缩区不回退到分支', async () => {
+    const { prompts, result } = await run([], () => answer('unexpected'));
+    expect(prompts).toHaveLength(0);
+    expect(result).toBeUndefined();
+  });
+  it('异常消息形状不会抛错', async () => {
+    const messages = [
+      { role: 'assistant' },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'x', name: 'read' }] },
+      { role: 'user', content: 'Goal: odd shapes' },
+    ];
+    const { result } = await run(messages, () => answer('## Goal\nodd\n## Progress'));
+    expect(result).toBeDefined();
+    expect(result?.compaction?.summary).toContain('Goal');
+  });
+  it('已取消时不返回兜底摘要', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { result } = await run(
+      [{ role: 'user', content: 'Goal: stop' }],
+      () => {
+        throw new Error('aborted');
+      },
+      undefined,
+      controller.signal
+    );
+    expect(result).toBeUndefined();
+  });
+  it('单趟模型空输出时返回确定性摘要', async () => {
+    const { result } = await run([{ role: 'user', content: 'Goal: empty output' }], () =>
+      answer('')
+    );
+    expect(result).toBeDefined();
+    expect(result?.compaction?.summary).toContain('## Goal');
   });
 });
