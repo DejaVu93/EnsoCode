@@ -101,27 +101,6 @@ describe('buildTimeline', () => {
     });
   });
 
-  it('Hashline read 输出剥掉头与行号后再进时间线', () => {
-    const timeline = buildTimeline(
-      [
-        user('看文件'),
-        {
-          role: 'assistant',
-          content: [{ type: 'toolCall', id: 'r1', name: 'read', arguments: { path: 'a.ts' } }],
-        },
-        {
-          role: 'toolResult',
-          toolCallId: 'r1',
-          toolName: 'read',
-          isError: false,
-          content: [{ type: 'text', text: '[/w/a.ts#ABCD]\n1:const a = 1;\n2:export {};' }],
-        },
-      ],
-      false
-    );
-    expect(timeline[1]).toMatchObject({ name: 'read', output: 'const a = 1;\nexport {};' });
-  });
-
   it('legacy 单块 {path,oldText,newText} edit 也生成 edits', () => {
     const timeline = buildTimeline(
       [

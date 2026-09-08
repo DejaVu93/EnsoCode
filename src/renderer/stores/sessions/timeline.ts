@@ -1,4 +1,3 @@
-import { stripHashlineRead } from '@shared/hashlineRead';
 import type {
   AgentSessionCustomEntry,
   ApprovalRequestInfo,
@@ -328,10 +327,7 @@ function buildMessageTimeline(
   for (const message of messages) {
     if (message.role === 'toolResult' && message.toolCallId) {
       results.set(message.toolCallId, {
-        output:
-          message.toolName === 'read' && message.isError !== true
-            ? stripHashlineRead(partText(message))
-            : partText(message),
+        output: partText(message),
         isError: message.isError === true,
         todos: message.todos ?? null,
         durationMs: message.toolDurationMs ?? null,
