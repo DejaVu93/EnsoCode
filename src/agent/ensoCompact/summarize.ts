@@ -11,6 +11,7 @@ export const SUMMARY_SECTIONS: readonly string[] = [
   '## Files Read',
   '## Next Steps',
   '## Critical Context',
+  '## Evicted from context',
 ];
 
 const FORMAT = `## Goal
@@ -157,7 +158,11 @@ export function assembleFallback(
   return parts.join('\n\n');
 }
 
-export function patchCompactSummary(summary: string, facts: CompactFacts): string {
+export function patchCompactSummary(
+  summary: string,
+  facts: CompactFacts,
+  evicted: ReadonlyArray<{ label: string; tokens: number }> = []
+): string {
   const parts: string[] = [summary.trim()].filter(Boolean);
   if (facts.goal && !hasSection(summary, 'Goal') && !summary.includes(facts.goal)) {
     parts.push(`## Goal\n${facts.goal}`);
@@ -182,6 +187,13 @@ export function patchCompactSummary(summary: string, facts: CompactFacts): strin
   if (facts.modifiedFiles.length > 0 && !hasSection(summary, 'Files Modified')) {
     const missing = facts.modifiedFiles.filter((f) => !summary.includes(f));
     if (missing.length) parts.push(`## Files Modified\n${list(missing)}`);
+  }
+  if (evicted.length > 0 && !hasSection(summary, 'Evicted from context')) {
+    parts.push(
+      `## Evicted from context\n${list(
+        evicted.map((item) => `${item.label} (~${item.tokens} tokens; re-read if needed)`)
+      )}`
+    );
   }
   return parts.join('\n\n').trim();
 }

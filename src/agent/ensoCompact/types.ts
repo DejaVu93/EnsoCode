@@ -4,12 +4,21 @@ import type { convertToLlm } from '@earendil-works/pi-coding-agent';
 export type AgentMessage = Parameters<typeof convertToLlm>[0][number];
 
 export interface CompactBranchEntry {
+  id?: string;
   type?: string;
   message?: {
     role?: string;
     content?: unknown;
     toolCallId?: string;
     tool_call_id?: string;
+    usage?: {
+      totalTokens?: number;
+      input?: number;
+      output?: number;
+      cacheRead?: number;
+      cacheWrite?: number;
+    };
+    stopReason?: string;
   };
 }
 

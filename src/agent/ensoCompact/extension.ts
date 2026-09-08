@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { type EvictedItem, selectKeptBoundary } from './budget';
 import { BUDGETS, type CompactMode, chunkMessages, type MessageChunk } from './chunk';
 import { extractCompactFacts } from './extract';
 import {
@@ -100,6 +101,7 @@ async function summarizeHierarchical(
 }
 
 export function createEnsoCompactFactory(options: EnsoCompactOptions = {}) {
+  const lastEstimatedAfter = new WeakMap<object, number>();
   return (pi: ExtensionAPI) => {
     pi.on('session_before_compact', async (event, ctx) => {
       const branch = asEntries(event.branchEntries ?? ctx.sessionManager.getBranch());
@@ -120,11 +122,30 @@ export function createEnsoCompactFactory(options: EnsoCompactOptions = {}) {
       const mode: CompactMode = options.mode ?? 'auto';
       const budget = BUDGETS[mode];
       const previousSummary = preparation.previousSummary;
+      let keptId = firstKeptEntryId;
+      let evicted: EvictedItem[] = [];
+      const origin = branch.findIndex((entry) => entry.id === firstKeptEntryId);
+      // 切点对不上 branch id 时不改（旧测试/无 id 会话），避免误 cancel
+      if (origin >= 0) {
+        const cut = selectKeptBoundary({
+          branch,
+          preparation: { firstKeptEntryId, previousSummary, tokensBefore },
+          contextWindow: ctx.model?.contextWindow,
+          previousEstimatedAfter: lastEstimatedAfter.get(ctx.sessionManager),
+        });
+        if ('fail' in cut) return { cancel: true };
+        keptId = cut.firstKeptEntryId;
+        evicted = cut.evicted;
+        lastEstimatedAfter.set(ctx.sessionManager, cut.estimatedAfter);
+      }
+      const keptIndex = branch.findIndex((entry) => entry.id === keptId);
+      const extra = origin >= 0 && keptIndex > origin ? branch.slice(origin, keptIndex) : [];
       let prepared: { facts: CompactFacts; transcript: string; chunks: MessageChunk[] };
       try {
-        const pruned = pruneMessages(
-          messagesToSummarize(preparation.messagesToSummarize, branch, mode)
-        );
+        const pruned = pruneMessages([
+          ...messagesToSummarize(preparation.messagesToSummarize, branch, mode),
+          ...normalizeMessages(extra),
+        ]);
         if (pruned.length === 0) return;
         const transcript = serializeMessages(pruned);
         const single = estimateTextTokens(transcript) < budget.singlePassMaxTokens;
@@ -170,8 +191,8 @@ export function createEnsoCompactFactory(options: EnsoCompactOptions = {}) {
         if (signal.aborted || !drafted) return;
         return {
           compaction: {
-            summary: patchCompactSummary(drafted, facts),
-            firstKeptEntryId,
+            summary: patchCompactSummary(drafted, facts, evicted),
+            firstKeptEntryId: keptId,
             tokensBefore,
           },
         };

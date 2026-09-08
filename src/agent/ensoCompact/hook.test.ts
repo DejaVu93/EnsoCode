@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { sendBudget } from './budget';
 import { createEnsoCompactFactory } from './extension';
 
 type Hook = (event: unknown, ctx: unknown) => unknown;
@@ -212,5 +213,93 @@ describe('enso compact hook', () => {
     );
     expect(result).toBeDefined();
     expect(result?.compaction?.summary).toContain('## Goal');
+  });
+  it('overflow 图片超预算时推进切点并记录移出内容', async () => {
+    const contextWindow = 19_384;
+    const branch = [
+      {
+        id: 'call',
+        type: 'message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'img', name: 'read', arguments: { path: 'shot.jpg' } }],
+        },
+      },
+      {
+        id: 'result',
+        type: 'message',
+        message: {
+          role: 'toolResult',
+          toolCallId: 'img',
+          toolName: 'read',
+          content: [{ type: 'image', data: 'x'.repeat((sendBudget(contextWindow) + 1) * 4) }],
+        },
+      },
+      { id: 'later', type: 'message', message: { role: 'user', content: 'look' } },
+    ];
+    const prompts: string[] = [];
+    const handler = hookFor({
+      mode: 'fast',
+      summaryModel: { provider: 'enso-test', id: 'cheap' },
+    })();
+    const result = (await handler?.(
+      {
+        reason: 'overflow',
+        branchEntries: branch,
+        preparation: {
+          tokensBefore: 5_000,
+          firstKeptEntryId: 'call',
+          messagesToSummarize: [{ role: 'user', content: 'dummy' }],
+        },
+        signal: new AbortController().signal,
+      },
+      {
+        sessionManager: { getBranch: () => branch },
+        model: { id: 'session', contextWindow },
+        modelRegistry: {
+          find: () => ({ id: 'cheap', provider: 'enso-test' }),
+          complete: async (_model: unknown, request: unknown) => {
+            prompts.push(promptText(request));
+            return answer('## Goal\nimage\n## Progress');
+          },
+        },
+      }
+    )) as { compaction?: { firstKeptEntryId?: string; summary?: string } };
+    expect(result.compaction?.firstKeptEntryId).toBe('later');
+    expect([result.compaction?.summary, ...prompts].join('\n')).toMatch(
+      /## Evicted from context|shot\.jpg|read image/
+    );
+  });
+  it('overflow 的最小尾巴仍超预算时明确取消', async () => {
+    const branch = [
+      { id: 'old-1', type: 'message', message: { role: 'user', content: 'old' } },
+      { id: 'old-2', type: 'message', message: { role: 'assistant', content: 'old' } },
+      { id: 'last', type: 'message', message: { role: 'user', content: 'x'.repeat(100) } },
+    ];
+    const handler = hookFor({
+      mode: 'fast',
+      summaryModel: { provider: 'enso-test', id: 'cheap' },
+    })();
+    const result = await handler?.(
+      {
+        reason: 'overflow',
+        branchEntries: branch,
+        preparation: {
+          tokensBefore: 5_000,
+          firstKeptEntryId: 'last',
+          messagesToSummarize: [{ role: 'user', content: 'dummy' }],
+        },
+        signal: new AbortController().signal,
+      },
+      {
+        sessionManager: { getBranch: () => branch },
+        model: { id: 'session', contextWindow: 16_384 },
+        modelRegistry: {
+          find: () => ({ id: 'cheap', provider: 'enso-test' }),
+          complete: async () => answer('## Goal\nno\n## Progress'),
+        },
+      }
+    );
+    expect(result).toEqual({ cancel: true });
   });
 });
