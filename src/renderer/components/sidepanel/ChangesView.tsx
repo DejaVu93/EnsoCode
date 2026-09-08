@@ -29,6 +29,11 @@ const CODE_VIEW_OPTIONS = {
 
 const CODE_VIEW_STYLE = { height: '100%', overflow: 'auto' } as const;
 
+const NO_FILES: { files: never[]; snapshots: Record<string, string> } = {
+  files: [],
+  snapshots: {},
+};
+
 function resolvePath(root: string | undefined, rel: string): string | null {
   if (!rel) return null;
   if (rel.startsWith('/') || /^[A-Za-z]:[\\/]/.test(rel)) return rel;
@@ -46,8 +51,10 @@ export function ChangesView({
   const { t } = useI18n();
   const mode = useSidePanelStore((s) => s.changesModeByConversation[conversationId]) ?? 'all';
   const setMode = useSidePanelStore((s) => s.setChangesMode);
-  const snapshots = useSidePanelStore((s) => s.snapshotsByConversation[conversationId]) ?? {};
+  // undefined = 尚未从主进程回读；回读前不聚合、不保存，否则 reconstruct 结果会盖掉磁盘上更早的快照
+  const snapshots = useSidePanelStore((s) => s.snapshotsByConversation[conversationId]);
   const saveSnapshots = useSidePanelStore((s) => s.saveSnapshots);
+  const loadSnapshots = useSidePanelStore((s) => s.loadSnapshots);
 
   const conversation = useSessionsStore((s) => s.conversations[conversationId]);
   const project = useSettingsStore((s) => s.projects.find((item) => item.id === projectId));
@@ -95,6 +102,10 @@ export function ChangesView({
   }, []);
 
   useEffect(() => {
+    if (mode === 'all') loadSnapshots(conversationId);
+  }, [conversationId, loadSnapshots, mode]);
+
+  useEffect(() => {
     if (mode !== 'all') return;
     const paths = [...new Set(tools.map((tool) => tool.path))];
     let alive = true;
@@ -115,12 +126,12 @@ export function ChangesView({
   }, [mode, root, tools]);
 
   const allResult = useMemo(
-    () => aggregateSessionChanges({ tools, snapshots, currentByPath }),
+    () => (snapshots ? aggregateSessionChanges({ tools, snapshots, currentByPath }) : NO_FILES),
     [tools, snapshots, currentByPath]
   );
 
   useEffect(() => {
-    if (mode !== 'all') return;
+    if (mode !== 'all' || !snapshots) return;
     const next = allResult.snapshots;
     const keys = Object.keys(next);
     if (
