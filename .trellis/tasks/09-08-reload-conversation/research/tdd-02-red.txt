@@ -1,0 +1,67 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90mD:/WORK/EnsoCode[39m
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2m手动重读活动会话返回水位且不触发模型执行
+[22m[39m[spawn] parent total 23ms (tools 1ms, mcp 0 tools, cwd /workspace)
+
+ [31m❯[39m src/agent/supervisor.agentDispatch.test.ts [2m([22m[2m13 tests[22m[2m | [22m[31m2 failed[39m[2m | [22m[33m11 skipped[39m[2m)[22m[32m 120[2mms[22m[39m
+     [2m[90m↓[39m[22m emits real parent/child ready, enforces locked tools, and prompts the child exactly once
+[31m     [31m×[31m 手动重读活动会话返回水位且不触发模型执行[39m[32m 105[2mms[22m[39m
+[31m     [31m×[31m 手动重读不存在的会话返回明确失败而不创建会话[39m[32m 7[2mms[22m[39m
+     [2m[90m↓[39m[22m persists custom entries outside buildSessionContext and restores them in snapshot
+     [2m[90m↓[39m[22m keeps ordinary coding prompts unchanged and only explicit message_main enters parent context
+     [2m[90m↓[39m[22m idle 投影但 pi 仍在 streaming（agent_end 尚未回流）：等空闲后按新轮 prompt，不 steer
+     [2m[90m↓[39m[22m idle 投影但 pi 僵尸轮永不空闲：限时后按失败收口，绝不静默 steer
+     [2m[90m↓[39m[22m worker 中不存在的会话收到 prompt：发 parent-rejected 而非静默丢弃
+     [2m[90m↓[39m[22m dismiss-coworker 遥控解雇 worker 直雇 coworker：exact 父代执行，旧代拒绝
+     [2m[90m↓[39m[22m resume-coworker 恢复工具直雇 coworker；容量对 resume 豁免，新雇仍卡上限
+     [2m[90m↓[39m[22m rejects an ordinary exact profile when a configured MCP fails to establish
+     [2m[90m↓[39m[22m releases an idle unpinned parent after the TTL and keeps the pinned one
+     [2m[90m↓[39m[22m a running turn resets the idle clock
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/agent/supervisor.agentDispatch.test.ts > SessionSupervisor deterministic child lifecycle > 手动重读活动会话返回水位且不触发模型执行
+AssertionError: expected [Function] to not throw an error but 'TypeError: Cannot read properties of …' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"TypeError: Cannot read properties of undefined (reading 'sessionId')"
+
+ ❯ src/agent/supervisor.agentDispatch.test.ts:248:128
+    246|     supervisor.handleCommand({ type: 'spawn-parent', identity: parent,…
+    247|     await waitFor(events, 'parent-ready');
+    248|     expect(() => supervisor.handleCommand({ type: 'reload-session', re…
+       |                                                                                                                                ^
+    249|     expect(events.findLast((event) => event.type === 'session-reloaded…
+    250|       requestId: 'manual-1', result: { ok: true, seq: expect.any(Numbe…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/agent/supervisor.agentDispatch.test.ts > SessionSupervisor deterministic child lifecycle > 手动重读不存在的会话返回明确失败而不创建会话
+AssertionError: expected [Function] to not throw an error but 'TypeError: Cannot read properties of …' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"TypeError: Cannot read properties of undefined (reading 'sessionId')"
+
+ ❯ src/agent/supervisor.agentDispatch.test.ts:261:121
+    259|       sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    260|     });
+    261|     expect(() => supervisor.handleCommand({ type: 'reload-session', re…
+       |                                                                                                                         ^
+    262|     expect(events).toContainEqual({ type: 'session-reloaded', requestI…
+    263|     expect(mocks.sessions).toHaveLength(0);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[33m11 skipped[39m[90m (13)[39m
+[2m   Start at [22m 10:05:46
+[2m   Duration [22m 7.35s[2m (transform 2.28s, setup 0ms, import 6.87s, tests 120ms, environment 0ms)[22m
+

@@ -1,0 +1,44 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90mD:/WORK/EnsoCode[39m
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2memits real parent/child ready, enforces locked tools, and prompts the child exactly once
+[22m[39m[spawn] parent total 8ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2m手动重读活动会话返回水位且不触发模型执行
+[22m[39m[spawn] parent total 1ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2mpersists custom entries outside buildSessionContext and restores them in snapshot
+[22m[39m[spawn] parent total 1ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2mkeeps ordinary coding prompts unchanged and only explicit message_main enters parent context
+[22m[39m[spawn] parent total 2ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2midle 投影但 pi 仍在 streaming（agent_end 尚未回流）：等空闲后按新轮 prompt，不 steer
+[22m[39m[spawn] parent total 1ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2midle 投影但 pi 僵尸轮永不空闲：限时后按失败收口，绝不静默 steer
+[22m[39m[spawn] parent total 1ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2mdismiss-coworker 遥控解雇 worker 直雇 coworker：exact 父代执行，旧代拒绝
+[22m[39m[spawn] parent total 2ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2mresume-coworker 恢复工具直雇 coworker；容量对 resume 豁免，新雇仍卡上限
+[22m[39m[spawn] parent total 3ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor deterministic child lifecycle[2m > [22m[2mrejects an ordinary exact profile when a configured MCP fails to establish
+[22m[39m[spawn] parent total 1ms (tools 0ms, mcp 0 tools, cwd /workspace)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor idle eviction[2m > [22m[2mreleases an idle unpinned parent after the TTL and keeps the pinned one
+[22m[39m[spawn] parent total 0ms (tools 0ms, mcp 0 tools, cwd /w)
+[spawn] other total 0ms (tools 0ms, mcp 0 tools, cwd /w)
+
+[90mstdout[2m | src/agent/supervisor.agentDispatch.test.ts[2m > [22m[2mSessionSupervisor idle eviction[2m > [22m[2ma running turn resets the idle clock
+[22m[39m[spawn] parent total 0ms (tools 0ms, mcp 0 tools, cwd /w)
+
+ [32m✓[39m src/agent/supervisor.agentDispatch.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 191[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m13 passed[39m[22m[90m (13)[39m
+[2m   Start at [22m 10:06:16
+[2m   Duration [22m 4.82s[2m (transform 1.17s, setup 0ms, import 4.31s, tests 191ms, environment 0ms)[22m
+

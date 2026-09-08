@@ -1,0 +1,6 @@
+
+[2m Test Files [22m [1m[32m1 passed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[32m7 passed[39m[22m[90m (7)[39m
+[2m   Start at [22m 14:49:20
+[2m   Duration [22m 284ms[2m (transform 33ms, setup 0ms, import 99ms, tests 4ms, environment 0ms)[22m
+

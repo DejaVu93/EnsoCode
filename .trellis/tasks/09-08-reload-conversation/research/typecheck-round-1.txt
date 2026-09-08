@@ -1,0 +1,8 @@
+
+> enso-code@0.1.21 typecheck D:\WORK\EnsoCode
+> tsc --noEmit
+
+src/main/ipc/agent.ts(460,25): error TS2345: Argument of type '{ type: "parent-ready"; identity: SessionIdentity; seq: number; sessionFile: string; model: ModelRef; } | { type: "model-changed"; identity: SessionIdentity; seq: number; model: ModelRef; } | ... 32 more ... | { ...; }' is not assignable to parameter of type 'RendererAgentEvent'.
+  Type '{ type: "session-reloaded"; requestId: string; result: SessionReloadResult; }' is not assignable to type 'RendererAgentEvent'.
+    Type '{ type: "session-reloaded"; requestId: string; result: SessionReloadResult; }' is missing the following properties from type '{ type: "browser-invoke"; identity: ChildSessionIdentity | SessionIdentity; seq: number; requestId: string; op: "bounding_box" | "cdp" | "click" | ... 13 more ... | "type"; params: unknown; }': identity, seq, op, params
+ ELIFECYCLE  Command failed with exit code 1.
