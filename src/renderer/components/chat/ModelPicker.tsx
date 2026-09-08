@@ -1,11 +1,18 @@
-import { resolveCustomModelView } from '@shared/modelCatalog';
+import { pickModelCapabilityOverrides, resolveCustomModelView } from '@shared/modelCatalog';
 import { clampProjectThinkingLevel, visibleThinkingLevels } from '@shared/modelThinking';
 import { CUSTOM_VENDOR_ID, groupProviders } from '@shared/providerGroups';
-import type { ModelEntry, ModelMeta, ModelProvider, OauthProviderInfo } from '@shared/types';
-import type { ThinkingLevel } from '@shared/types/agent';
+import type {
+  ModelCapabilityOverrides,
+  ModelEntry,
+  ModelMeta,
+  ModelProvider,
+  OauthProviderInfo,
+} from '@shared/types';
+import { THINKING_LEVELS, type ThinkingLevel } from '@shared/types/agent';
 import { BadgeCheck, Brain, Check, ChevronDown, KeyRound } from 'lucide-react';
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Menu,
   MenuGroup,
@@ -39,6 +46,44 @@ export function persistClampedThinkingLevel(
 ): ThinkingLevel | undefined {
   const next = clampProjectThinkingLevel(level, declared);
   return next === level ? undefined : next;
+}
+
+/** 展示复用运行时能力分层；乐观默认可以预览，但不能当成已知支持集回写。 */
+export function resolvePickerCapabilities(
+  provider: ModelProvider | undefined,
+  row: ModelEntry | undefined,
+  meta: ModelMeta | undefined,
+  overrides?: ModelCapabilityOverrides
+): {
+  reasoning: boolean | undefined;
+  thinkingLevels: ThinkingLevel[] | undefined;
+  declaredThinkingLevels: ThinkingLevel[] | undefined;
+} {
+  const knownMeta = meta?.source === 'unknown' ? undefined : meta;
+  if (provider?.oauthAccountKey) {
+    return {
+      reasoning: knownMeta?.reasoning,
+      thinkingLevels: knownMeta?.thinkingLevels,
+      declaredThinkingLevels: knownMeta?.thinkingLevels,
+    };
+  }
+  const view = resolveCustomModelView({ ...row, ...pickModelCapabilityOverrides(overrides) }, meta);
+  // 子模型的深度是可编辑覆盖，不是不可突破的模型能力上限；选低档不能删掉更高档入口。
+  if (overrides !== undefined) {
+    return {
+      reasoning: view.reasoning,
+      thinkingLevels: [...THINKING_LEVELS],
+      declaredThinkingLevels: undefined,
+    };
+  }
+  return {
+    reasoning: view.reasoning,
+    thinkingLevels: view.thinkingLevels,
+    declaredThinkingLevels:
+      view.source.thinkingLevel === 'override' || knownMeta?.thinkingLevels !== undefined
+        ? view.thinkingLevels
+        : undefined,
+  };
 }
 
 /** 档位显示文案的 t() key（不是已翻译文本）；沿用既有英文短词，字典里已配好中文译文 */
@@ -102,6 +147,11 @@ interface ModelPickerProps {
   modelId: string;
   reasoningEnabled: boolean;
   thinkingLevel: ThinkingLevel;
+  /** 子模型三态；不传时保留主会话的二态开关。 */
+  reasoningMode?: 'follow' | 'on' | 'off';
+  onReasoningModeChange?: (mode: 'follow' | 'on' | 'off', level: ThinkingLevel) => void;
+  /** 仅当前选中自定义模型的条目覆盖；OAuth 能力仍以 catalog 为准。 */
+  modelCapabilityOverrides?: ModelCapabilityOverrides;
   /** 仅需 provider/account/model 级联的场景可隐藏 reasoning/thinking。 */
   showReasoningControls?: boolean;
   /** 仅会话工具行：响应全局「切换模型」快捷键并聚焦搜索框 */
@@ -401,6 +451,9 @@ export function ModelPicker({
   modelId,
   reasoningEnabled,
   thinkingLevel,
+  modelCapabilityOverrides,
+  reasoningMode,
+  onReasoningModeChange,
   showReasoningControls = true,
   listenHotkey = false,
   onSelect,
@@ -412,6 +465,8 @@ export function ModelPicker({
   const { t } = useI18n();
   const normalizeReasoning = onReasoningNormalize ?? onReasoningChange;
   const normalizeThinking = onThinkingNormalize ?? onThinkingChange;
+  const reasoningInherited = reasoningMode === 'follow';
+  const thinkingInherited = reasoningMode !== undefined && !modelCapabilityOverrides?.thinkingLevel;
   const [open, setOpen] = useState(false);
   const [keyword, setKeyword] = useState('');
   const openSubmenuIdsRef = useRef(new Set<string>());
@@ -564,20 +619,50 @@ export function ModelPicker({
       onSelect(targetProviderId, targetModelId);
       // 同一次交互内钳位:目标模型已知的支持档集若不含当前档,自动降到最近支持档并回写
       const meta = metaByProvider[targetProviderId]?.[targetModelId];
-      const persisted = persistClampedThinkingLevel(thinkingLevel, meta?.thinkingLevels);
-      if (persisted) normalizeThinking(persisted);
+      const provider = providers.find((entry) => entry.id === targetProviderId);
+      const row = provider?.models.find((entry) => entry.id === targetModelId);
+      const capability = resolvePickerCapabilities(
+        provider,
+        row,
+        meta,
+        // 切模型只替换 provider/model id，条目覆盖仍保留；归一化必须按切换后的同一份覆盖计算。
+        modelCapabilityOverrides
+      );
+      const persisted = persistClampedThinkingLevel(
+        thinkingLevel,
+        capability.declaredThinkingLevels
+      );
+      if (persisted && !thinkingInherited) normalizeThinking(persisted);
       setOpen(false);
     },
-    [onSelect, metaByProvider, thinkingLevel, normalizeThinking]
+    [
+      onSelect,
+      providers,
+      modelCapabilityOverrides,
+      metaByProvider,
+      thinkingLevel,
+      thinkingInherited,
+      normalizeThinking,
+    ]
   );
 
   const currentProviderMeta = useModelMeta(currentProvider);
   const currentModelMeta = currentProviderMeta[modelId];
-  const supportedLevels = currentModelMeta?.thinkingLevels;
+  const capability = useMemo(
+    () =>
+      resolvePickerCapabilities(
+        currentProvider,
+        current,
+        currentModelMeta,
+        modelCapabilityOverrides
+      ),
+    [currentProvider, current, currentModelMeta, modelCapabilityOverrides]
+  );
+  const supportedLevels = capability.thinkingLevels;
   const visibleLevels = useMemo(() => visibleThinkingLevels(supportedLevels), [supportedLevels]);
-  const reasoningUnsupported =
-    currentModelMeta?.reasoning === false || supportedLevels?.length === 0;
-  const displayedReasoningEnabled = reasoningUnsupported ? false : reasoningEnabled;
+  const reasoningUnsupported = capability.reasoning === false || supportedLevels?.length === 0;
+  const displayedReasoningEnabled =
+    !reasoningUnsupported && (reasoningMode ? reasoningMode === 'on' : reasoningEnabled);
   const displayedThinkingLevel =
     visibleLevels.length > 0
       ? clampProjectThinkingLevel(thinkingLevel, visibleLevels)
@@ -596,20 +681,20 @@ export function ModelPicker({
    * 配合这个判断，每次 meta 到位最多触发一次修正性 setState，不会死循环。
    */
   useEffect(() => {
-    if (!currentModelMeta) return;
     if (reasoningUnsupported) {
-      if (reasoningEnabled) normalizeReasoning(false);
+      if (reasoningEnabled && !reasoningInherited) normalizeReasoning(false);
       return;
     }
     if (!reasoningEnabled) return;
-    const persisted = persistClampedThinkingLevel(thinkingLevel, supportedLevels);
-    if (persisted) normalizeThinking(persisted);
+    const persisted = persistClampedThinkingLevel(thinkingLevel, capability.declaredThinkingLevels);
+    if (persisted && !thinkingInherited) normalizeThinking(persisted);
   }, [
-    currentModelMeta,
+    capability.declaredThinkingLevels,
     reasoningUnsupported,
-    supportedLevels,
     reasoningEnabled,
+    reasoningInherited,
     thinkingLevel,
+    thinkingInherited,
     normalizeReasoning,
     normalizeThinking,
   ]);
@@ -646,12 +731,19 @@ export function ModelPicker({
         title={current?.label ?? modelId ?? t('Model')}
       >
         <span className="min-w-0 truncate">{current?.label ?? modelId ?? t('Model')}</span>
-        {displayedReasoningEnabled && (
+        {showReasoningControls && reasoningMode ? (
+          <span className="shrink-0 text-[10px]" data-reasoning-summary={reasoningMode}>
+            {t(
+              reasoningMode === 'follow' ? 'Follow parent' : reasoningMode === 'on' ? 'On' : 'Off'
+            )}
+            {reasoningMode === 'on' && ` · ${t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}`}
+          </span>
+        ) : displayedReasoningEnabled ? (
           <span className="flex shrink-0 items-center gap-0.5 text-primary">
             <Brain className="h-3 w-3" />
             {t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}
           </span>
-        )}
+        ) : null}
         <ChevronDown className="h-3 w-3 shrink-0" />
       </MenuTrigger>
       <MenuPopup data-model-picker="root" side="top" align="start" className="w-80">
@@ -792,50 +884,86 @@ export function ModelPicker({
                 <Brain className="h-3.5 w-3.5 text-muted-foreground" />
                 {t('Reasoning')}
               </span>
-              <Switch
-                tabIndex={-1}
-                checked={displayedReasoningEnabled}
-                onCheckedChange={onReasoningChange}
-                disabled={reasoningUnsupported}
-              />
+              {!reasoningMode && (
+                <Switch
+                  tabIndex={-1}
+                  aria-label={t('Reasoning')}
+                  checked={displayedReasoningEnabled}
+                  onCheckedChange={onReasoningChange}
+                  disabled={reasoningUnsupported}
+                />
+              )}
             </div>
-            {reasoningUnsupported && (
+            {reasoningMode && (
+              <div className="mt-2 flex gap-1" role="group" aria-label={t('Reasoning')}>
+                {(['follow', 'on', 'off'] as const).map((mode) => (
+                  <Button
+                    key={mode}
+                    type="button"
+                    size="sm"
+                    variant={reasoningMode === mode ? 'default' : 'outline'}
+                    className="h-7 flex-1 px-2 text-xs"
+                    aria-pressed={reasoningMode === mode}
+                    data-reasoning-mode={mode}
+                    disabled={
+                      mode === 'on' && !!currentProvider?.oauthAccountKey && reasoningUnsupported
+                    }
+                    onClick={() => onReasoningModeChange?.(mode, displayedThinkingLevel)}
+                  >
+                    {t(mode === 'follow' ? 'Follow parent' : mode === 'on' ? 'On' : 'Off')}
+                  </Button>
+                ))}
+              </div>
+            )}
+            {reasoningUnsupported && (!reasoningMode || !!currentProvider?.oauthAccountKey) && (
               <p className="mt-1 text-[10px] text-muted-foreground/70">
                 {t('{{model}} does not support reasoning', { model: current?.label ?? modelId })}
               </p>
             )}
 
+            {reasoningMode === 'on' && displayedReasoningEnabled && (
+              <p className="mt-2 text-xs">
+                {t('Depth: {{level}}', { level: t(LEVEL_LABEL_KEYS[displayedThinkingLevel]) })}
+              </p>
+            )}
             {displayedReasoningEnabled && visibleLevels.length > 0 && (
               <div className="mt-3">
                 <Slider
                   tabIndex={-1}
+                  aria-label={t('Thinking level')}
+                  thumbAlignment="center"
+                  className="[&_[data-slot=slider-indicator]]:ms-0 [&_[data-slot=slider-track]]:before:inset-x-0"
                   min={0}
-                  max={visibleLevels.length - 1}
+                  max={Math.max(1, visibleLevels.length - 1)}
                   step={1}
                   value={levelIndex}
+                  disabled={visibleLevels.length === 1}
                   onValueChange={(value) => {
                     const index = Array.isArray(value) ? value[0] : value;
                     const target = visibleLevels[index] ?? visibleLevels[0];
                     onThinkingChange(target);
                   }}
                 />
-                <div className="mt-1 flex justify-between gap-0">
+                <div className="relative mt-1 h-6">
                   {visibleLevels.map((entry, index) => (
                     <button
                       key={entry}
                       type="button"
                       tabIndex={-1}
+                      data-thinking-tick={entry}
+                      style={{
+                        left: `${(index / Math.max(1, visibleLevels.length - 1)) * 100}%`,
+                      }}
                       onClick={() => onThinkingChange(entry)}
-                      className={cn(
-                        'flex min-w-0 flex-1 flex-col items-center gap-0',
-                        index === 0 && 'items-start',
-                        index === visibleLevels.length - 1 && 'items-end'
-                      )}
+                      className="absolute top-0 flex w-0 flex-col items-center"
                     >
-                      <span className="h-1.5 w-px bg-muted-foreground/40" />
+                      <span className="h-1.5 w-px shrink-0 bg-muted-foreground/40" />
                       <span
                         className={cn(
-                          'text-[10px] transition-colors',
+                          'whitespace-nowrap text-[10px] transition-colors',
+                          index === 0
+                            ? 'self-start'
+                            : index === visibleLevels.length - 1 && 'self-end',
                           entry === displayedThinkingLevel
                             ? 'font-medium text-primary'
                             : 'text-muted-foreground/70 hover:text-foreground'

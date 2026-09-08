@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/testing.md", "reason": "逻辑改动 TDD 与隔离验证"}
+{"file": ".trellis/spec/renderer/state.md", "reason": "心跳、快照与持久化边界"}
+{"file": ".trellis/spec/renderer/components.md", "reason": "共用 Slider 与 UI 封装边界"}
+{"file": ".trellis/spec/shared/types.md", "reason": "模型覆盖与持久化兼容"}
+{"file": ".trellis/spec/big-question/optimistic-echo-blocks-snapshot.md", "reason": "越界 upsert 续命计时器的既有记录"}

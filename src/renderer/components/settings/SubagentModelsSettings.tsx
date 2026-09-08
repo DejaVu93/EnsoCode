@@ -1,13 +1,16 @@
 import { ENSO_AGENT_TYPE_KEY } from '@shared/builtinAgents';
+import { pickModelCapabilityOverrides } from '@shared/modelCatalog';
 import type { ModelProvider, ModelThinkingLevelOverride } from '@shared/types';
 import { MODEL_THINKING_LEVEL_OVERRIDES } from '@shared/types';
 import { Plus, Sparkles, Trash2 } from 'lucide-react';
 import { useMemo } from 'react';
 import { ModelPicker } from '@/components/chat/ModelPicker';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
+import { cn } from '@/lib/utils';
 import {
   usableProvidersForOauthSnapshot,
   useOauthCredentialStore,
@@ -31,12 +34,6 @@ function isThinkingLevelOverride(value: unknown): value is ModelThinkingLevelOve
   );
 }
 
-function resolveReasoningEnabled(value: unknown, fallback: boolean): boolean {
-  if (value === 'on') return true;
-  if (value === 'off') return false;
-  return fallback;
-}
-
 /**
  * 「允许子代理指定模型」：默认模型下方的集中配置区。
  * 打开开关后可添加「模型 + 选型描述」条目；描述随 spawn 下发,
@@ -52,8 +49,6 @@ export function SubagentModelsSettings() {
   const updateEntry = useSettingsStore((state) => state.updateSubagentModel);
   const removeEntry = useSettingsStore((state) => state.removeSubagentModel);
   const defaultModel = useSettingsStore((state) => state.defaultModel);
-  const defaultReasoningEnabled = useSettingsStore((state) => state.defaultReasoningEnabled);
-  const defaultThinkingLevel = useSettingsStore((state) => state.defaultThinkingLevel);
   const snapshot = useOauthCredentialStore((state) => state.snapshot);
   const candidates = useMemo(
     () => usableProvidersForOauthSnapshot(providers, snapshot),
@@ -90,6 +85,9 @@ export function SubagentModelsSettings() {
               'The main agent can pick one of these models when dispatching subagents or coworkers. The description tells it when to use each model.'
             )}
           </p>
+          <p className="mt-1 text-muted-foreground text-xs">
+            {t('Applies to newly started conversations.')}
+          </p>
         </div>
         <div className="flex shrink-0 items-center gap-2.5">
           <Button
@@ -112,22 +110,43 @@ export function SubagentModelsSettings() {
             <div
               key={entry.id}
               data-slot="subagent-model-row"
-              className="flex items-center gap-2 rounded-md border px-2 py-1.5"
+              className={cn(
+                'flex items-center gap-2 rounded-md border px-2 py-1.5',
+                entry.enabled === false && 'bg-muted/50 text-muted-foreground'
+              )}
             >
+              <Switch
+                data-slot="subagent-model-enabled"
+                aria-label={t('Enable subagent model')}
+                title={t('Make this model available to subagents')}
+                checked={entry.enabled !== false}
+                onCheckedChange={(enabled) => updateEntry(entry.id, { enabled })}
+              />
+              {entry.enabled === false && (
+                <Badge variant="outline" className="shrink-0 text-[10px] text-muted-foreground">
+                  {t('Disabled')}
+                </Badge>
+              )}
               <div className="shrink-0 rounded-md border bg-background">
                 <ModelPicker
                   providers={candidates}
                   providerId={entry.providerId}
                   modelId={entry.modelId}
-                  reasoningEnabled={resolveReasoningEnabled(
-                    entry.reasoning,
-                    defaultReasoningEnabled
-                  )}
+                  modelCapabilityOverrides={pickModelCapabilityOverrides(entry)}
+                  reasoningMode={isReasoningOverride(entry.reasoning) ? entry.reasoning : 'follow'}
+                  reasoningEnabled={entry.reasoning === 'on'}
                   thinkingLevel={
-                    isThinkingLevelOverride(entry.thinkingLevel)
-                      ? entry.thinkingLevel
-                      : defaultThinkingLevel
+                    isThinkingLevelOverride(entry.thinkingLevel) ? entry.thinkingLevel : 'medium'
                   }
+                  onReasoningModeChange={(mode, level) => {
+                    if (mode === 'follow') {
+                      updateEntry(entry.id, { reasoning: undefined, thinkingLevel: undefined });
+                    } else if (mode === 'on' && !isThinkingLevelOverride(entry.thinkingLevel)) {
+                      updateEntry(entry.id, { reasoning: 'on', thinkingLevel: level });
+                    } else {
+                      updateEntry(entry.id, { reasoning: mode });
+                    }
+                  }}
                   onSelect={(providerId, modelId) => updateEntry(entry.id, { providerId, modelId })}
                   onReasoningChange={(reasoningEnabled) =>
                     updateEntry(entry.id, { reasoning: reasoningEnabled ? 'on' : 'off' })
@@ -154,24 +173,6 @@ export function SubagentModelsSettings() {
                 className="h-7 flex-1 text-xs"
                 onChange={(event) => updateEntry(entry.id, { description: event.target.value })}
               />
-              {(isReasoningOverride(entry.reasoning) ||
-                isThinkingLevelOverride(entry.thinkingLevel)) && (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  data-slot="subagent-model-follow"
-                  className="h-6 shrink-0 px-2 text-xs text-muted-foreground"
-                  onClick={() =>
-                    updateEntry(entry.id, {
-                      reasoning: undefined,
-                      thinkingLevel: undefined,
-                    })
-                  }
-                >
-                  {t('Follow conversation')}
-                </Button>
-              )}
               <Button
                 type="button"
                 variant="ghost"

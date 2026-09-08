@@ -1,8 +1,8 @@
-import type { ModelProvider } from '@shared/types';
+import type { ModelEntry, ModelMeta, ModelProvider, ThinkingLevel } from '@shared/types';
 import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ModelPicker, persistClampedThinkingLevel } from './ModelPicker';
+import { ModelPicker, persistClampedThinkingLevel, resolvePickerCapabilities } from './ModelPicker';
 
 interface WrapperProps {
   children?: ReactNode;
@@ -16,6 +16,7 @@ const harness = vi.hoisted(() => ({
   menuItemClicks: [] as Array<() => void>,
   sliderProps: null as Record<string, unknown> | null,
   switchProps: null as Record<string, unknown> | null,
+  buttons: [] as Record<string, unknown>[],
   meta: {} as Record<string, unknown>,
 }));
 
@@ -54,6 +55,21 @@ vi.mock('@/components/ui/menu', () => {
 
 vi.mock('@/components/ui/badge', () => ({
   Badge: ({ children }: WrapperProps) => createElement('span', null, children),
+}));
+
+vi.mock('@/components/ui/button', () => ({
+  Button: (props: Record<string, unknown>) => {
+    harness.buttons.push(props);
+    return createElement(
+      'button',
+      {
+        type: 'button',
+        'aria-pressed': props['aria-pressed'],
+        'data-reasoning-mode': props['data-reasoning-mode'],
+      },
+      props.children as ReactNode
+    );
+  },
 }));
 
 vi.mock('@/components/ui/slider', () => ({
@@ -97,6 +113,7 @@ beforeEach(() => {
   harness.menuItemClicks = [];
   harness.sliderProps = null;
   harness.switchProps = null;
+  harness.buttons = [];
   harness.meta = {};
   commonProps.onSelect.mockClear();
   commonProps.onReasoningChange.mockClear();
@@ -104,6 +121,320 @@ beforeEach(() => {
 });
 
 describe('ModelPicker reasoning controls mode', () => {
+  it('切换自定义子模型保留条目深度，不被目标模型行的上限覆盖', () => {
+    const onThinkingNormalize = vi.fn();
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        providers: [
+          {
+            ...providers[0],
+            models: [{ id: 'model' }, { id: 'target', thinkingLevel: 'high' }],
+          },
+        ],
+        reasoningMode: 'on',
+        thinkingLevel: 'max',
+        modelCapabilityOverrides: { reasoning: 'on', thinkingLevel: 'max' },
+        onThinkingNormalize,
+      })
+    );
+    harness.menuItemClicks[1]();
+    expect(commonProps.onSelect).toHaveBeenCalledWith('api', 'target');
+    expect(onThinkingNormalize).not.toHaveBeenCalled();
+  });
+
+  it.each(['high', 'max'] as const)(
+    '自定义子模型选低档后仍可再选 max，不把当前深度变成上限：%s',
+    (rowLevel) => {
+      const row = { id: 'model', thinkingLevel: rowLevel };
+      const capability = resolvePickerCapabilities(providers[0], row, undefined, {
+        reasoning: 'on',
+        thinkingLevel: 'low',
+      });
+      expect(capability.thinkingLevels).toEqual([
+        'minimal',
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max',
+      ]);
+      expect(persistClampedThinkingLevel('max', capability.declaredThinkingLevels)).toBeUndefined();
+    }
+  );
+
+  it('自定义模型行 off 且条目 off 时仍可点击 On', () => {
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        reasoningMode: 'off',
+        reasoningEnabled: false,
+        providers: [{ ...providers[0], models: [{ id: 'model', reasoning: 'off' }] }],
+        modelCapabilityOverrides: { reasoning: 'off' },
+      })
+    );
+    expect(harness.buttons.find((button) => button['data-reasoning-mode'] === 'on')?.disabled).toBe(
+      false
+    );
+  });
+
+  it('子模型当前条目的显式覆盖压过自定义模型行，不被行 off/high 归一化', () => {
+    const row = { id: 'model', reasoning: 'off' as const, thinkingLevel: 'high' as const };
+    const capability = resolvePickerCapabilities(providers[0], row, undefined, {
+      reasoning: 'on',
+      thinkingLevel: 'max',
+    });
+    expect(capability.reasoning).toBe(true);
+    expect(capability.thinkingLevels).toContain('max');
+    expect(persistClampedThinkingLevel('max', capability.declaredThinkingLevels)).toBeUndefined();
+  });
+
+  it('子模型覆盖不能突破 OAuth catalog 支持集', () => {
+    const capability = resolvePickerCapabilities(
+      { ...providers[0], oauthAccountKey: 'subscription' },
+      providers[0].models[0],
+      {
+        modelId: 'model',
+        source: 'catalog',
+        reasoning: false,
+        thinkingLevels: [],
+      },
+      { reasoning: 'on', thinkingLevel: 'max' }
+    );
+    expect(capability.reasoning).toBe(false);
+    expect(capability.thinkingLevels).toEqual([]);
+  });
+
+  it('条目覆盖用于展示，切换模型也不丢弃已保存的深度', () => {
+    const onThinkingNormalize = vi.fn();
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        thinkingLevel: 'max',
+        modelCapabilityOverrides: { reasoning: 'on', thinkingLevel: 'max' },
+        providers: [
+          {
+            ...providers[0],
+            models: [
+              { id: 'model', reasoning: 'off', thinkingLevel: 'high' },
+              { id: 'other', thinkingLevel: 'low' },
+            ],
+          },
+        ],
+        onThinkingNormalize,
+      })
+    );
+    expect(harness.switchProps?.checked).toBe(true);
+    expect(harness.sliderProps?.max).toBe(5);
+    harness.menuItemClicks[0]?.();
+    expect(onThinkingNormalize).not.toHaveBeenCalled();
+    harness.menuItemClicks[1]?.();
+    expect(onThinkingNormalize).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { reasoningMode: 'follow' as const, slider: false },
+    { reasoningMode: 'off' as const, slider: false },
+    { reasoningMode: 'on' as const, slider: true },
+  ])('子模型三态明确选中，只有显式开启才显示独立深度滑杆：%j', ({ slider, ...mode }) => {
+    const html = renderToStaticMarkup(createElement(ModelPicker, { ...commonProps, ...mode }));
+    expect(
+      harness.buttons
+        .filter((button) => button['aria-pressed'] === true)
+        .map((button) => button['data-reasoning-mode'])
+    ).toEqual([mode.reasoningMode]);
+    expect(html.includes('data-slider="true"')).toBe(slider);
+    expect(html).not.toContain('data-switch="true"');
+    expect(html).not.toContain('Explicit');
+    expect(html).not.toContain('global defaults');
+  });
+
+  it('三态点击通过单次模式回调携带有效档位，供设置原子落盘', () => {
+    const onReasoningModeChange = vi.fn();
+    renderToStaticMarkup(
+      createElement(ModelPicker, { ...commonProps, reasoningMode: 'off', onReasoningModeChange })
+    );
+    for (const mode of ['on', 'off', 'follow']) {
+      const click = harness.buttons.find(
+        (button) => button['data-reasoning-mode'] === mode
+      )?.onClick;
+      expect(click).toBeTypeOf('function');
+      (click as () => void)();
+    }
+    expect(onReasoningModeChange.mock.calls).toEqual([
+      ['on', 'medium'],
+      ['off', 'medium'],
+      ['follow', 'medium'],
+    ]);
+    expect(commonProps.onReasoningChange).not.toHaveBeenCalled();
+    expect(commonProps.onThinkingChange).not.toHaveBeenCalled();
+  });
+
+  it('旧 On 缺深度立即显示可调滑杆，不需要 Customize 且渲染不写入', () => {
+    const onReasoningModeChange = vi.fn();
+    const html = renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        reasoningMode: 'on',
+        modelCapabilityOverrides: { reasoning: 'on' },
+        onReasoningModeChange,
+      })
+    );
+    expect(html).toContain('data-slider="true"');
+    expect(html).not.toContain('Customize');
+    expect(harness.buttons.filter((button) => button['data-slot'] === 'follow-depth')).toHaveLength(
+      0
+    );
+    expect(harness.sliderProps?.value).toBe(2);
+    expect(onReasoningModeChange).not.toHaveBeenCalled();
+    expect(commonProps.onThinkingChange).not.toHaveBeenCalled();
+  });
+
+  it('OAuth 开启时提供支持集内的默认档位用于原子初始化', () => {
+    harness.meta = {
+      model: {
+        modelId: 'model',
+        source: 'catalog',
+        reasoning: true,
+        thinkingLevels: ['low', 'high'],
+      },
+    };
+    const onReasoningModeChange = vi.fn();
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        reasoningMode: 'follow',
+        providers: [{ ...providers[0], oauthAccountKey: 'subscription' }],
+        onReasoningModeChange,
+      })
+    );
+    const on = harness.buttons.find((button) => button['data-reasoning-mode'] === 'on')?.onClick;
+    expect(on).toBeTypeOf('function');
+    (on as () => void)();
+    expect(onReasoningModeChange).toHaveBeenCalledWith('on', 'high');
+  });
+
+  it.each<ThinkingLevel[]>([
+    ['high'],
+    ['low', 'high'],
+    ['minimal', 'low', 'medium', 'high'],
+    ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+  ])('刻度与滑块共用完整轨道百分比，单档不除零：%j', (...levels) => {
+    harness.meta = {
+      model: { modelId: 'model', source: 'catalog', reasoning: true, thinkingLevels: levels },
+    };
+    for (const [index, thinkingLevel] of levels.entries()) {
+      const html = renderToStaticMarkup(
+        createElement(ModelPicker, { ...commonProps, thinkingLevel })
+      );
+      expect(harness.sliderProps).toMatchObject({
+        thumbAlignment: 'center',
+        min: 0,
+        max: Math.max(1, levels.length - 1),
+        value: index,
+        disabled: levels.length === 1,
+      });
+      expect(harness.sliderProps?.className).toContain('[&_[data-slot=slider-indicator]]:ms-0');
+      const tickStyles = [...html.matchAll(/data-thinking-tick="[^"]+"[^>]*style="([^"]+)"/g)];
+      expect(tickStyles.map((match) => match[1])).toEqual(
+        levels.map((_, tickIndex) => `left:${(tickIndex / Math.max(1, levels.length - 1)) * 100}%`)
+      );
+    }
+  });
+
+  it.each([
+    undefined,
+    { modelId: 'model', source: 'unknown' as const },
+    { modelId: 'model', source: 'catalog' as const },
+  ])('缺失支持字段不把乐观展示当成已知能力回写：%j', (meta) => {
+    const custom = resolvePickerCapabilities(providers[0], providers[0].models[0], meta);
+    const oauth = resolvePickerCapabilities(
+      { ...providers[0], oauthAccountKey: 'subscription' },
+      providers[0].models[0],
+      meta
+    );
+    expect(persistClampedThinkingLevel('max', custom.declaredThinkingLevels)).toBeUndefined();
+    expect(persistClampedThinkingLevel('max', oauth.declaredThinkingLevels)).toBeUndefined();
+    expect(oauth.reasoning).toBeUndefined();
+  });
+
+  it.each<{
+    row: Partial<ModelEntry>;
+    meta: ModelMeta;
+    enabled: boolean;
+    max?: number;
+    oauth?: boolean;
+  }>([
+    {
+      row: { reasoning: 'off' },
+      meta: { modelId: 'model', source: 'catalog', reasoning: true },
+      enabled: false,
+    },
+    {
+      row: { reasoning: 'on', thinkingLevel: 'high' },
+      meta: { modelId: 'model', source: 'catalog', reasoning: false, thinkingLevels: [] },
+      enabled: true,
+      max: 3,
+    },
+    {
+      row: { thinkingLevel: 'xhigh' },
+      meta: {
+        modelId: 'model',
+        source: 'catalog-fallback',
+        reasoning: true,
+        thinkingLevels: ['minimal', 'low'],
+      },
+      enabled: true,
+      max: 4,
+    },
+    {
+      row: { reasoning: 'on', thinkingLevel: 'max' },
+      meta: { modelId: 'model', source: 'catalog', reasoning: false, thinkingLevels: [] },
+      enabled: false,
+      oauth: true,
+    },
+    {
+      row: { reasoning: 'off', thinkingLevel: 'low' },
+      meta: {
+        modelId: 'model',
+        source: 'catalog',
+        reasoning: true,
+        thinkingLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      enabled: true,
+      max: 5,
+      oauth: true,
+    },
+  ])('自定义能力按行覆盖解析，OAuth 仅信 catalog：%j', ({ row, meta, enabled, max, oauth }) => {
+    harness.meta = { model: meta };
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        providers: [
+          {
+            ...providers[0],
+            oauthAccountKey: oauth ? 'subscription' : undefined,
+            models: [{ id: 'model', ...row }],
+          },
+        ],
+      })
+    );
+    expect(harness.switchProps?.checked).toBe(enabled);
+    expect(harness.sliderProps?.max).toBe(max);
+  });
+
+  it('选择尚无元数据的自定义模型仍按显式行上限归一化', () => {
+    renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        thinkingLevel: 'max',
+        providers: [{ ...providers[0], models: [{ id: 'model', thinkingLevel: 'low' }] }],
+      })
+    );
+    harness.menuItemClicks[0]?.();
+    expect(commonProps.onThinkingChange).toHaveBeenCalledWith('low');
+  });
+
   it('keeps reasoning and thinking controls by default for ChatView', () => {
     const html = renderToStaticMarkup(createElement(ModelPicker, commonProps));
     expect(html).toContain('Reasoning');

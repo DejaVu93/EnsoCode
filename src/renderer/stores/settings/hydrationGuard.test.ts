@@ -124,3 +124,36 @@ describe('settings sync from another window', () => {
     expect(store.getState().theme).toBe('dark');
   });
 });
+
+describe('settings subagent model availability', () => {
+  it('单条关闭落盘后可水合恢复，再开启不丢覆盖且不修改邻居', async () => {
+    const store = settingsModule.useSettingsStore;
+    const entry = {
+      id: 'sub-model',
+      providerId: 'prov',
+      modelId: 'model',
+      description: '保留说明',
+      reasoning: 'off' as const,
+      thinkingLevel: 'high' as const,
+    };
+    const neighbor = { ...entry, id: 'neighbor', enabled: true };
+    store.setState({ subagentModels: [entry, neighbor], subagentModelsEnabled: true });
+    store.getState().updateSubagentModel(entry.id, { enabled: false });
+    await flush();
+    const disabled = [{ ...entry, enabled: false }, neighbor];
+    expect(writeKey).toHaveBeenLastCalledWith(
+      'enso-settings',
+      expect.objectContaining({ state: expect.objectContaining({ subagentModels: disabled }) })
+    );
+    const saved = JSON.parse(JSON.stringify(store.getState()));
+    store.setState({ subagentModels: [] });
+    const hydration = store.persist.rehydrate();
+    resolveRead({ 'enso-settings': { version: SETTINGS_VERSION, state: saved } });
+    await hydration;
+    expect(store.getState().subagentModels).toEqual(disabled);
+    store.getState().updateSubagentModel(entry.id, { enabled: true });
+    expect(store.getState().subagentModels).toEqual([{ ...entry, enabled: true }, neighbor]);
+    expect(store.getState().subagentModelsEnabled).toBe(true);
+    expect(store.getState().providers).toEqual(providers);
+  });
+});

@@ -1812,6 +1812,7 @@ interface ConversationRowProps {
     pinned?: boolean;
     archived?: boolean;
     createdAt: number;
+    lastActiveAt?: number;
     projectId: string;
     messages: { timestamp?: number }[];
     forkedFromConversationId?: string;

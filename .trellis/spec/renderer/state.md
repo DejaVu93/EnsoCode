@@ -119,6 +119,23 @@ expect(store.getState().conversations.ended.messages).toHaveLength(before);
 `historyBaseIndex` 从 tail 切到全文 snapshot 时同一条 write 的 key 会变，seen
 必须随 `historyBaseIndex` 清掉重占位，否则会误刷新。
 
+## lastOutputAt 只认可见进展
+
+「无输出则停止」和运行中「距上次返回」都读 `lastOutputAt`。写入点在 `reducer.ts`：
+
+- 生成心跳：新增非空 assistant `text` / `thinking`、新的工具结果、变化的非空 `tool-output`、变化的 write/edit 可见预览。
+- 不刷新：用户消息、空 assistant（含 Connection error）、空 thinking、静态 toolCall、越界 upsert、递增 seq 但可见内容不变的全量快照。
+- write/edit 必须复用时间线的 `extractWriteContent` / `extractEdits`；edit 比较 oldText/newText 对，不比较键顺序或多余 metadata；空 old/new 占位不算，删除算。
+- task/subagent/approval 等可见状态进展沿用独立事件处理；watchdog 的活跃工具、coworker、审批等待豁免独立于生成心跳，不能顺手删除。
+
+越界 `message-upsert` 只推 `seq`。把丢弃的权威事件当成心跳，watchdog 会认为模型一直有输出。
+
+`snapshot` 不是新输出：同代连续 running 保留 `runStartedAt` / `lastOutputAt` 与未完成工具尾巴；
+首次/新代 running 以接收时间建立起点但不伪造输出。同代 idle/failed 结算 activeMs，显式清空时钟。
+**不能只省略时钟字段**：store 浅合并投影会保留旧值。新代/终态清空 toolOutputs，同轮快照清掉已完成工具的旧输出。
+
+回归测试必须覆盖重复内容 + 更大 seq、historyBaseIndex 尾窗、快照前后重复 tool-output，以及 `{...old, ...projection}` 清理行为。
+
 ## 会话标题的自动总结守卫
 
 标题自动总结（首条即时 + 每轮 `turn-completed{digest}` 滚动）在 `sessions/index.ts` 里有两层守卫，缺一不可：

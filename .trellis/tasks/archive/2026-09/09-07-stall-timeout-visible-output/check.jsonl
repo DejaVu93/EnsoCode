@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/testing.md", "reason": "reducer 纯函数 TDD"}
+{"file": ".trellis/spec/renderer/state.md", "reason": "快照/心跳兼容"}
+{"file": ".trellis/spec/renderer/styling.md", "reason": "真实滑块几何与语义样式"}
+{"file": ".trellis/spec/shared/types.md", "reason": "能力覆盖与继承不迁移数据"}

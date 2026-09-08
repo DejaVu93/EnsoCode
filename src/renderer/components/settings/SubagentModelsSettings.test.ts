@@ -19,6 +19,7 @@ const providers: ModelProvider[] = [
 const harness = vi.hoisted(() => ({
   state: {} as Record<string, unknown>,
   pickerProps: [] as Record<string, unknown>[],
+  entrySwitchProps: [] as Record<string, unknown>[],
   followClicks: [] as Array<() => void>,
   updateEntry: vi.fn(),
 }));
@@ -66,6 +67,13 @@ vi.mock('@/components/chat/ModelPicker', () => ({
   },
 }));
 
+vi.mock('@/components/ui/switch', () => ({
+  Switch: (props: Record<string, unknown>) => {
+    if (props['data-slot'] === 'subagent-model-enabled') harness.entrySwitchProps.push(props);
+    return createElement('i', { 'data-switch': props['data-slot'] });
+  },
+}));
+
 function entry(id: string, overrides: Partial<SubagentModelEntry> = {}): SubagentModelEntry {
   return {
     id,
@@ -89,17 +97,104 @@ function renderEntries(entries: SubagentModelEntry[]) {
     defaultReasoningEnabled: true,
     defaultThinkingLevel: 'max',
   };
-  renderToStaticMarkup(createElement(SubagentModelsSettings));
+  return renderToStaticMarkup(createElement(SubagentModelsSettings));
 }
 
 beforeEach(() => {
   harness.pickerProps = [];
+  harness.entrySwitchProps = [];
   harness.followClicks = [];
   harness.updateEntry.mockClear();
 });
 
 describe('SubagentModelsSettings reasoning controls', () => {
-  it('缺省与脏覆盖继承全局默认，合法 on/off 和档位按条目独立优先', () => {
+  it.each([undefined, 'on'] as const)(
+    '缺深度的旧数据只在点击 On 后原子初始化推理和支持档位：%s',
+    (reasoning) => {
+      renderEntries([entry('configured', { reasoning })]);
+      expect(harness.updateEntry).not.toHaveBeenCalled();
+      const change = harness.pickerProps[0].onReasoningModeChange;
+      expect(change).toBeTypeOf('function');
+      (change as (mode: string, level: string) => void)('on', 'high');
+      expect(harness.updateEntry.mock.calls).toEqual([
+        ['configured', { reasoning: 'on', thinkingLevel: 'high' }],
+      ]);
+    }
+  );
+
+  it('将合法条目能力覆盖传给当前模型，空或脏字段不遮盖模型行', () => {
+    renderEntries([
+      entry('configured', { reasoning: 'on', thinkingLevel: 'max' }),
+      entry('follow'),
+      entry('dirty', { reasoning: 'maybe' as never, thinkingLevel: 'ultra' as never }),
+    ]);
+    expect(harness.pickerProps.map((props) => props.modelCapabilityOverrides)).toEqual([
+      { reasoning: 'on', thinkingLevel: 'max' },
+      {},
+      {},
+    ]);
+  });
+
+  it('旧条目默认启用，显式停用仍保留可编辑的模型与推理配置', () => {
+    const html = renderEntries([
+      entry('legacy'),
+      entry('disabled', { enabled: false, reasoning: 'off', thinkingLevel: 'high' }),
+    ]);
+    expect(harness.entrySwitchProps.map((props) => props.checked)).toEqual([true, false]);
+    expect(harness.entrySwitchProps[0]['aria-label']).toBe('Enable subagent model');
+    expect(harness.pickerProps).toHaveLength(2);
+    expect(harness.pickerProps[1]).toMatchObject({
+      reasoningEnabled: false,
+      thinkingLevel: 'high',
+    });
+    expect(harness.updateEntry).not.toHaveBeenCalled();
+    expect(html).toContain('Disabled');
+    expect(html).toContain('Applies to newly started conversations.');
+  });
+
+  it('单行停用再启用只写 enabled，不改其它行或遗失该行模型与推理档位', () => {
+    const configured = entry('configured', { reasoning: 'on', thinkingLevel: 'high' });
+    const other = entry('other', { reasoning: 'off', thinkingLevel: 'low' });
+    renderEntries([configured, other]);
+    expect(harness.entrySwitchProps).toHaveLength(2);
+    const change = harness.entrySwitchProps[0].onCheckedChange as (enabled: boolean) => void;
+    change(false);
+    change(true);
+    expect(harness.updateEntry.mock.calls).toEqual([
+      ['configured', { enabled: false }],
+      ['configured', { enabled: true }],
+    ]);
+    expect(configured).toEqual(entry('configured', { reasoning: 'on', thinkingLevel: 'high' }));
+    expect(other).toEqual(entry('other', { reasoning: 'off', thinkingLevel: 'low' }));
+  });
+
+  it('旧部分覆盖与脏值仅映射三态，渲染不改写', () => {
+    renderEntries([
+      entry('follow'),
+      entry('level-only', { thinkingLevel: 'low' }),
+      entry('reasoning-only', { reasoning: 'off' }),
+      entry('explicit', { reasoning: 'on', thinkingLevel: 'high' }),
+      entry('dirty', { reasoning: 'maybe' as never, thinkingLevel: 'ultra' as never }),
+    ]);
+    expect(harness.pickerProps.map((props) => props.reasoningMode)).toEqual([
+      'follow',
+      'follow',
+      'off',
+      'on',
+      'follow',
+    ]);
+    expect(harness.updateEntry).not.toHaveBeenCalled();
+  });
+
+  it('仅设置档位不把推理开关继承归一化为显式值，用户调档也只写档位', () => {
+    renderEntries([entry('level-only', { thinkingLevel: 'low' })]);
+    const props = harness.pickerProps[0];
+    (props.onReasoningNormalize as (enabled: boolean) => void)(false);
+    (props.onThinkingChange as (level: string) => void)('high');
+    expect(harness.updateEntry.mock.calls).toEqual([['level-only', { thinkingLevel: 'high' }]]);
+  });
+
+  it('缺省与脏覆盖用 follow 三态，不传伪装父会话状态的全局默认', () => {
     renderEntries([
       entry('follow'),
       entry('forced-on', { reasoning: 'on', thinkingLevel: 'low' }),
@@ -112,20 +207,22 @@ describe('SubagentModelsSettings reasoning controls', () => {
 
     expect(harness.pickerProps).toHaveLength(4);
     expect(harness.pickerProps[0]).toMatchObject({
-      reasoningEnabled: true,
-      thinkingLevel: 'max',
+      reasoningMode: 'follow',
+      reasoningEnabled: false,
     });
     expect(harness.pickerProps[1]).toMatchObject({
+      reasoningMode: 'on',
       reasoningEnabled: true,
       thinkingLevel: 'low',
     });
     expect(harness.pickerProps[2]).toMatchObject({
+      reasoningMode: 'off',
       reasoningEnabled: false,
       thinkingLevel: 'high',
     });
     expect(harness.pickerProps[3]).toMatchObject({
-      reasoningEnabled: true,
-      thinkingLevel: 'max',
+      reasoningMode: 'follow',
+      reasoningEnabled: false,
     });
   });
 
@@ -157,10 +254,11 @@ describe('SubagentModelsSettings reasoning controls', () => {
     if (typeof onReasoningNormalize === 'function') onReasoningNormalize(false);
     const onThinkingNormalize = props.onThinkingNormalize;
     if (typeof onThinkingNormalize === 'function') onThinkingNormalize('low');
-    const onReasoningChange = props.onReasoningChange;
-    if (typeof onReasoningChange === 'function') {
-      onReasoningChange(false);
-      onReasoningChange(true);
+    const onReasoningModeChange = props.onReasoningModeChange;
+    expect(onReasoningModeChange).toBeTypeOf('function');
+    if (typeof onReasoningModeChange === 'function') {
+      onReasoningModeChange('off', 'medium');
+      onReasoningModeChange('on', 'medium');
     }
 
     expect(harness.updateEntry.mock.calls).toEqual([
@@ -171,14 +269,16 @@ describe('SubagentModelsSettings reasoning controls', () => {
     ]);
   });
 
-  it('独立覆盖可复位为跟随会话，继承项不显示复位', () => {
+  it('选择 Follow parent 明确清除两项，不再显示冗余行复位按钮', () => {
     renderEntries([entry('follow')]);
     expect(harness.followClicks).toHaveLength(0);
 
     harness.pickerProps = [];
     renderEntries([entry('configured', { reasoning: 'on', thinkingLevel: 'high' })]);
-    expect(harness.followClicks).toHaveLength(1);
-    harness.followClicks[0]?.();
+    expect(harness.followClicks).toHaveLength(0);
+    const follow = harness.pickerProps[0].onReasoningModeChange;
+    expect(follow).toBeTypeOf('function');
+    (follow as (mode: string, level: string) => void)('follow', 'medium');
     expect(harness.updateEntry).toHaveBeenCalledWith('configured', {
       reasoning: undefined,
       thinkingLevel: undefined,

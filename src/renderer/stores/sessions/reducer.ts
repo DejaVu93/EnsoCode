@@ -12,6 +12,7 @@ import {
   type SubagentInfo,
   shouldApplyDispatchMainEvent,
 } from '@shared/types/agent';
+import { extractEdits, extractWriteContent } from './timeline';
 
 /**
  * 时间线消息：乐观回显（本地先上屏、worker 尚未确认）带 optimistic 标记，
@@ -96,6 +97,55 @@ export function applyHistoryPage(
     messages: [...page.messages, ...state.messages],
     historyBaseIndex: page.baseIndex,
   };
+}
+
+function omitKeys<T>(
+  record: Record<string, T>,
+  keys: ReadonlySet<string | undefined>
+): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.has(key)));
+}
+
+/** upsert 是全量快照：只有可见正文变化才算进展，不能拿旧思考给后续工具参数续命。 */
+export function isVisibleGenerationOutput(
+  message: ProjectedMessage,
+  previous?: ProjectedMessage
+): boolean {
+  if (message.role === 'toolResult') {
+    return (
+      previous?.role !== 'toolResult' ||
+      previous.toolCallId !== message.toolCallId ||
+      previous.isError !== message.isError ||
+      JSON.stringify(previous.content) !== JSON.stringify(message.content)
+    );
+  }
+  if (message.role !== 'assistant') return false;
+  const before = previous?.role === 'assistant' ? previous.content : [];
+  return message.content.some((part, index) => {
+    if (part.type === 'text' || part.type === 'thinking') {
+      const old = before[index];
+      return Boolean(
+        part.text.trim() && (old?.type !== part.type || old.text.trim() !== part.text.trim())
+      );
+    }
+    if (part.type === 'toolCall') {
+      const old = before.find(
+        (candidate) => candidate.type === 'toolCall' && candidate.id === part.id
+      );
+      const oldArgs =
+        old?.type === 'toolCall' && old.name === part.name ? old.arguments : undefined;
+      const content = extractWriteContent(part.name, part.arguments);
+      if (content?.trim() && content !== extractWriteContent(part.name, oldArgs)) return true;
+      const edits = extractEdits(part.name, part.arguments);
+      const previousEdits = extractEdits(part.name, oldArgs);
+      return Boolean(
+        edits?.some(({ oldText, newText }) => oldText.trim() || newText.trim()) &&
+          JSON.stringify(edits.map(({ oldText, newText }) => [oldText, newText])) !==
+            JSON.stringify(previousEdits?.map(({ oldText, newText }) => [oldText, newText]))
+      );
+    }
+    return false;
+  });
 }
 
 export interface SessionProjection {
@@ -213,6 +263,13 @@ export function applyAgentEvent(
     const snapshot = event.sessions.find((candidate) => candidate.identity.sessionId === sessionId);
     if (!snapshot) return state;
     const sameGeneration = state.generation === snapshot.identity.generation;
+    const running = snapshot.status === 'running';
+    const continuingRun = sameGeneration && state.status === 'running' && running;
+    const completedTools = new Set(
+      snapshot.messages
+        .filter((message) => message.role === 'toolResult')
+        .map((message) => message.toolCallId)
+    );
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
     const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
@@ -240,13 +297,17 @@ export function applyAgentEvent(
       commands: snapshot.commands,
       dispatchMainEvents: {},
       lastSeq: 0,
-      activeMs: sameGeneration ? state.activeMs : 0,
+      activeMs: sameGeneration ? (running ? state.activeMs : settleTiming(state, now).activeMs) : 0,
+      // 快照正文不是新输出；同轮保留时钟，首次恢复从接收时开始监控。显式 undefined 供 store 浅合并清理旧值。
+      runStartedAt: running ? (continuingRun ? (state.runStartedAt ?? now) : now) : undefined,
+      lastOutputAt: continuingRun ? state.lastOutputAt : undefined,
       pendingApprovals: snapshot.pendingApprovals ?? [],
       pendingAsks: snapshot.pendingAsks ?? [],
       backgroundTasks: snapshot.backgroundTasks ?? [],
       subagents: snapshot.subagents ?? [],
-      toolOutputs: {},
-      toolStartedAt: {},
+      // 同轮补快照不能抹掉正在显示的工具输出与去重基准；已经收口的工具不保留旧尾巴。
+      toolOutputs: continuingRun ? omitKeys(state.toolOutputs, completedTools) : {},
+      toolStartedAt: continuingRun ? omitKeys(state.toolStartedAt ?? {}, completedTools) : {},
       historyBaseIndex: keepPrefix ? localBase : snapBase > 0 ? snapBase : undefined,
     };
   }
@@ -348,8 +409,10 @@ export function applyAgentEvent(
       // 正文被冷缓存清空后重新变热，snapshot 回来前的 upsert 以原 index 到达：直接写会
       // 留下稀疏空洞（.role/.optimistic 读 undefined 崩溃）。丢掉正文、只推进 seq，等 snapshot 整体被覆。
       if (localIndex < 0 || localIndex > authoritative.length) {
-        return { ...current, lastOutputAt: now, lastSeq: event.seq };
+        // 丢正文只推 seq：不能续 lastOutputAt，否则 stall watchdog 把脱节心跳当成输出
+        return { ...current, lastSeq: event.seq };
       }
+      const hasOutput = isVisibleGenerationOutput(event.message, authoritative[localIndex]);
       authoritative[localIndex] = event.message;
       // 同文本的 user upsert 到达 = 回显对应的真消息落地，消费掉避免重复
       if (event.message.role === 'user' && tail.length > 0) {
@@ -362,7 +425,7 @@ export function applyAgentEvent(
       return {
         ...current,
         messages: [...authoritative, ...tail],
-        lastOutputAt: now,
+        lastOutputAt: hasOutput ? now : current.lastOutputAt,
         lastSeq: event.seq,
       };
     }
@@ -454,7 +517,10 @@ export function applyAgentEvent(
           startedAt === undefined
             ? current.toolStartedAt
             : { ...current.toolStartedAt, [event.toolCallId]: startedAt },
-        lastOutputAt: now,
+        lastOutputAt:
+          event.output.trim() && event.output !== current.toolOutputs[event.toolCallId]
+            ? now
+            : current.lastOutputAt,
         lastSeq: event.seq,
       };
     }

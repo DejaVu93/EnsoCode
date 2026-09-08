@@ -1,11 +1,12 @@
+import type { Conversation } from './index';
+
 type PersistableConversation = {
   messages: { timestamp?: number }[];
   lastActiveAt?: number;
   createdAt: number;
   started: boolean;
   sessionFile?: string;
-  [key: string]: unknown;
-};
+} & Partial<Record<keyof Conversation, unknown>>;
 
 export interface SessionsPersistSlice {
   conversations: Record<string, PersistableConversation>;

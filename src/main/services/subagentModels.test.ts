@@ -22,6 +22,52 @@ const entry = (overrides: Partial<SubagentModelEntry>): SubagentModelEntry => ({
 });
 
 describe('pickSubagentModelRefs', () => {
+  it('关闭单个条目仅移除对应候选，缺省与显式启用的邻居保持可用', () => {
+    const providers = [provider({ models: [{ id: 'off' }, { id: 'legacy' }, { id: 'on' }] })];
+    const entries = [
+      entry({ id: 'off', modelId: 'off', enabled: false }),
+      entry({ id: 'legacy', modelId: 'legacy' }),
+      entry({ id: 'on', modelId: 'on', enabled: true }),
+    ];
+    expect(pickSubagentModelRefs(entries, providers).map((ref) => ref.modelId)).toEqual([
+      'legacy',
+      'on',
+    ]);
+    expect(providers[0].enabled).toBe(true);
+    expect(providers[0].models).toEqual([{ id: 'off' }, { id: 'legacy' }, { id: 'on' }]);
+  });
+
+  it('禁用条目不占用去重键，同一模型后续启用条目的配置仍透传', () => {
+    const entries = [
+      entry({ enabled: false, description: '禁用配置', reasoning: 'off' }),
+      entry({ id: 'e2', enabled: true, description: '启用配置', reasoning: 'on' }),
+    ];
+    expect(pickSubagentModelRefs(entries, [provider({})])).toEqual([
+      {
+        name: 'OpenAI/gpt-cheap',
+        providerId: 'p1',
+        modelId: 'gpt-cheap',
+        description: '启用配置',
+        reasoning: 'on',
+      },
+    ]);
+  });
+
+  it('关闭不修改持久化配置，重新启用后恢复描述和推理覆盖', () => {
+    const configured = entry({ enabled: false, reasoning: 'off', thinkingLevel: 'high' });
+    const original = structuredClone(configured);
+    expect(pickSubagentModelRefs([configured], [provider({})])).toEqual([]);
+    expect(configured).toEqual(original);
+    expect(pickSubagentModelRefs([{ ...configured, enabled: true }], [provider({})])[0]).toEqual({
+      name: 'OpenAI/gpt-cheap',
+      providerId: 'p1',
+      modelId: 'gpt-cheap',
+      description: original.description,
+      reasoning: 'off',
+      thinkingLevel: 'high',
+    });
+  });
+
   it('条目按 provider 凭证/启用与模型行启用过滤,描述透传', () => {
     const providers = [
       provider({}),
