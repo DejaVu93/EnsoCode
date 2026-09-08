@@ -14,6 +14,7 @@ import {
   MODEL_API_KINDS,
   THINKING_LEVELS,
 } from '@shared/types';
+import { hasBase64Shape } from './assets';
 import type { ConfigSyncBundle, ConfigSyncMcpServer, ConfigSyncProvider } from './types';
 import { CONFIG_SYNC_MCP_OMISSIONS, CONFIG_SYNC_PROVIDER_OMISSIONS } from './types';
 
@@ -310,11 +311,7 @@ function passwordBytes(password: string | undefined): Buffer {
 function canonicalBase64(value: unknown, label: string, maxBytes = MAX_FILE_BYTES): Buffer {
   const maxLength =
     maxBytes === MAX_FILE_BYTES ? MAX_BASE64_LENGTH : Math.ceil((maxBytes * 4) / 3) + 4;
-  if (
-    typeof value !== 'string' ||
-    value.length > maxLength ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
-  ) {
+  if (typeof value !== 'string' || value.length > maxLength || !hasBase64Shape(value)) {
     throw new Error(`Invalid ${label}`);
   }
   const decoded = Buffer.from(value, 'base64');

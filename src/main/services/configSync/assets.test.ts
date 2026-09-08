@@ -27,4 +27,14 @@ describe('config sync resource staging', () => {
     const imports = join(root, 'config-imports');
     expect(existsSync(imports) ? readdirSync(imports) : []).toEqual([]);
   });
+
+  it('接近上限的大文件 base64 校验不会栈溢出', () => {
+    const content = Buffer.alloc(4 * 1024 * 1024, 7).toString('base64');
+    const staged = stageResources(
+      root,
+      [{ id: 'skill', files: [{ path: 'SKILL.md', content }] }],
+      []
+    );
+    expect(staged.skillPaths.get('skill')).toBeTruthy();
+  });
 });
