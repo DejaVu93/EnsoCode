@@ -27,6 +27,23 @@
 已有的一段：v0 → v1 把 `ModelProvider.oauthProviderId` 改名为 `oauthAccountKey`
 （订阅多账号方案，见 `src/shared/types/oauthProviders.ts`）。
 
+## 新增设置字段的登记点
+
+`SettingsState` 新加一个字段不只是改 store，以下登记缺一处编译或测试会报：
+
+| 位置 | 作用 |
+| --- | --- |
+| `renderer/stores/settings/types.ts` + `index.ts` | 类型、initialState 默认值、setter |
+| `main/ipc/settings.ts` `SETTINGS_STATE_FIELDS` | Gateway `patchSettingsState` 白名单 |
+| `main/ipc/settings.ts` `CONFIG_SYNC_EXCLUDED_STATE_FIELDS` + `main/services/configSync/index.ts` `CONFIG_SYNC_FIELD_POLICY` | 设备本地字段（路径、shell、代理等）必须两处都标 excluded |
+| `shared/productSurfaces.ts` `PRODUCT_SURFACE_INVENTORY` | 新 surface id，如 `general.worktree-root` |
+| `shared/capabilities/catalog.ts` catalog + `CAPABILITY_HANDLER_CONTRACT` | surface 对应的 capability 定义（编译期强制） |
+| `main/services/capabilityGateway.ts` `resultSettingField` + `createCapabilityHandlers` | Gateway 读写该字段的 handler（`settingValueHandler` + 校验谓词） |
+| `tooling/productCapabilityCoverage.fixture.ts` `SETTINGS_DATA_COVERAGE` / `SETTINGS_ACTION_COVERAGE` | 字段与 setter 都要映射到 surface |
+
+主进程读字段用 `services/agentHost.ts` 的 `readSettingsState()?.<field>`，值是 `unknown`，
+必须经纯函数校验后使用（例：`shared/worktreeRoot.ts` 的 `resolveWorktreeRoot`，非法回落默认）。
+
 ## 写入策略
 
 三层保护，改动时不要绕过：
