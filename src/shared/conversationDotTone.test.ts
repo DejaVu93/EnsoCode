@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { conversationDotTone, conversationHasRunningChild } from './conversationDotTone';
+import {
+  conversationDotTone,
+  conversationHasRunningChild,
+  coworkerTabTone,
+} from './conversationDotTone';
 
 describe('conversationHasRunningChild', () => {
   const parent = { status: 'idle', subagents: [], coworkerIds: ['child'] };
@@ -36,7 +40,7 @@ describe('conversationHasRunningChild', () => {
 });
 
 describe('conversationDotTone', () => {
-  it('ask 挂起时即使仍 running 也标 waiting（绿灯）', () => {
+  it('ask 挂起时即使仍 running 也标 waiting（问号等待态）', () => {
     expect(conversationDotTone({ status: 'running', spawning: false, pendingAskCount: 1 })).toBe(
       'waiting'
     );
@@ -86,5 +90,45 @@ describe('conversationDotTone', () => {
     expect(conversationDotTone({ status: 'running', spawning: false, pendingAskCount: 0 })).toBe(
       'running'
     );
+  });
+});
+
+describe('coworkerTabTone', () => {
+  it('coworker 等待 ask_user 回答时是 waiting，而不是红色 attention', () => {
+    expect(coworkerTabTone({ status: 'running', pendingAskCount: 1 })).toBe('waiting');
+  });
+
+  it('待审批仍按原语义显示 attention', () => {
+    expect(coworkerTabTone({ status: 'running', pendingApprovalCount: 1 })).toBe('attention');
+  });
+
+  it('待能力确认仍按原语义显示 attention', () => {
+    expect(coworkerTabTone({ status: 'running', pendingCapabilityAskCount: 1 })).toBe('attention');
+  });
+
+  it('审批与提问同时挂起时审批优先', () => {
+    expect(
+      coworkerTabTone({ status: 'running', pendingApprovalCount: 1, pendingAskCount: 1 })
+    ).toBe('attention');
+  });
+
+  it('失败优先于 ask，与其它指示器一致', () => {
+    expect(coworkerTabTone({ status: 'failed', pendingAskCount: 1 })).toBe('failed');
+  });
+
+  it('待审批时即使 failed 也保持 attention（原有审批语义不变）', () => {
+    expect(coworkerTabTone({ status: 'failed', pendingApprovalCount: 1 })).toBe('attention');
+  });
+
+  it('spawning 无挂起项是 running', () => {
+    expect(coworkerTabTone({ status: 'idle', spawning: true })).toBe('running');
+  });
+
+  it('ask 全部解除后回到 running', () => {
+    expect(coworkerTabTone({ status: 'running', pendingAskCount: 0 })).toBe('running');
+  });
+
+  it('idle 无挂起项是 idle', () => {
+    expect(coworkerTabTone({ status: 'idle' })).toBe('idle');
   });
 });
