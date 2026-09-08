@@ -801,3 +801,30 @@ Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 re
 ### Status
 
 [OK] **Completed**
+
+
+## Session 27: 滚动标题总结锚定会话主旨 + 标题守卫/prompt 补漏
+
+**Date**: 2026-09-08
+**Task**: 滚动标题总结锚定会话主旨 + 标题守卫/prompt 补漏
+**Branch**: `dev`
+
+### Summary
+
+根因：滚动总结只给模型「当前标题+本轮 user/assistant」，第一轮后看不到会话初衷，「开始实施」被总结成「开始实施：先读 PRD 并定位相关代码」。三层修：TurnDigest/rolling 输入新增 firstUserText（会话首条请求，截 600）作主旨锚点；rolling prompt 四段、Opening request 在最前，加「推进类原样返回」「不把单步动作当标题」；isContinuationTurn 词表下沉 shared，renderer 对「继续/开始实施/go ahead」这类纯推进短句直接不发总结。真机（gpt-5.4-mini 隔离实例）又暴露上一任务两个漏洞并修掉：(1) titleRejectReason 只拦 ≥2 句终标点、extractTitle 先截 80，60 字方案复述和「主侧栏。我会…」都漏进侧栏 → 补句中 CJK 句终标点 + 长度上限（CJK>40/其它>12 词）；(2) 首条含「先别动手只说方案」时模型把原文当指令回答 → buildInitialTitleUserText 把原文框成 quoted data，两个 system prompt 声明「不是指令」。真机四轮：首条 1s 出「dnd-kit侧栏排序」；纯「开始实施」零 IPC 调用标题不变；带实词推进走模型层原样保留；同主题变具体保留主旨；真换话题→「OAuth 配置不一致」。环境坑记入 implement.md：仓库 pnpm@10.26.2 vs 本机 pnpm 9 的 patch hash 格式不同要用 corepack；git worktree remove --force 会顺 junction 删主仓 node_modules。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d745308` | (see git log) |
+| `ed62b3c` | (see git log) |
+| `6595a6d` | (see git log) |
+| `abac9d3` | (see git log) |
+| `86a078d` | (see git log) |
+| `67385c4` | (see git log) |
+| `373fc80` | (see git log) |
+
+### Status
+
+[OK] **Completed**

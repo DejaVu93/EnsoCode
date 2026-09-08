@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
+- **Total Sessions**: 27
 - **Last Active**: 2026-09-08
 <!-- @@@/auto:current-status -->
 
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-09-08 | 滚动标题总结锚定会话主旨 + 标题守卫/prompt 补漏 | `d745308`, `ed62b3c`, `6595a6d`, `abac9d3`, `86a078d`, `67385c4`, `373fc80` | `dev` |
 | 26 | 2026-09-08 | ask_user 问号等待态 | `70ac0dd` | `dev` |
 | 25 | 2026-09-08 | 标题总结：回退链多候选、递增超时、失败红叹号与手动重试 | `89892db`, `99c1bd7`, `e8ca4c4`, `c57ddc4`, `0713e0e`, `574d7a2`, `5888f82` | `dev` |
 | 24 | 2026-09-08 | Force read/find promptGuidelines + Hashline read 高亮/edit diff/offset 修复 | `19bf6963`, `4408183a`, `2d7c5ea5`, `d2998bbb` | `dev` |
