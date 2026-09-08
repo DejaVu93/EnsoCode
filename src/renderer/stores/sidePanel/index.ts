@@ -141,7 +141,8 @@ export const useSidePanelStore = create<SidePanelState>()(
 
       loadSnapshots: (conversationId) => {
         if (conversationId in get().snapshotsByConversation) return;
-        void window.electronAPI.changes.readSnapshots({ conversationId }).then((snapshots) => {
+        // 读失败也要标记已加载（空），否则 ChangesView 永不聚合；回包前已有 save 则不覆盖
+        const apply = (snapshots: Record<string, string>) => {
           if (conversationId in get().snapshotsByConversation) return;
           set({
             snapshotsByConversation: {
@@ -149,7 +150,10 @@ export const useSidePanelStore = create<SidePanelState>()(
               [conversationId]: snapshots,
             },
           });
-        });
+        };
+        void window.electronAPI.changes
+          .readSnapshots({ conversationId })
+          .then(apply, () => apply({}));
       },
     }),
     {
@@ -164,9 +168,7 @@ export const useSidePanelStore = create<SidePanelState>()(
       migrate: (persisted, version) => {
         const { state, snapshots } = splitLegacySnapshots(persisted, version);
         // 旧版快照一次性迁到磁盘；失败只是丢 old，Session 模式退回 reconstruct
-        const changes = (
-          window as { electronAPI?: { changes?: typeof window.electronAPI.changes } }
-        ).electronAPI?.changes;
+        const changes = window.electronAPI?.changes;
         if (changes) {
           for (const [conversationId, files] of Object.entries(snapshots)) {
             void changes.writeSnapshots({ conversationId, snapshots: files });

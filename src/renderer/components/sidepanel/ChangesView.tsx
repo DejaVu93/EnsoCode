@@ -200,6 +200,7 @@ export function ChangesView({
     [toggleCollapsed]
   );
 
+  const loading = !ready || (mode === 'git' ? gitLoading : !snapshots);
   const emptyText = (() => {
     if (mode === 'git') {
       if (gitError === 'not-repo') return t('Not a git repository.');
@@ -234,9 +235,9 @@ export function ChangesView({
         )}
       </div>
       <div className="min-h-0 flex-1">
-        {!ready || (mode === 'git' && gitLoading) || files.length === 0 ? (
+        {loading || files.length === 0 ? (
           <div className="flex h-full items-center justify-center px-4 text-center text-sm text-muted-foreground">
-            {ready && !(mode === 'git' && gitLoading) ? emptyText : t('Loading...')}
+            {loading ? t('Loading...') : emptyText}
           </div>
         ) : (
           <CodeView
