@@ -7,6 +7,7 @@
 - 变更范围保持最小，不做无关重构或功能扩展。
 - 跨模块、跨层或公开接口改动，先写清行为差距、所属层、必改文件和明确不做的相邻问题。
 - 优先复用现有实现模式；详细规范见 [`docs/engineering-guidelines.md`](docs/engineering-guidelines.md)。
+- 非平凡改动、排障或发现可复用经验时，使用 [`project-knowledge`](.agents/skills/project-knowledge/SKILL.md) 检索和沉淀项目知识。
 - 真实排查过的高代价陷阱见 [`docs/engineering-reference/big-question/`](docs/engineering-reference/big-question/)。
 
 ## 测试先行
