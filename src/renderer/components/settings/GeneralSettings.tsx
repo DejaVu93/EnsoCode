@@ -17,6 +17,10 @@ import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
 import { GENERATION_STALL_TIMEOUT_MINUTES } from '@/stores/sessions/stallTimeout';
 import { useSettingsStore } from '@/stores/settings';
+import {
+  AUTO_ARCHIVE_IDLE_DAYS,
+  AUTO_DELETE_ARCHIVED_DAYS,
+} from '@/stores/settings/autoArchiveIdleDays';
 import { ConfigSyncSettings } from './ConfigSyncSettings';
 import { SmartCompactPicker } from './SmartCompactPicker';
 
@@ -59,6 +63,7 @@ export function GeneralSettings() {
       </div>
 
       <NotificationSection />
+      <AutoArchiveSection />
       <SidePanelSection />
       <SmartCompactPicker />
       <WindowsLocalShellSection />
@@ -156,6 +161,100 @@ function SidePanelSection() {
             {GENERATION_STALL_TIMEOUT_MINUTES.map((value) => (
               <SelectItem key={value} value={String(value)}>
                 {value === 0 ? t('Never') : t('{{count}} min', { count: value })}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+function dayLabel(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  value: number
+): string {
+  if (value === 0) return t('Never');
+  if (value === 1) return t('{{count}} day', { count: value });
+  return t('{{count}} days', { count: value });
+}
+
+function AutoArchiveSection() {
+  const { t } = useI18n();
+  const autoArchiveIdleDays = useSettingsStore((s) => s.autoArchiveIdleDays);
+  const setAutoArchiveIdleDays = useSettingsStore((s) => s.setAutoArchiveIdleDays);
+  const autoArchiveMergedWorktrees = useSettingsStore((s) => s.autoArchiveMergedWorktrees);
+  const setAutoArchiveMergedWorktrees = useSettingsStore((s) => s.setAutoArchiveMergedWorktrees);
+  const autoDeleteArchivedDays = useSettingsStore((s) => s.autoDeleteArchivedDays);
+  const setAutoDeleteArchivedDays = useSettingsStore((s) => s.setAutoDeleteArchivedDays);
+  return (
+    <div className="space-y-2">
+      <div
+        className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+        data-settings-row="general.autoArchiveIdleDays"
+      >
+        <div className="min-w-0">
+          <p className="text-sm">{t('Archive idle conversations')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Move conversations that have been idle this long into Archived. Does not delete them.'
+            )}
+          </p>
+        </div>
+        <Select
+          items={Object.fromEntries(
+            AUTO_ARCHIVE_IDLE_DAYS.map((value) => [String(value), dayLabel(t, value)])
+          )}
+          value={String(autoArchiveIdleDays)}
+          onValueChange={(value) => setAutoArchiveIdleDays(Number(value))}
+        >
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            {AUTO_ARCHIVE_IDLE_DAYS.map((value) => (
+              <SelectItem key={value} value={String(value)}>
+                {dayLabel(t, value)}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </div>
+      <SwitchRow
+        rowId="general.autoArchiveMergedWorktrees"
+        title={t('Clean up merged worktrees')}
+        description={t(
+          'When a session worktree is merged and clean, remove the isolated directory and archive the conversation.'
+        )}
+        checked={autoArchiveMergedWorktrees}
+        onChange={setAutoArchiveMergedWorktrees}
+      />
+      <div
+        className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+        data-settings-row="general.autoDeleteArchivedDays"
+      >
+        <div className="min-w-0">
+          <p className="text-sm">{t('Delete archived conversations after')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Permanently delete conversations that have been archived longer than this. This cannot be undone. Choosing a positive value deletes already-overdue archived conversations immediately.'
+            )}
+          </p>
+        </div>
+        <Select
+          items={Object.fromEntries(
+            AUTO_DELETE_ARCHIVED_DAYS.map((value) => [String(value), dayLabel(t, value)])
+          )}
+          value={String(autoDeleteArchivedDays)}
+          onValueChange={(value) => setAutoDeleteArchivedDays(Number(value))}
+        >
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            {AUTO_DELETE_ARCHIVED_DAYS.map((value) => (
+              <SelectItem key={value} value={String(value)}>
+                {dayLabel(t, value)}
               </SelectItem>
             ))}
           </SelectPopup>

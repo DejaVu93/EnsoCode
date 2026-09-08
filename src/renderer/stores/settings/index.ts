@@ -26,6 +26,12 @@ import {
   oauthCredentialContext,
   useOauthCredentialStore,
 } from '@/stores/oauthCredentials';
+import {
+  DEFAULT_AUTO_ARCHIVE_IDLE_DAYS,
+  DEFAULT_AUTO_DELETE_ARCHIVED_DAYS,
+  normalizeAutoArchiveIdleDays,
+  normalizeAutoDeleteArchivedDays,
+} from './autoArchiveIdleDays';
 import { migrateSettings, SETTINGS_VERSION } from './migrate';
 import { electronStorage, getWriteGeneration, openPersistWriteGate } from './storage';
 import type {
@@ -128,6 +134,9 @@ const initialState = {
   chatWide: false,
   notifyMainAgentOnly: true,
   generationStallTimeoutMin: 0,
+  autoArchiveIdleDays: DEFAULT_AUTO_ARCHIVE_IDLE_DAYS,
+  autoArchiveMergedWorktrees: false,
+  autoDeleteArchivedDays: DEFAULT_AUTO_DELETE_ARCHIVED_DAYS,
   backgroundImageEnabled: false,
   backgroundSourceType: 'file' as BackgroundSourceType,
   backgroundImagePath: '',
@@ -261,6 +270,12 @@ export const useSettingsStore = create<SettingsState>()(
             ? Math.min(120, Math.max(0, Math.round(minutes)))
             : 0,
         }),
+      setAutoArchiveIdleDays: (days) =>
+        set({ autoArchiveIdleDays: normalizeAutoArchiveIdleDays(days) }),
+      setAutoArchiveMergedWorktrees: (autoArchiveMergedWorktrees) =>
+        set({ autoArchiveMergedWorktrees }),
+      setAutoDeleteArchivedDays: (days) =>
+        set({ autoDeleteArchivedDays: normalizeAutoDeleteArchivedDays(days) }),
 
       setBackgroundImageEnabled: (backgroundImageEnabled) => set({ backgroundImageEnabled }),
       setBackgroundSourceType: (backgroundSourceType) => set({ backgroundSourceType }),
@@ -761,6 +776,17 @@ export const useSettingsStore = create<SettingsState>()(
           segments.some((id, i) => s.statusLineSegments[i] !== id)
         ) {
           useSettingsStore.setState({ statusLineSegments: segments });
+        }
+        const autoArchiveIdleDays = normalizeAutoArchiveIdleDays(s.autoArchiveIdleDays);
+        if (autoArchiveIdleDays !== s.autoArchiveIdleDays) {
+          useSettingsStore.setState({ autoArchiveIdleDays });
+        }
+        const autoDeleteArchivedDays = normalizeAutoDeleteArchivedDays(s.autoDeleteArchivedDays);
+        if (autoDeleteArchivedDays !== s.autoDeleteArchivedDays) {
+          useSettingsStore.setState({ autoDeleteArchivedDays });
+        }
+        if (s.autoArchiveMergedWorktrees !== true && s.autoArchiveMergedWorktrees !== false) {
+          useSettingsStore.setState({ autoArchiveMergedWorktrees: false });
         }
         // 老用户（升级前已有配置）视为已完成引导，避免被打扰
         if (

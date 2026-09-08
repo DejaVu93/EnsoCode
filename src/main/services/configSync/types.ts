@@ -120,6 +120,9 @@ export interface ConfigSyncState {
   chatWide?: boolean;
   notifyMainAgentOnly?: boolean;
   generationStallTimeoutMin?: number;
+  autoArchiveIdleDays?: number;
+  autoArchiveMergedWorktrees?: boolean;
+  autoDeleteArchivedDays?: number;
   backgroundRandomInterval?: number;
   backgroundOpacity?: number;
   backgroundBlur?: number;

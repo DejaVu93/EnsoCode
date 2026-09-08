@@ -141,6 +141,12 @@ export interface SettingsState {
   notifyMainAgentOnly: boolean;
   /** 无 token/工具结果超过此时长则中止；0 = 永不；单位分钟 */
   generationStallTimeoutMin: number;
+  /** 闲置超过此天数自动归档；0 = 永不；缺省 30 */
+  autoArchiveIdleDays: number;
+  /** 已合并 worktree 清理并归档；缺省关 */
+  autoArchiveMergedWorktrees: boolean;
+  /** 归档超过此天数自动删除；0 = 永不；缺省 0 */
+  autoDeleteArchivedDays: number;
 
   // 背景图（主窗口生效；渲染见 BackgroundLayer + useBackgroundImage）
   /** 背景图总开关；缺省 false */
@@ -254,6 +260,9 @@ export interface SettingsState {
   setChatWide: (value: boolean) => void;
   setNotifyMainAgentOnly: (value: boolean) => void;
   setGenerationStallTimeoutMin: (minutes: number) => void;
+  setAutoArchiveIdleDays: (days: number) => void;
+  setAutoArchiveMergedWorktrees: (value: boolean) => void;
+  setAutoDeleteArchivedDays: (days: number) => void;
 
   // Background image actions（数值 setter 内部 clamp，非法值落回缺省）
   setBackgroundImageEnabled: (value: boolean) => void;

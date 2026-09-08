@@ -66,6 +66,11 @@ export const SETTINGS_DATA_COVERAGE = {
     'Desktop/phone completion notification preference; not an Enso capability.'
   ),
   generationStallTimeoutMin: excluded('Renderer stall-abort preference; not an Enso capability.'),
+  autoArchiveIdleDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
+  autoArchiveMergedWorktrees: excluded(
+    'Renderer sidebar archive preference; not an Enso capability.'
+  ),
+  autoDeleteArchivedDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
   providers: surfaces('providers.list'),
   defaultModel: surfaces('providers.default-model'),
   defaultReasoningEnabled: surfaces('providers.default-model'),
@@ -156,6 +161,13 @@ export const SETTINGS_ACTION_COVERAGE = {
   ),
   setGenerationStallTimeoutMin: excluded(
     'Renderer stall-abort preference; not an Enso capability.'
+  ),
+  setAutoArchiveIdleDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
+  setAutoArchiveMergedWorktrees: excluded(
+    'Renderer sidebar archive preference; not an Enso capability.'
+  ),
+  setAutoDeleteArchivedDays: excluded(
+    'Renderer sidebar archive preference; not an Enso capability.'
   ),
   setStatusLineSegments: surfaces('appearance.status-line-segments'),
   toggleStatusLineSegment: surfaces('appearance.status-line-segments'),

@@ -86,6 +86,9 @@ const STATE_KEYS = [
   'chatWide',
   'notifyMainAgentOnly',
   'generationStallTimeoutMin',
+  'autoArchiveIdleDays',
+  'autoArchiveMergedWorktrees',
+  'autoDeleteArchivedDays',
   'backgroundRandomInterval',
   'backgroundOpacity',
   'backgroundBlur',
@@ -872,9 +875,12 @@ export function validateBundle(value: unknown): ConfigSyncBundle {
     'expandLiveEdits',
     'chatWide',
     'notifyMainAgentOnly',
+    'autoArchiveMergedWorktrees',
   ])
     booleanField(state, key, 'state', false);
   numberField(state, 'generationStallTimeoutMin', 'state', 0, 120, true);
+  numberField(state, 'autoArchiveIdleDays', 'state', 0, 90, true);
+  numberField(state, 'autoDeleteArchivedDays', 'state', 0, 90, true);
   numberField(state, 'backgroundRandomInterval', 'state', 5, 86400, true);
   for (const [key, min, max] of [
     ['backgroundOpacity', 0, 1],
