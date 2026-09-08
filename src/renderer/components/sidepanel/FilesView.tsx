@@ -290,21 +290,28 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
       buildTimeline(conversation?.messages ?? [], running, conversation?.customEntries ?? [], root),
     [conversation?.customEntries, conversation?.messages, root, running]
   );
+  // 已完成的 edit/write 路径按次序折成字符串 key（不去重，同文件再改一次 key 也变）：
+  // 流式重建 timeline 时 key 不变就不重新读盘
+  const editedRelsKey = useMemo(
+    () =>
+      timeline
+        .flatMap((item) => {
+          if (item.kind !== 'tool' || item.state !== 'ok') return [];
+          if (item.name !== 'edit' && item.name !== 'write') return [];
+          return item.summary ? [item.summary] : [];
+        })
+        .join('\n'),
+    [timeline]
+  );
   useEffect(() => {
-    const rels = new Set(
-      timeline.flatMap((item) => {
-        if (item.kind !== 'tool' || item.state !== 'ok') return [];
-        if (item.name !== 'edit' && item.name !== 'write') return [];
-        return item.summary ? [item.summary] : [];
-      })
-    );
+    const rels = new Set(editedRelsKey ? editedRelsKey.split('\n') : []);
     for (const rel of rels) {
       if (!openDocsRef.current.some((doc) => doc.rel === rel)) continue;
       void window.electronAPI.workspaceFiles.read({ ...req, rel }).then((result) => {
         if (result.ok) applyDisk(rel, result.content);
       });
     }
-  }, [applyDisk, req, timeline]);
+  }, [applyDisk, req, editedRelsKey]);
 
   const seenWritesRef = useRef<Set<string> | null>(null);
   const seenWritesSessionRef = useRef(conversationId);
