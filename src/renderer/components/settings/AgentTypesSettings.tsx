@@ -152,7 +152,7 @@ export function AgentTypeList({ hasSubagentModels = true }: { hasSubagentModels?
             : mode === 'fixed'
               ? `${provider?.name ?? '?'} / ${entry.modelId}`
               : t('Follows the conversation model');
-        const thinkingChoice = thinkingChoiceOf(entry);
+        const thinkingChoice = mode === 'fixed' ? thinkingChoiceOf(entry) : '';
 
         return (
           <div key={entry.id} className="flex items-center gap-3 rounded-md border px-3 py-2.5">
@@ -282,7 +282,8 @@ export function AgentTypeEditDialog({
       skillIds,
       mcpServerIds,
       ...(modelMode === 'fixed' && providerId && modelId ? { providerId, modelId } : {}),
-      ...thinkingChoiceToFields(thinking),
+      // 非固定模型不存推理覆盖（跟随模型条目 / 会话）
+      ...thinkingChoiceToFields(modelMode === 'fixed' ? thinking : ''),
     };
     if (entry) updateAgentType(entry.id, payload);
     else addAgentType(payload);
@@ -339,24 +340,8 @@ export function AgentTypeEditDialog({
               <option value="fixed">{t('Fixed model')}</option>
             </select>
           </Field>
-          <Field>
-            <FieldLabel>{t('Thinking level')}</FieldLabel>
-            <select
-              value={thinking}
-              onChange={(e) => setThinking(e.target.value as ThinkingChoice)}
-              className="h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none"
-            >
-              <option value="">{t('Inherit (model entry or conversation)')}</option>
-              <option value="off">{t('Off')}</option>
-              {MODEL_THINKING_LEVEL_OVERRIDES.map((level) => (
-                <option key={level} value={level}>
-                  {level}
-                </option>
-              ))}
-            </select>
-          </Field>
           {modelMode === 'fixed' && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <Field>
                 <FieldLabel>{t('Provider (optional)')}</FieldLabel>
                 <select
@@ -389,6 +374,22 @@ export function AgentTypeEditDialog({
                   {models.map((m) => (
                     <option key={m.id} value={m.id}>
                       {m.id}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field>
+                <FieldLabel>{t('Thinking level')}</FieldLabel>
+                <select
+                  value={thinking}
+                  onChange={(e) => setThinking(e.target.value as ThinkingChoice)}
+                  className="h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none"
+                >
+                  <option value="">{t('Follow conversation')}</option>
+                  <option value="off">{t('Off')}</option>
+                  {MODEL_THINKING_LEVEL_OVERRIDES.map((level) => (
+                    <option key={level} value={level}>
+                      {level}
                     </option>
                   ))}
                 </select>
