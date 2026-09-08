@@ -1,6 +1,6 @@
 /**
  * R3 已合并 worktree 自动清理 + 归档的 store 动作测试。契约见
- * .trellis/tasks/09-08-sidebar-auto-archive/design.md：开关开时对
+ * docs/project-history/09-08-sidebar-auto-archive/design.md：开关开时对
  * exists && !dirty && ahead===0 的隔离会话走 cleanupWorktree 后归档；
  * exists===false 只归档不动磁盘；其余一律跳过。不调 removeConversation。
  */

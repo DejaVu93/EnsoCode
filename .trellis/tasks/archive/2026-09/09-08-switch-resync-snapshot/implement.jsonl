@@ -1,8 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "逻辑改动必须 Red-Green；本切片足够小，inline 即可"}
-{"file": ".trellis/spec/renderer/state.md", "reason": "sessions 正文是可丢弃投影，切回应对齐 worker 而不是信半截本地权威消息"}
-{"file": ".trellis/spec/big-question/optimistic-echo-blocks-snapshot.md", "reason": "snapshot 门必须认权威消息；半截权威正文也会挡住补水"}
-{"file": ".trellis/tasks/09-08-switch-resync-snapshot/prd.md", "reason": "切回无条件 requestSnapshot；lastViewedAt 离开时盖章"}
-{"file": "src/renderer/stores/sessions/messageCache.ts", "reason": "hydration / 热缓存 TTL 纯函数"}
-{"file": "src/renderer/stores/sessions/index.ts", "reason": "viewed 订阅：补水门槛与 lastViewedAt 盖章点"}
-{"file": "src/renderer/stores/sessions/index.test.ts", "reason": "切会话 requestSnapshot 与离开后 TTL 的回归"}
-{"file": "src/renderer/stores/sessions/messageCache.test.ts", "reason": "needsWorkerSnapshot / stampViewDeparture 单测"}

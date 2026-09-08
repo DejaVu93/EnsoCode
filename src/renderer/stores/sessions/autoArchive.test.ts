@@ -1,6 +1,6 @@
 /**
  * R2 闲置自动归档的 store 动作测试。契约见
- * .trellis/tasks/09-08-sidebar-auto-archive/design.md：只批量 patch 归档字段，
+ * docs/project-history/09-08-sidebar-auto-archive/design.md：只批量 patch 归档字段，
  * 不碰磁盘（不 cleanupWorktree / worktree.remove / agent.release / removeConversation）。
  */
 

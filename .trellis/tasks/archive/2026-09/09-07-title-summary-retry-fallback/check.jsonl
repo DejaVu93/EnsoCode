@@ -1,9 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "验证 TDD 纪律是否被遵守：测试先红后绿、实现没改测试文件让灯变绿"}
-{"file": ".trellis/spec/shared/index.md", "reason": "Quality Check：shared 层 parser 是否 fail-closed、旧形状是否被拒"}
-{"file": ".trellis/spec/shared/types.md", "reason": "Quality Check：新事件/命令是否走 hasExactKeys 且在 agentSessionIndex/reducer 各处旁路一致"}
-{"file": ".trellis/spec/main/index.md", "reason": "main 层 Quality Check 清单"}
-{"file": ".trellis/spec/main/ipc.md", "reason": "Quality Check：IPC handler 不信任渲染层传入、失败静默不影响发消息"}
-{"file": ".trellis/spec/renderer/index.md", "reason": "renderer 层 Quality Check 清单"}
-{"file": ".trellis/spec/renderer/state.md", "reason": "Quality Check：新字段是否进 partialize 剥离集、在飞守卫是否被绕过"}
-{"file": ".trellis/spec/renderer/styling.md", "reason": "Quality Check：红叹号 className 是否遵守 Tailwind/cn 约定，不用 class 子串断言"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨 shared/agent/main/renderer 四层的数据流一致性检查"}

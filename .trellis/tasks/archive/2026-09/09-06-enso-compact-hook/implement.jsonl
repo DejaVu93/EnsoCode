@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "TDD 范围：纯函数抽取/窗口/协议；大改才coworker"}
-{"file": ".trellis/spec/guides/pre-implementation-checklist.md", "reason": "改动边界、不扩大范围、TDD 角色分离门槛"}
-{"file": ".trellis/spec/main/services.md", "reason": "worker 只准 @shared + pi sdk；不写 ~/.pi"}
-{"file": ".trellis/spec/shared/types.md", "reason": "spawn-parent 字段已在 agent 协议，勿另起通道"}
-{"file": ".trellis/spec/renderer/i18n.md", "reason": "设置文案改英文 key 必须同步中文"}
-{"file": ".trellis/tasks/09-06-enso-compact-hook/research/compact-core-vs-eesv.md", "reason": "抄核不抄壳：10% 闸、工具泄漏、HOME 配置"}

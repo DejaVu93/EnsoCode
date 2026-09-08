@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "审查是否真走了 Red-Green、fixture 是否脱离本机 HOME、断言是否只验可观测行为"}
-{"file": ".trellis/spec/main/services.md", "reason": "读取器必须是纯函数；单来源失败不得拖垮 listExternalSessions"}
-{"file": ".trellis/spec/main/index.md", "reason": "未新增 IPC 时确认三点式链路未被误改；入参仍按 unknown 收窄"}
-{"file": ".trellis/spec/shared/types.md", "reason": "sourceId 扩展是否只改传输类型、是否从桶文件再导出"}
-{"file": ".trellis/spec/guides/pre-implementation-checklist.md", "reason": "变更范围是否只覆盖会话导入，有没有顺手改 provider/asset 扫描"}
-{"file": ".trellis/tasks/09-08-session-import-all-sources/research/source-layouts.md", "reason": "路径编码、OpenCode path 约定、Gemini slug/sha256 是否按核实结果实现"}

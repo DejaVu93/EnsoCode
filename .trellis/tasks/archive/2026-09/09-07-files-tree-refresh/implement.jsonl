@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/renderer/index.md", "reason": "renderer 改动检查清单：文案、组件复用、不跨层"}
-{"file": ".trellis/spec/renderer/i18n.md", "reason": "刷新按钮文案走 t()，复用已有 Refresh 键"}
-{"file": ".trellis/spec/testing.md", "reason": "纯逻辑抽函数 + TDD Red-Green"}
-{"file": ".trellis/spec/renderer/components.md", "reason": "树顶刷新按钮用现有 Button，不直接用 base-ui"}

@@ -14,7 +14,7 @@ import { useSettingsStore } from '@/stores/settings';
 
 /**
  * 模型元数据的 renderer 内存缓存。⛔ 不 persist、不进 settings store
- * （`.trellis/spec/renderer/state.md`：store 里的一切都会写进 settings.json）。
+ * （`docs/engineering-reference/renderer/state.md`：store 里的一切都会写进 settings.json）。
  *
  * 缓存键 `${oauthAccountKey ?? provider.id}/${modelId}`。
  * 失效：settings.providers 引用变化、OAuth 登录 `type:'done'`。无 TTL。

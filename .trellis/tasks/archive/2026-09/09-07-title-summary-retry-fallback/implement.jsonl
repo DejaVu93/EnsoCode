@@ -1,9 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "TDD 覆盖范围与 Red-Green 纪律；本任务 shared/agent/main/renderer 四层纯逻辑全部先红后绿"}
-{"file": ".trellis/spec/shared/index.md", "reason": "shared 层禁 node:* 例外与 parser 收窄约定；summarize-title 命令与 title-failed 事件的 parser 改动要遵守"}
-{"file": ".trellis/spec/shared/types.md", "reason": "AgentCommand/AgentWorkerEvent 判别联合与 hasExactKeys 校验约定；标题总结双守卫、可选事件字段校验记录在此"}
-{"file": ".trellis/spec/main/ipc.md", "reason": "IPC handler 只收 id 不信任渲染层、凭证由 Main 自读；AGENT_SUMMARIZE_TITLE 改为收集全部候选时沿用"}
-{"file": ".trellis/spec/main/services.md", "reason": "agentHost 与 worker 的命令下发边界、apiKey 到 Main 为止；summarizeConversationTitle 签名变更"}
-{"file": ".trellis/spec/renderer/state.md", "reason": "sessions store 的 pendingTitleBaselines 在飞守卫、titleLocked、partialize 剥离集约定；新增 titleSummaryError/lastTurnDigest 必须不持久化"}
-{"file": ".trellis/spec/renderer/components.md", "reason": "Sidebar ConversationRow 组件约定与 Tooltip/lucide 使用方式"}
-{"file": ".trellis/spec/renderer/i18n.md", "reason": "新增 i18n key 的落点与 zh/en 同步要求"}
-{"file": ".trellis/spec/big-question/pi-auto-retry-willretry.md", "reason": "pi runtime 的 abort/retry 语义，理解 completeSimple 超时后 stopReason='aborted' 的表现"}

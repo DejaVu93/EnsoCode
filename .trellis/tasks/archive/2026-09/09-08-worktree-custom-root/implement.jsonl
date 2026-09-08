@@ -1,6 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/main/settings-persistence.md", "reason": "new settings field registration rules"}
-{"file": ".trellis/spec/main/ipc.md", "reason": "worktree IPC handler conventions"}
-{"file": ".trellis/spec/renderer/state.md", "reason": "settings store field conventions"}
-{"file": ".trellis/spec/renderer/i18n.md", "reason": "new UI strings need zh entries"}
-{"file": ".trellis/spec/testing.md", "reason": "TDD coverage for pure resolver"}

@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/main/ipc.md", "reason": "IPC 三点式：通道、handler、preload"}
-{"file": ".trellis/spec/main/windows.md", "reason": "主窗口 workbench webContents、设置窗单例、before-quit"}
-{"file": ".trellis/spec/renderer/dialogs.md", "reason": "ConfirmDialog / AlertDialog 结构"}
-{"file": ".trellis/spec/renderer/i18n.md", "reason": "英文 key 即原文"}
-{"file": ".trellis/spec/testing.md", "reason": "可单测逻辑才强制 TDD"}

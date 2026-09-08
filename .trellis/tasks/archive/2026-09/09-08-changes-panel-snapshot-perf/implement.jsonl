@@ -1,5 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": ".trellis/spec/main/ipc.md", "reason": "IPC 三点式、unknown 收窄、只收 id"}
-{"file": ".trellis/spec/main/settings-persistence.md", "reason": "大段文本不进 settings/store；原子写；migrate 放 version bump"}
-{"file": ".trellis/spec/renderer/state.md", "reason": "sidePanel store 持久化边界"}
-{"file": ".trellis/spec/testing.md", "reason": "TDD、tmp dir fixture、中文用例"}

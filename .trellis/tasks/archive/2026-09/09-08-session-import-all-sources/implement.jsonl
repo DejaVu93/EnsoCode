@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "解析器必须 TDD；临时目录 fixture，不读本机 ~；脏输入不崩"}
-{"file": ".trellis/spec/main/index.md", "reason": "主进程读外部应用配置；缺文件/坏格式不能让扫描整体失败"}
-{"file": ".trellis/spec/main/services.md", "reason": "扫描器三件套：locations + 纯读取器 + 编排；单个来源失败不拖垮其它来源"}
-{"file": ".trellis/spec/shared/types.md", "reason": "跨进程传输类型只从桶文件导出；sourceId 联合类型是 IPC 契约"}
-{"file": ".trellis/spec/guides/pre-implementation-checklist.md", "reason": "解析器类改动用 coworker 角色分离；红灯到手前不写实现"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "新来源照抄现有 sessionImport 读取器，不要过早抽公共框架"}
-{"file": ".trellis/tasks/09-08-session-import-all-sources/research/source-layouts.md", "reason": "本机核实过的各来源落盘与字段，避免实现时再猜路径"}

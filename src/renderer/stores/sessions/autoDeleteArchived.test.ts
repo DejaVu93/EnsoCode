@@ -1,6 +1,6 @@
 /**
  * R4 超期归档自动删除的 store 动作测试。契约见
- * .trellis/tasks/09-08-sidebar-auto-archive/design.md：days>0 时对
+ * docs/project-history/09-08-sidebar-auto-archive/design.md：days>0 时对
  * staleArchivedConversationIdsToDelete 的候选逐条走现有 removeConversation；
  * days<=0 为从不，跳过 activeId，不二次确认。
  */

@@ -145,7 +145,7 @@ function pickField(doc: WorkspaceSearchDoc, tokens: string[]): WorkspaceSearchFi
 
 /**
  * 对本机工作台会话投影做检索排序。
- * 契约见 .trellis/tasks/09-03-workspace-search/design.md。
+ * 契约见 docs/project-history/09-03-workspace-search/design.md。
  */
 export function searchWorkspace(
   docs: WorkspaceSearchDoc[],

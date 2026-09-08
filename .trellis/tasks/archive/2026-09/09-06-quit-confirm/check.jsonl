@@ -1,4 +1,0 @@
-{"file": ".trellis/spec/main/ipc.md", "reason": "三点式链路是否齐全"}
-{"file": ".trellis/spec/main/windows.md", "reason": "是否误拦设置窗、是否发错 webContents"}
-{"file": ".trellis/spec/renderer/dialogs.md", "reason": "弹窗三件套 / ConfirmDialog"}
-{"file": ".trellis/spec/renderer/i18n.md", "reason": "中英文案 key"}

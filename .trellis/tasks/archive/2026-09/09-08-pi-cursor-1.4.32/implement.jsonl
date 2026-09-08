@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/testing.md", "reason": "补丁冒烟测试与同目录 .test.ts 约定"}
-{"file": ".trellis/spec/shared/conventions.md", "reason": "注释语言、Biome 与提交风格"}
-{"file": ".trellis/tasks/archive/2026-09/09-06-pi-cursor-1.4.31/prd.md", "reason": "上一轮升版+重打 hook 的范围与非目标"}
