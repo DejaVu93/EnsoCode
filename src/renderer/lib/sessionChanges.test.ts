@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateSessionChanges, reconstructOld } from './sessionChanges';
+import { aggregateSessionChanges, reconstructOld, sameRecord, sameTools } from './sessionChanges';
 
 describe('reconstructOld', () => {
   it('逆序 undo 多块 edit', () => {
@@ -13,6 +13,23 @@ describe('reconstructOld', () => {
 
   it('当前内容对不上则失败', () => {
     expect(reconstructOld('nope', [{ oldText: 'a', newText: 'b' }])).toBeNull();
+  });
+});
+
+describe('sameTools / sameRecord', () => {
+  const edits = [{ oldText: 'a', newText: 'b' }];
+  it('逐项 path/edits/writeContent 引用相同则视为未变', () => {
+    const prev = [{ path: 'a.ts', edits, writeContent: null }];
+    expect(sameTools(prev, [{ path: 'a.ts', edits, writeContent: null }])).toBe(true);
+    expect(sameTools(prev, [{ path: 'a.ts', edits: [...edits], writeContent: null }])).toBe(false);
+    expect(sameTools(prev, [])).toBe(false);
+    expect(sameTools(prev, [{ path: 'b.ts', edits, writeContent: null }])).toBe(false);
+  });
+
+  it('sameRecord 比较键集与值', () => {
+    expect(sameRecord({ a: 'x', b: null }, { a: 'x', b: null })).toBe(true);
+    expect(sameRecord({ a: 'x' }, { a: 'y' })).toBe(false);
+    expect(sameRecord({ a: 'x' }, { a: 'x', b: 'y' })).toBe(false);
   });
 });
 

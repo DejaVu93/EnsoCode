@@ -15,6 +15,24 @@ export interface SessionChangeFile {
   newText: string;
 }
 
+/** 逐项引用比较：流式重建 timeline 时 tools 内容未变则复用旧引用，避免下游读盘/解析 diff 重跑 */
+export function sameTools(prev: SessionChangeTool[], next: SessionChangeTool[]): boolean {
+  return (
+    prev.length === next.length &&
+    prev.every(
+      (tool, i) =>
+        tool.path === next[i].path &&
+        tool.edits === next[i].edits &&
+        tool.writeContent === next[i].writeContent
+    )
+  );
+}
+
+export function sameRecord<T>(prev: Record<string, T>, next: Record<string, T>): boolean {
+  const keys = Object.keys(next);
+  return keys.length === Object.keys(prev).length && keys.every((key) => prev[key] === next[key]);
+}
+
 export function reconstructOld(current: string, blocks: EditBlock[]): string | null {
   let text = current;
   for (let i = blocks.length - 1; i >= 0; i--) {

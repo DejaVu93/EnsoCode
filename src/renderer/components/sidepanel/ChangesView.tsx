@@ -1,9 +1,14 @@
 import { type CodeViewItem, parseDiffFromFile } from '@pierre/diffs';
 import { CodeView } from '@pierre/diffs/react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CODE_THEME, ensureHighlighter } from '@/components/chat/codeHighlighter';
 import { useI18n } from '@/i18n';
-import { aggregateSessionChanges } from '@/lib/sessionChanges';
+import {
+  aggregateSessionChanges,
+  type SessionChangeTool,
+  sameRecord,
+  sameTools,
+} from '@/lib/sessionChanges';
 import { cn } from '@/lib/utils';
 import { useSessionsStore } from '@/stores/sessions';
 import { buildTimeline } from '@/stores/sessions/timeline';
@@ -53,24 +58,21 @@ export function ChangesView({
     [conversation?.customEntries, conversation?.messages, running, root]
   );
 
-  const tools = useMemo(
-    () =>
-      timeline.flatMap((item) => {
-        if (item.kind !== 'tool' || item.state !== 'ok') return [];
-        if (item.name !== 'edit' && item.name !== 'write') return [];
-        if (!item.summary) return [];
-        if (item.name === 'edit' && !(item.edits && item.edits.length > 0)) return [];
-        if (item.name === 'write' && !item.writeContent) return [];
-        return [
-          {
-            path: item.summary,
-            edits: item.edits,
-            writeContent: item.writeContent,
-          },
-        ];
-      }),
-    [timeline]
-  );
+  // 流式每个 chunk 都重建 timeline；tools 内容不变就复用旧引用，否则下游读盘 + 全量 diff 解析每个 token 都跑一遍
+  const toolsRef = useRef<SessionChangeTool[]>([]);
+  const tools = useMemo(() => {
+    const next = timeline.flatMap((item): SessionChangeTool[] => {
+      if (item.kind !== 'tool' || item.state !== 'ok') return [];
+      if (item.name !== 'edit' && item.name !== 'write') return [];
+      if (!item.summary) return [];
+      if (item.name === 'edit' && !(item.edits && item.edits.length > 0)) return [];
+      if (item.name === 'write' && !item.writeContent) return [];
+      return [{ path: item.summary, edits: item.edits, writeContent: item.writeContent }];
+    });
+    if (sameTools(toolsRef.current, next)) return toolsRef.current;
+    toolsRef.current = next;
+    return next;
+  }, [timeline]);
 
   const [ready, setReady] = useState(false);
   const [currentByPath, setCurrentByPath] = useState<Record<string, string | null>>({});
@@ -101,7 +103,8 @@ export function ChangesView({
       })
     ).then((entries) => {
       if (!alive) return;
-      setCurrentByPath(Object.fromEntries(entries));
+      const next = Object.fromEntries(entries);
+      setCurrentByPath((prev) => (sameRecord(prev, next) ? prev : next));
     });
     return () => {
       alive = false;
