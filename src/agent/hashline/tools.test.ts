@@ -112,6 +112,34 @@ describe('wrapHashlineEditDefinition', () => {
     expect(stock.execute).not.toHaveBeenCalled();
   });
 
+  it('input 与非空 edits 混发时走 stock replace，不动 Hashline', async () => {
+    const { stock, writeText, wrapped } = wrappedFixture();
+    const params = {
+      path: '/tmp/a.ts',
+      input: '[/tmp/a.ts#0000]\nPUT 1.=1:\n+x',
+      edits: [{ oldText: 'world', newText: 'hello' }],
+    };
+    expect(wrapped.prepareArguments(params)).toEqual(params);
+    expect(await wrapped.execute('call-mixed', params)).toBe('stock-result');
+    expect(stock.execute).toHaveBeenCalledOnce();
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('description 明示两种互斥模式，input 描述给出 PUT 语法', () => {
+    const { wrapped } = wrappedFixture();
+    const desc = (wrapped as { description?: string }).description ?? '';
+    expect(desc).toMatch(/input/);
+    expect(desc).toMatch(/edits/);
+    expect(desc).toMatch(/not both|never both|mutually exclusive/i);
+    const schema = HASHLINE_EDIT_PARAMETERS as {
+      properties?: Record<string, { description?: string }>;
+    };
+    expect(schema.properties?.input?.description).toMatch(/PUT <start>\.=<end>:/);
+    expect(schema.properties?.input?.description).toMatch(/\+/);
+    const guidelines = (wrapped as { promptGuidelines?: string[] }).promptGuidelines ?? [];
+    expect(guidelines.join('\n')).not.toMatch(/CUT|MV|REM/);
+  });
+
   it('Hashline 执行详情携带补丁前后文本与原始 input', async () => {
     const path = '/tmp/a.ts';
     const body = 'world\n';
@@ -183,10 +211,11 @@ describe('selectHashlineTools', () => {
     expect(edit.execute).toHaveBeenCalledOnce();
   });
 
-  it('开启后混合参数直接拒绝且不调用 stock edit', async () => {
+  it('开启后 input 混发非空 edits 交给 stock edit 且剥掉 input', async () => {
     const { edit, selected } = setup(true);
-    await expect(selected.edit.execute('call-3', { input: 'PUT...', edits: [] })).rejects.toThrow();
-    expect(edit.execute).not.toHaveBeenCalled();
+    const edits = [{ oldText: 'a', newText: 'b' }];
+    await selected.edit.execute('call-3', { path: '/tmp/a.ts', input: '[/tmp/a.ts#0000]', edits });
+    expect(edit.execute).toHaveBeenCalledWith('replace', { path: '/tmp/a.ts', edits });
   });
 
   it('开启后无快照文件头的 Hashline 参数拒绝且不调用 stock edit', async () => {

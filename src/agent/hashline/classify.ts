@@ -1,8 +1,4 @@
-export type EditArgKind =
-  | { kind: 'replace' }
-  | { kind: 'hashline' }
-  | { kind: 'mixed' }
-  | { kind: 'invalid' };
+export type EditArgKind = { kind: 'replace' } | { kind: 'hashline' } | { kind: 'invalid' };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -17,6 +13,12 @@ function hasReplaceFields(value: Record<string, unknown>): boolean {
   return typeof value.oldText === 'string' && typeof value.newText === 'string';
 }
 
+/** 模型顺手填的占位：`edits: []` 或空 oldText+newText */
+function hasEmptyReplaceFields(value: Record<string, unknown>): boolean {
+  if ('edits' in value) return Array.isArray(value.edits) && value.edits.length === 0;
+  return value.oldText === '' && value.newText === '';
+}
+
 function looksLikeBrokenReplace(value: Record<string, unknown>): boolean {
   if ('edits' in value && !Array.isArray(value.edits)) return true;
   const hasOld = typeof value.oldText === 'string';
@@ -28,7 +30,10 @@ export function classifyEditArgs(input: unknown): EditArgKind {
   if (!isRecord(input)) return { kind: 'invalid' };
   const hashline = hasHashlineInput(input);
   const replace = hasReplaceFields(input);
-  if (hashline && replace) return { kind: 'mixed' };
+  // 混发：非空 replace 优先（精确匹配自校验）；空壳 replace 字段视为占位走 hashline
+  if (hashline && replace) {
+    return hasEmptyReplaceFields(input) ? { kind: 'hashline' } : { kind: 'replace' };
+  }
   if (hashline) return { kind: 'hashline' };
   if (replace) return { kind: 'replace' };
   if (looksLikeBrokenReplace(input) || typeof input.input === 'string') return { kind: 'invalid' };

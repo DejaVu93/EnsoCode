@@ -3,7 +3,14 @@ import { applyHashlineToFile } from './applyToFile';
 import { classifyEditArgs } from './classify';
 import { createHashlineEditTool } from './editTool';
 import { formatHashlineHeader, formatNumberedLines } from './format';
-import { HASHLINE_EDIT_GUIDELINES, withGuidelines } from './prompts';
+import {
+  EDIT_INVALID_MESSAGE,
+  HASHLINE_EDIT_DESCRIPTION,
+  HASHLINE_EDIT_GUIDELINES,
+  HASHLINE_PUT_EXAMPLE,
+  HASHLINE_PUT_RULE,
+  withGuidelines,
+} from './prompts';
 import type { InMemorySnapshotStore } from './snapshots';
 import { withHashlineGrep } from './withGrep';
 import { withHashlineRead } from './withRead';
@@ -16,13 +23,13 @@ export const HASHLINE_EDIT_PARAMETERS = {
   properties: {
     input: {
       type: 'string',
-      description:
-        'Hashline patch: first line [path#TAG] from a prior read/grep, then PUT operations',
+      description: `Hashline mode only (do not combine with edits/oldText/newText). First line: the exact [path#TAG] header from the latest read/grep/write. Then PUT blocks. ${HASHLINE_PUT_RULE} Example:\n${HASHLINE_PUT_EXAMPLE}`,
     },
-    path: { type: 'string', description: 'File path for replace edits' },
+    path: { type: 'string', description: 'Replace mode: file path (pair with edits)' },
     edits: {
       type: 'array',
-      description: 'Replace edits as {oldText, newText} objects',
+      description:
+        'Replace mode: [{oldText, newText}] with exact, unique oldText. Do not combine with input.',
       items: {
         type: 'object',
         properties: {
@@ -51,7 +58,10 @@ export function selectHashlineTools<T extends NamedTool>(options: {
   }
   const dual = createHashlineEditTool({
     applyReplace: (params) =>
-      (options.edit.execute as (id: string, params: unknown) => unknown)('replace', params),
+      (options.edit.execute as (id: string, params: unknown) => unknown)(
+        'replace',
+        withoutInput(params)
+      ),
     applyHashline: async (params) => {
       const input = String((params as { input?: string } | undefined)?.input ?? '');
       return applyHashlineToFile({
@@ -97,6 +107,7 @@ export function wrapHashlineEditDefinition<T extends { execute: (...args: never[
   return withGuidelines(
     {
       ...stock,
+      description: HASHLINE_EDIT_DESCRIPTION,
       parameters: HASHLINE_EDIT_PARAMETERS,
       prepareArguments: (args: unknown) => {
         if (classifyEditArgs(args).kind === 'hashline') return args;
@@ -104,7 +115,7 @@ export function wrapHashlineEditDefinition<T extends { execute: (...args: never[
       },
       execute: (async (toolCallId: string, params: unknown, ...rest: unknown[]) => {
         const kind = classifyEditArgs(params).kind;
-        if (kind === 'replace') return execute(toolCallId, params, ...rest);
+        if (kind === 'replace') return execute(toolCallId, withoutInput(params), ...rest);
         if (kind === 'hashline') {
           const input = String((params as { input?: string } | undefined)?.input ?? '');
           const applied = await applyHashlineToFile({
@@ -127,12 +138,16 @@ export function wrapHashlineEditDefinition<T extends { execute: (...args: never[
             },
           };
         }
-        if (kind === 'mixed') {
-          throw new Error('edit accepts either hashline input or replace edits, not both');
-        }
-        throw new Error('edit requires hashline input or replace edits');
+        throw new Error(EDIT_INVALID_MESSAGE);
       }) as T['execute'],
     },
     HASHLINE_EDIT_GUIDELINES
   );
+}
+
+/** 混发时 replace 优先：去掉 input，避免 stock edit 收到陆外字段 */
+function withoutInput(params: unknown): unknown {
+  if (!params || typeof params !== 'object' || !('input' in params)) return params;
+  const { input: _input, ...rest } = params as Record<string, unknown>;
+  return rest;
 }

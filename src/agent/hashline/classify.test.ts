@@ -16,16 +16,21 @@ describe('classifyEditArgs', () => {
     expect(classifyEditArgs({ oldText: 'a', newText: 'b' })).toEqual({ kind: 'replace' });
   });
 
-  it('拒绝同时包含 input 与 edits 的混合参数', () => {
+  it('input 与非空 edits 混发时 replace 优先（精确匹配自校验）', () => {
     expect(classifyEditArgs({ input: 'PUT...', edits: [{ oldText: 'a', newText: 'b' }] })).toEqual({
-      kind: 'mixed',
+      kind: 'replace',
+    });
+    expect(classifyEditArgs({ input: 'PUT...', oldText: 'a', newText: 'b' })).toEqual({
+      kind: 'replace',
     });
   });
 
-  it('拒绝同时包含 input 与遗留替换字段的混合参数', () => {
-    expect(classifyEditArgs({ input: 'PUT...', oldText: 'a', newText: 'b' })).toEqual({
-      kind: 'mixed',
+  it('input 与空壳 replace 字段混发时走 hashline（模型顺手填的占位）', () => {
+    expect(classifyEditArgs({ input: 'PUT...', edits: [] })).toEqual({ kind: 'hashline' });
+    expect(classifyEditArgs({ input: 'PUT...', oldText: '', newText: '' })).toEqual({
+      kind: 'hashline',
     });
+    expect(classifyEditArgs({ input: 'PUT...', path: '/a.ts' })).toEqual({ kind: 'hashline' });
   });
 
   it('把缺失或类型错误的形状归为无效参数', () => {

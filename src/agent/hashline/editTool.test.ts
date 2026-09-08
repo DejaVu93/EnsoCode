@@ -27,12 +27,19 @@ describe('createHashlineEditTool', () => {
     expect(callbacks.applyReplace).not.toHaveBeenCalled();
   });
 
-  it('混合参数直接拒绝且不调用任何处理器', async () => {
-    const callbacks = handlers();
-    const tool = createHashlineEditTool(callbacks);
-    await expect(tool.execute('call-3', { input: 'PUT...', edits: [] })).rejects.toThrow();
-    expect(callbacks.applyReplace).not.toHaveBeenCalled();
-    expect(callbacks.applyHashline).not.toHaveBeenCalled();
+  it('input 混发空壳 edits 走补丁处理器；混发非空 edits 走替换处理器', async () => {
+    const empty = handlers();
+    await createHashlineEditTool(empty).execute('call-3a', { input: 'PUT...', edits: [] });
+    expect(empty.applyHashline).toHaveBeenCalledOnce();
+    expect(empty.applyReplace).not.toHaveBeenCalled();
+
+    const filled = handlers();
+    await createHashlineEditTool(filled).execute('call-3b', {
+      input: '[a#0000]',
+      edits: [{ oldText: 'a', newText: 'b' }],
+    });
+    expect(filled.applyReplace).toHaveBeenCalledOnce();
+    expect(filled.applyHashline).not.toHaveBeenCalled();
   });
 
   it('无效参数直接拒绝', async () => {

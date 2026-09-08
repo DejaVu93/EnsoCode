@@ -1,3 +1,5 @@
+import { HASHLINE_PUT_RULE } from './prompts';
+
 interface PutOp {
   start: number;
   end: number;
@@ -21,10 +23,10 @@ function parsePuts(patch: string): PutOp[] {
       continue;
     }
     if (/^PUT \d+\*:/.test(line)) {
-      throw new Error(`block locator not supported: ${line}`);
+      throw new Error(`block locator not supported: ${line}. Only ${HASHLINE_PUT_RULE}`);
     }
     const match = /^PUT (\d+)\.=(\d+):$/.exec(line);
-    if (!match) throw new Error(`invalid hashline op: ${line}`);
+    if (!match) throw new Error(`invalid hashline op: ${line}. Only ${HASHLINE_PUT_RULE}`);
     const start = Number(match[1]);
     const end = Number(match[2]);
     i += 1;
