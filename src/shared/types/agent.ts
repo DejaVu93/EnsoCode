@@ -463,6 +463,17 @@ export type ChildHistoryResult =
   | { ok: true; projection: SafeJournalProjection }
   | { ok: false; code: 'not-found' | 'unavailable'; error: string };
 
+/**
+ * 手动「重新读取会话」结果。来源由 Main 决定：会话在 worker 内存活着 → live 快照（带事件 seq 水位）；
+ * 否则走 safe journal 只读投影（history）。失败一律给原因，渲染层保留旧内容并提示。
+ */
+export type ConversationReloadResult =
+  | { ok: true; source: 'live'; snapshot: SessionSnapshot; seq: number }
+  | { ok: true; source: 'history'; projection: SafeJournalProjection }
+  /** 根会话不在 worker 里：pi jsonl 尾窗（baseIndex 为绝对起点，与上滑翻页契约一致） */
+  | { ok: true; source: 'tail'; messages: ProjectedMessage[]; baseIndex: number }
+  | { ok: false; error: string };
+
 export type ParentHistoryTailResult =
   | { ok: true; messages: ProjectedMessage[]; baseIndex: number }
   | { ok: false; code: 'not-found' | 'unavailable'; error: string };
@@ -644,6 +655,7 @@ export type AgentCommand =
       entry: AgentSessionCustomEntry;
     }
   | { type: 'snapshot'; sessionId?: string }
+  | { type: 'reload-session'; requestId: string; sessionId: string }
   /** 不可被闲置回收的会话全集（桌面正在查看 + 手机订阅中），每次全量覆盖 */
   | { type: 'pin-sessions'; sessionIds: string[] }
   | { type: 'warm-mcp'; servers: McpServerSpawnConfig[] }
@@ -757,6 +769,11 @@ export interface SessionSnapshot {
   compactionNoticeAt?: number;
 }
 
+/** 手动只读快照的水位仅用于重读，不改变自动 snapshot 的兼容契约。 */
+export type SessionReloadResult =
+  | { ok: true; snapshot: SessionSnapshot; seq: number }
+  | { ok: false; error: string };
+
 /** 会话可用的斜杠命令（pi 的 skills 与 prompt templates），name 含 / 前缀 */
 export interface SlashCommand {
   name: string;
@@ -848,7 +865,7 @@ export type RendererChildLifecycleEvent =
 
 /** Renderer 收到统一普通+child事件流；exact profile proof 只在 worker→Main 边界。 */
 export type RendererAgentEvent =
-  | Exclude<AgentWorkerEvent, ChildLifecycleEvent | McpWorkerEvent>
+  | Exclude<AgentWorkerEvent, ChildLifecycleEvent | McpWorkerEvent | { type: 'session-reloaded' }>
   | RendererChildLifecycleEvent
   | { type: 'worker-exited' };
 
@@ -1018,7 +1035,8 @@ export type AgentWorkerEvent =
     }
   | McpWorkerEvent
   /** sessionId：targeted 快照回带请求目标；sessions 为空时 renderer 据此收回 started */
-  | { type: 'snapshot'; sessions: SessionSnapshot[]; partial?: boolean; sessionId?: string };
+  | { type: 'snapshot'; sessions: SessionSnapshot[]; partial?: boolean; sessionId?: string }
+  | { type: 'session-reloaded'; requestId: string; result: SessionReloadResult };
 
 /** MCP 连接旁路事件：无 identity/seq，不属于任何会话，Main 走独立 IPC 通道转发 */
 export type McpWorkerEvent =
@@ -2034,6 +2052,12 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         parseAgentSessionCustomEntry(value.entry)
         ? (value as unknown as AgentCommand)
         : null;
+    case 'reload-session':
+      return hasExactKeys(value, ['type', 'requestId', 'sessionId']) &&
+        isNonEmptyString(value.requestId) &&
+        isNonEmptyString(value.sessionId)
+        ? (value as unknown as AgentCommand)
+        : null;
     case 'snapshot':
       if (hasExactKeys(value, ['type'])) return { type: 'snapshot' };
       return hasExactKeys(value, ['type', 'sessionId']) && isNonEmptyString(value.sessionId)
@@ -2118,6 +2142,24 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
     value.type === 'child-ended'
   ) {
     return parseLifecycleEvent(value);
+  }
+  if (value.type === 'session-reloaded') {
+    if (
+      !hasExactKeys(value, ['type', 'requestId', 'result']) ||
+      !isNonEmptyString(value.requestId) ||
+      !isRecord(value.result)
+    )
+      return null;
+    const result = value.result;
+    const valid =
+      result.ok === true
+        ? hasExactKeys(result, ['ok', 'snapshot', 'seq']) &&
+          parseSessionSnapshot(result.snapshot) !== null &&
+          isSequence(result.seq)
+        : result.ok === false &&
+          hasExactKeys(result, ['ok', 'error']) &&
+          isNonEmptyString(result.error);
+    return valid ? (value as unknown as AgentWorkerEvent) : null;
   }
   if (value.type === 'snapshot') {
     return Array.isArray(value.sessions) &&

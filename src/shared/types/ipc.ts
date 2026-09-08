@@ -84,6 +84,8 @@ export const IPC_CHANNELS = {
   AGENT_SNAPSHOT: 'agent:snapshot',
   /** 已结束 child 的 safe journal 只读回放（路径由 Main 推导，请求只带 conversationId） */
   AGENT_CHILD_HISTORY_READ: 'agent:child-history-read',
+  /** 手动「重新读取会话」：Main 选来源（worker 活快照 / safe journal），只读不 spawn */
+  AGENT_CONVERSATION_RELOAD: 'agent:conversation-reload',
   /** 父会话 jsonl 尾窗/分页只读（不 spawn）；路径由 Main 从已登记 sessionFile 推导 */
   AGENT_PARENT_HISTORY_TAIL: 'agent:parent-history-tail',
   AGENT_SUMMARIZE_TITLE: 'agent:summarize-title',
