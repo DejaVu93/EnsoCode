@@ -828,3 +828,24 @@ Force read/find 拦截禁令写进 promptGuidelines；Hashline read 输出在 re
 ### Status
 
 [OK] **Completed**
+
+
+## Session 28: Changes 面板卡顿：快照移出 localStorage
+
+**Date**: 2026-09-08
+**Task**: Changes 面板卡顿：快照移出 localStorage
+**Branch**: `dev`
+
+### Summary
+
+根因：会话编辑前快照随 enso-side-panel persist 到 localStorage（实测 5.77MB），每次 set 全量 stringify+同步写。改为主进程 userData/changes-snapshots/<id>.json 落盘，persist v4 迁移，首次 IPC 清理已删会话；ChangesView 未回读不聚合。CDP 隔离环境验证通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3992bf19` | (see git log) |
+
+### Status
+
+[OK] **Completed**
