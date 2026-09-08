@@ -102,6 +102,9 @@ export interface SettingsState {
   /** Windows 本地 agent 命令壳；auto=本机 PowerShell。SSH/非 Windows 忽略。 */
   windowsLocalShell: WindowsLocalShell;
 
+  /** 隔离会话 worktree 的根目录（绝对路径）；'' = userData/worktrees。设备本地，不参与 config-sync */
+  worktreeRoot: string;
+
   /** 探后折叠：模型可 explore_mark / explore_fold；缺省关 */
   exploreFoldEnabled: boolean;
 
@@ -130,6 +133,8 @@ export interface SettingsState {
   openChangesOnFileEdit: boolean;
   /** 只读工具（read/grep/find/ls）一行化 + 进行中的轮也折组；缺省 true */
   compactReadOnlyTools: boolean;
+  /** agent 运行中 edit/write 的行到位时自动展开 diff/内容；缺省 true */
+  expandLiveEdits: boolean;
   /** 聊天列铺满：去掉两侧阶梯 max-w；缺省 false（居中阅读宽度） */
   chatWide: boolean;
   /** 仅主 agent 发送完成/失败通知；coworker 提问/审批仍提醒；缺省 true */
@@ -229,6 +234,7 @@ export interface SettingsState {
   setTerminalFontWeight: (weight: FontWeight) => void;
   setTerminalFontWeightBold: (weight: FontWeight) => void;
   setTerminalShell: (value: TerminalShell) => void;
+  setWorktreeRoot: (path: string) => void;
   toggleFavoriteTerminalTheme: (theme: string) => void;
   setLoadLocalSkills: (value: boolean) => void;
   setLoadHarnessAssets: (value: boolean) => void;
@@ -244,6 +250,7 @@ export interface SettingsState {
   setCustomProxyUrl: (url: string) => void;
   setOpenChangesOnFileEdit: (value: boolean) => void;
   setCompactReadOnlyTools: (value: boolean) => void;
+  setExpandLiveEdits: (value: boolean) => void;
   setChatWide: (value: boolean) => void;
   setNotifyMainAgentOnly: (value: boolean) => void;
   setGenerationStallTimeoutMin: (minutes: number) => void;

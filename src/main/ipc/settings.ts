@@ -37,6 +37,7 @@ export const SETTINGS_STATE_FIELDS = [
   'terminalFontWeight',
   'terminalFontWeightBold',
   'terminalShell',
+  'worktreeRoot',
   'favoriteTerminalThemes',
   'statusLineSegments',
   'loadLocalSkills',
@@ -53,6 +54,7 @@ export const SETTINGS_STATE_FIELDS = [
   'customProxyUrl',
   'openChangesOnFileEdit',
   'compactReadOnlyTools',
+  'expandLiveEdits',
   'chatWide',
   'notifyMainAgentOnly',
   'generationStallTimeoutMin',
@@ -102,6 +104,7 @@ export type SettingsStateField = (typeof SETTINGS_STATE_FIELDS)[number];
 const CONFIG_SYNC_EXCLUDED_STATE_FIELDS = new Set<SettingsStateField>([
   'windowsLocalShell',
   'terminalShell',
+  'worktreeRoot',
   'autoUpdate',
   'proxyMode',
   'customProxyUrl',

@@ -142,6 +142,11 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
     title: 'Compact read-only tool calls',
   },
   {
+    id: 'general.expandLiveEdits',
+    category: 'general',
+    title: 'Expand file edits while running',
+  },
+  {
     id: 'general.notifyMainAgentOnly',
     category: 'general',
     title: 'Notify only for the main agent',

@@ -33,7 +33,11 @@ import {
   type SyncTracking,
 } from '@shared/pair/syncProjection';
 import { loadCursors, saveCursor } from './storage';
-import { setCompactReadOnlyTools, setTerminalAppearance } from './stubs/settings-store';
+import {
+  setCompactReadOnlyTools,
+  setExpandLiveEdits,
+  setTerminalAppearance,
+} from './stubs/settings-store';
 import { setHostTheme } from './theme';
 
 /**
@@ -227,6 +231,7 @@ export class PairClient {
         setTerminalAppearance(payload.terminal, payload.terminalFontFamily);
         setHostTheme(payload.theme);
         setCompactReadOnlyTools(payload.compactReadOnlyTools !== false);
+        setExpandLiveEdits(payload.expandLiveEdits !== false);
         break;
       case 'agent-event':
         this.applyAgentEvent(payload.event as Record<string, unknown>);

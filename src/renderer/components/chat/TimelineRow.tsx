@@ -1194,19 +1194,21 @@ function ToolContentScroller({
 function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
   const { t } = useI18n();
   const compactReadOnly = useSettingsStore((s) => s.compactReadOnlyTools);
+  const expandLiveEdits = useSettingsStore((s) => s.expandLiveEdits);
   const compact = compactReadOnly && isReadOnlyTool(item);
   const hasDiff = Boolean(item.edits && item.edits.length > 0);
   const hasWrite = Boolean(item.writeContent);
   const expandable = hasDiff || hasWrite || Boolean(item.output);
-  // edit 的 diff 与 write 的内容只在本轮直播（running）时默认展开（「直接看到」）；
+  // edit 的 diff 与 write 的内容只在本轮直播（running）且开启 expandLiveEdits 时默认展开；
   // 历史会话挂载时全部折叠——否则切会话时视口内成排 FileDiff 同步解析+高亮，
   // 主线程阻塞几秒白屏
-  const [expanded, setExpanded] = useState((hasDiff || hasWrite) && item.state === 'running');
+  const autoExpand = expandLiveEdits && (hasDiff || hasWrite) && item.state === 'running';
+  const [expanded, setExpanded] = useState(autoExpand);
   // 直播中 edits/writeContent 随参数流式补齐晚于行挂载：到位时自动展开。
   // 历史会话挂载时 state 已是终态，不会触发；用户手动收起后依赖项不变，不会重新弹开
   useEffect(() => {
-    if (item.state === 'running' && (hasDiff || hasWrite)) setExpanded(true);
-  }, [item.state, hasDiff, hasWrite]);
+    if (autoExpand) setExpanded(true);
+  }, [autoExpand]);
 
   if (item.todos) return <TodoRow todos={item.todos} />;
   if (item.name.startsWith('goal_')) return <GoalSignalRow item={item} />;

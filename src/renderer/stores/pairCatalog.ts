@@ -108,6 +108,7 @@ function buildPayload(): PairCatalogPayload {
     terminal: getXtermTheme(settings.terminalTheme),
     terminalFontFamily: settings.terminalFontFamily,
     compactReadOnlyTools: settings.compactReadOnlyTools,
+    expandLiveEdits: settings.expandLiveEdits,
   };
 }
 
@@ -122,6 +123,7 @@ function catalogPushFingerprint(payload: PairCatalogPayload): string {
     terminal: payload.terminal,
     terminalFontFamily: payload.terminalFontFamily,
     compactReadOnlyTools: payload.compactReadOnlyTools,
+    expandLiveEdits: payload.expandLiveEdits,
   });
 }
 
@@ -168,7 +170,8 @@ export function bindPairCatalogSync(): void {
       state.theme !== prev.theme ||
       state.terminalTheme !== prev.terminalTheme ||
       state.terminalFontFamily !== prev.terminalFontFamily ||
-      state.compactReadOnlyTools !== prev.compactReadOnlyTools
+      state.compactReadOnlyTools !== prev.compactReadOnlyTools ||
+      state.expandLiveEdits !== prev.expandLiveEdits
     ) {
       schedulePush();
     }

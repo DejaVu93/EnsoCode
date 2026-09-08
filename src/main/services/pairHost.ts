@@ -154,6 +154,7 @@ let theme: HostAppearance = 'system';
 let terminal: TerminalPalette | undefined;
 let terminalFontFamily: string | undefined;
 let compactReadOnlyTools = true;
+let expandLiveEdits = true;
 /** 剥密前的完整项目路径映射，用于 spawn 反查 cwd */
 let whitelist: SpawnWhitelist = { projects: [], providers: [] };
 
@@ -753,6 +754,7 @@ async function sendMeta(conn: Connection): Promise<void> {
     ...(terminal ? { terminal } : {}),
     ...(terminalFontFamily ? { terminalFontFamily } : {}),
     compactReadOnlyTools,
+    expandLiveEdits,
   };
   const vapidPublicKey = getVapidPublicKey();
   const hostInfo = { hostname: os.hostname(), appVersion: app.getVersion() };
@@ -880,6 +882,7 @@ export function updatePairCatalog(payload: {
   terminal?: TerminalPalette;
   terminalFontFamily?: string;
   compactReadOnlyTools?: boolean;
+  expandLiveEdits?: boolean;
 }): void {
   catalog = payload.catalog;
   catalogReady = true;
@@ -891,6 +894,7 @@ export function updatePairCatalog(payload: {
   terminal = payload.terminal;
   terminalFontFamily = payload.terminalFontFamily;
   compactReadOnlyTools = payload.compactReadOnlyTools !== false;
+  expandLiveEdits = payload.expandLiveEdits !== false;
   whitelist = {
     projects: payload.projectPaths,
     providers: payload.providers.map((p) => ({

@@ -139,4 +139,5 @@ export interface PairCatalogPayload {
   };
   terminalFontFamily?: string;
   compactReadOnlyTools?: boolean;
+  expandLiveEdits?: boolean;
 }

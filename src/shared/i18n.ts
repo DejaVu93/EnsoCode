@@ -8,6 +8,11 @@ export const zhTranslations: Record<string, string> = {
   'System default': '系统默认',
   'Applies to new side panel terminals. SSH projects keep the remote login shell.':
     '仅对新开的侧边栏终端生效。SSH 项目仍用远端登录 shell。',
+  'Worktree root directory': 'Worktree 根目录',
+  'Where isolated session worktrees are created. Leave empty to use the app data directory. Existing worktrees stay where they are.':
+    '隔离会话的 worktree 建在此目录下。留空则用应用数据目录。已有 worktree 不迁移。',
+  'Default location': '默认位置',
+  'Enter an absolute path': '请输入绝对路径',
   'Choose interface theme': '选择界面主题',
   'Color scheme': '配色方案',
   Dark: '深色',
@@ -135,6 +140,9 @@ export const zhTranslations: Record<string, string> = {
     'Agent 改文件后自动打开右侧 Changes',
   'Open in side panel': '在侧栏打开',
   'Compact read-only tool calls': '精简只读工具调用',
+  'Expand file edits while running': '运行中自动展开文件改动',
+  'Automatically unfold the diff or written content of edit/write calls while the agent is still running':
+    'agent 运行中，edit/write 调用的 diff 或写入内容自动展开',
   'Verified smart compaction': '验证式智能压缩',
   'Use Enso verified summary for long-session compact. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.':
     'Enso 自有验证式摘要做长会话 compact。失败回退默认压缩。可能更慢、更费 token。下一个会话生效。',

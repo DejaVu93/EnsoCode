@@ -82,6 +82,7 @@ const STATE_KEYS = [
   'hashlineEditEnabled',
   'openChangesOnFileEdit',
   'compactReadOnlyTools',
+  'expandLiveEdits',
   'chatWide',
   'notifyMainAgentOnly',
   'generationStallTimeoutMin',
@@ -866,6 +867,7 @@ export function validateBundle(value: unknown): ConfigSyncBundle {
     'hashlineEditEnabled',
     'openChangesOnFileEdit',
     'compactReadOnlyTools',
+    'expandLiveEdits',
     'chatWide',
     'notifyMainAgentOnly',
   ])

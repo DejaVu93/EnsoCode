@@ -107,6 +107,7 @@ const initialState = {
   terminalFontWeight: 'normal' as FontWeight,
   terminalFontWeightBold: '500' as FontWeight,
   terminalShell: 'auto' as const,
+  worktreeRoot: '',
   favoriteTerminalThemes: [] as string[],
   statusLineSegments: [...DEFAULT_STATUS_LINE_SEGMENTS] as StatusLineSegmentId[],
   loadLocalSkills: true,
@@ -123,6 +124,7 @@ const initialState = {
   customProxyUrl: '',
   openChangesOnFileEdit: false,
   compactReadOnlyTools: true,
+  expandLiveEdits: true,
   chatWide: false,
   notifyMainAgentOnly: true,
   generationStallTimeoutMin: 0,
@@ -220,6 +222,7 @@ export const useSettingsStore = create<SettingsState>()(
       setTerminalFontWeightBold: (terminalFontWeightBold) => set({ terminalFontWeightBold }),
       setTerminalShell: (terminalShell) =>
         set({ terminalShell: parseTerminalShell(terminalShell) }),
+      setWorktreeRoot: (worktreeRoot) => set({ worktreeRoot: worktreeRoot.trim() }),
 
       toggleFavoriteTerminalTheme: (theme) =>
         set((state) => ({
@@ -246,6 +249,7 @@ export const useSettingsStore = create<SettingsState>()(
       setCustomProxyUrl: (customProxyUrl) => set({ customProxyUrl }),
       setOpenChangesOnFileEdit: (openChangesOnFileEdit) => set({ openChangesOnFileEdit }),
       setCompactReadOnlyTools: (compactReadOnlyTools) => set({ compactReadOnlyTools }),
+      setExpandLiveEdits: (expandLiveEdits) => set({ expandLiveEdits }),
       setChatWide: (chatWide) => {
         document.documentElement.classList.toggle('enso-chat-wide', chatWide);
         set({ chatWide });

@@ -2,6 +2,7 @@ import { isValidProxyUrl, type ProxyMode } from '@shared/proxy';
 import { type TerminalShell, terminalShellsForPlatform } from '@shared/terminalShell';
 import type { UpdateStatus } from '@shared/types/updater';
 import type { WindowsLocalShell } from '@shared/windowsLocalShell';
+import { isAbsolutePathLike } from '@shared/worktreeRoot';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -62,6 +63,7 @@ export function GeneralSettings() {
       <SmartCompactPicker />
       <WindowsLocalShellSection />
       <TerminalShellSection />
+      <WorktreeRootSection />
       <ProxySection />
       <ConfigSyncSettings />
       <UpdateSection />
@@ -92,6 +94,8 @@ function SidePanelSection() {
   const setOpenChangesOnFileEdit = useSettingsStore((s) => s.setOpenChangesOnFileEdit);
   const compactReadOnlyTools = useSettingsStore((s) => s.compactReadOnlyTools);
   const setCompactReadOnlyTools = useSettingsStore((s) => s.setCompactReadOnlyTools);
+  const expandLiveEdits = useSettingsStore((s) => s.expandLiveEdits);
+  const setExpandLiveEdits = useSettingsStore((s) => s.setExpandLiveEdits);
   const generationStallTimeoutMin = useSettingsStore((s) => s.generationStallTimeoutMin);
   const setGenerationStallTimeoutMin = useSettingsStore((s) => s.setGenerationStallTimeoutMin);
   return (
@@ -113,6 +117,15 @@ function SidePanelSection() {
         )}
         checked={compactReadOnlyTools}
         onChange={setCompactReadOnlyTools}
+      />
+      <SwitchRow
+        rowId="general.expandLiveEdits"
+        title={t('Expand file edits while running')}
+        description={t(
+          'Automatically unfold the diff or written content of edit/write calls while the agent is still running'
+        )}
+        checked={expandLiveEdits}
+        onChange={setExpandLiveEdits}
       />
       <div
         className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
@@ -190,6 +203,69 @@ function TerminalShellSection() {
           ))}
         </SelectPopup>
       </Select>
+    </div>
+  );
+}
+
+function WorktreeRootSection() {
+  const { t } = useI18n();
+  const worktreeRoot = useSettingsStore((s) => s.worktreeRoot);
+  const setWorktreeRoot = useSettingsStore((s) => s.setWorktreeRoot);
+  const [draft, setDraft] = React.useState(worktreeRoot);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setDraft(worktreeRoot);
+  }, [worktreeRoot]);
+
+  const commit = (value: string) => {
+    const next = value.trim();
+    if (next && !isAbsolutePathLike(next)) {
+      setError(t('Enter an absolute path'));
+      return;
+    }
+    setError(null);
+    setWorktreeRoot(next);
+  };
+
+  const browse = async () => {
+    const dir = await window.electronAPI.dialog.selectDirectory();
+    if (dir) {
+      setDraft(dir);
+      commit(dir);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+      data-settings-row="general.worktreeRoot"
+    >
+      <div className="min-w-0">
+        <p className="text-sm">{t('Worktree root directory')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'Where isolated session worktrees are created. Leave empty to use the app data directory. Existing worktrees stay where they are.'
+          )}
+        </p>
+      </div>
+      <div className="w-72 shrink-0 space-y-1">
+        <div className="flex items-center gap-2">
+          <Input
+            value={draft}
+            placeholder={t('Default location')}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => commit(draft)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commit(draft);
+            }}
+          />
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => void browse()}>
+            {t('Browse')}
+          </Button>
+        </div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+      </div>
     </div>
   );
 }

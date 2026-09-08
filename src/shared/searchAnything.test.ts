@@ -197,6 +197,7 @@ describe('buildSettingsCatalog', () => {
     'general.terminalShell',
     'general.openChangesOnFileEdit',
     'general.compactReadOnlyTools',
+    'general.expandLiveEdits',
     'general.notifyMainAgentOnly',
     'general.smartCompactEnabled',
     'general.generationStallTimeout',

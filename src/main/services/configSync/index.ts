@@ -74,6 +74,7 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   customProxyUrl: { mode: 'excluded', reason: 'device network configuration may contain secrets' },
   openChangesOnFileEdit: { mode: 'portable' },
   compactReadOnlyTools: { mode: 'portable' },
+  expandLiveEdits: { mode: 'portable' },
   chatWide: { mode: 'portable' },
   notifyMainAgentOnly: { mode: 'portable' },
   generationStallTimeoutMin: { mode: 'portable' },
