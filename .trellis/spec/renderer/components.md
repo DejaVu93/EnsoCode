@@ -110,3 +110,17 @@
   <p className="mt-1 text-muted-foreground text-xs">{t('...引导下一步操作')}</p>
 </div>
 ```
+
+## 代码 diff 高亮走 worker 池
+
+`@pierre/diffs` 的 `CodeView` / `FileDiff` / `File` 默认在主线程同步跑 shiki **JS 正则引擎**：
+100 KB 源码 ≈ 2 s 卡死（CDP profile 全在 `findNextMatchSync`）。主窗口根部已挂
+`components/chat/DiffWorkerPool.tsx`（`WorkerPoolContextProvider`，worker 经 Vite `?worker` 引入，
+`electron.vite.config.ts` 里 `worker.format: 'es'`——iife 打不了 code-splitting）。
+
+- 新的 diff 展示**不要传 `disableWorkerPool`**，直接吃池；主题/语言只改 `codeHighlighter.ts` 的
+  `CODE_THEME` / `LANGS`，provider 引用同一份，不另开分叉。
+- 编辑态 `File edit`（FilesView）与聊天 `EditDiff` 仍是 `disableWorkerPool`；去掉前在真机验一次编辑回显。
+- 只有 `index.html` 挂了 provider，设置窗没有；`index.html` CSP 的 `worker-src 'self' blob:` 是它的前提。
+- 验证方法：CDP `/json/list` 应出现 `type: worker`；prod 是 `file://`，模块 worker 照常可加载
+  （已用 bogus 消息回 `Unknown request type` 验过）。
