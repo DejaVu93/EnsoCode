@@ -291,6 +291,19 @@ export class BrowserHost {
     this.layout();
   }
 
+  /**
+   * 上报方（renderer）崩溃 / 重载 / 不再上报：覆盖状态是「最后一次上报」而不是持久事实，
+   * 沉下去的闩锁会把 guest 永久变成不可交互。没有活着的上报方就回落到「没被盖住」。
+   */
+  resetOverlayReports(): void {
+    this.overlayActive = false;
+    if (this.shown?.covered) this.shown = { ...this.shown, covered: false };
+    if (this.shownDevtools?.covered) {
+      this.shownDevtools = { ...this.shownDevtools, covered: false };
+    }
+    this.layout();
+  }
+
   setDevTools(tabId: string, open: boolean): BrowserTabState {
     const tab = this.tabs.get(tabId);
     if (!tab) return EMPTY_STATE;

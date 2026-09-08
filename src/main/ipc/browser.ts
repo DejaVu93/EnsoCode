@@ -1,18 +1,46 @@
 import { parseBrowserViewport } from '@shared/browser/viewport';
 import { IPC_CHANNELS } from '@shared/types';
-import { ipcMain } from 'electron';
+import { ipcMain, type WebContents } from 'electron';
 import { browserHost } from '../services/browserHost';
 import { sendToAllWindows } from '../windows/createAppWindow';
+import { isMainWebContents } from '../windows/MainWindow';
 
 const isId = (value: unknown): value is string => typeof value === 'string' && value.length > 0;
 const CLEAR_KINDS = new Set(['cookies', 'cache', 'all']);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  Boolean(value) && typeof value === 'object';
+
+const watchedReporters = new WeakSet<WebContents>();
+
+/** 上报方没了 / 整页重载：不把上一代 renderer 的遮挡值永久闩住。 */
+function watchOverlayReporter(sender: WebContents): void {
+  if (watchedReporters.has(sender)) return;
+  watchedReporters.add(sender);
+  const reset = () => browserHost.resetOverlayReports();
+  sender.on('destroyed', reset);
+  sender.on('render-process-gone', reset);
+  sender.on('did-start-navigation', (details: unknown) => {
+    if (!isRecord(details)) return;
+    if (details.isMainFrame === true && details.isSameDocument !== true) reset();
+  });
+}
+
+/** 遮挡上报只信主窗口 renderer；共用 preload 的设置窗开 Dialog 不得把主窗 guest 沉下去。 */
+const fromMainRenderer = (event: { sender: WebContents }): boolean => {
+  if (!isMainWebContents(event.sender.id)) return false;
+  watchOverlayReporter(event.sender);
+  return true;
+};
 
 /** 右侧面板内嵌浏览器：矩形上报、地址栏动作、清数据。业务在 browserHost。 */
 export function registerBrowserHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.BROWSER_SET_VIEWPORT,
-    (_event, tabId: unknown, conversationId: unknown, raw: unknown, covered: unknown) => {
-      if (!isId(tabId) || !isId(conversationId)) return browserHost.state('');
+    (event, tabId: unknown, conversationId: unknown, raw: unknown, covered: unknown) => {
+      if (!isId(tabId) || !isId(conversationId) || !fromMainRenderer(event)) {
+        return browserHost.state('');
+      }
       return browserHost.setViewport(
         tabId,
         conversationId,
@@ -21,7 +49,8 @@ export function registerBrowserHandlers(): void {
       );
     }
   );
-  ipcMain.on(IPC_CHANNELS.BROWSER_SET_OVERLAY_ACTIVE, (_event, active: unknown) => {
+  ipcMain.on(IPC_CHANNELS.BROWSER_SET_OVERLAY_ACTIVE, (event, active: unknown) => {
+    if (!fromMainRenderer(event)) return;
     browserHost.setOverlayActive(active === true);
   });
   ipcMain.handle(
@@ -69,8 +98,10 @@ export function registerBrowserHandlers(): void {
   });
   ipcMain.handle(
     IPC_CHANNELS.BROWSER_SET_DEVTOOLS_VIEWPORT,
-    (_event, tabId: unknown, conversationId: unknown, raw: unknown, covered: unknown) => {
-      if (!isId(tabId) || !isId(conversationId)) return browserHost.state('');
+    (event, tabId: unknown, conversationId: unknown, raw: unknown, covered: unknown) => {
+      if (!isId(tabId) || !isId(conversationId) || !fromMainRenderer(event)) {
+        return browserHost.state('');
+      }
       return browserHost.setDevToolsViewport(
         tabId,
         conversationId,
