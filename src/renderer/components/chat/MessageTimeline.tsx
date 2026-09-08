@@ -363,6 +363,11 @@ export function MessageTimeline({
         <div className="flex items-start gap-2">
           <p className="min-w-0 flex-1 text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>
           <RetryTurnButton />
+          {onRetryResume && (
+            <Button size="sm" variant="outline" onClick={onRetryResume}>
+              {t('Retry resume')}
+            </Button>
+          )}
         </div>
       )}
     </div>

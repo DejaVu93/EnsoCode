@@ -108,6 +108,9 @@ describe('needsHistoryHydration', () => {
     expect(
       needsHistoryHydration({ started: true, sessionFile: undefined, messages: [], spawning: true })
     ).toBe(false);
+  });
+
+  it('failed 不挡 jsonl 历史：运行态失败与历史可读是两回事，否则一次瞬时失败就永久空白', () => {
     expect(
       needsHistoryHydration({
         started: false,
@@ -115,6 +118,19 @@ describe('needsHistoryHydration', () => {
         messages: [],
         spawning: false,
         status: 'failed',
+      })
+    ).toBe(true);
+  });
+
+  it('已尝试过读历史（含失败）就不再补，避免 Preparing 永久转圈', () => {
+    expect(
+      needsHistoryHydration({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        messages: [],
+        spawning: false,
+        status: 'failed',
+        historyLoadAttempted: true,
       })
     ).toBe(false);
   });

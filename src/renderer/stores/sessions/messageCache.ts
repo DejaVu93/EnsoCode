@@ -31,16 +31,21 @@ export function hasAuthoritativeMessages(messages: readonly { optimistic?: boole
   return messages.some((message) => !message.optimistic);
 }
 
-/** 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 jsonl 尾窗 */
+/**
+ * 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 jsonl 尾窗。
+ * 不看 status：运行态 failed 与 jsonl 可读是两回事，failed 挡补水会把一次瞬时失败
+ * 固化成「只剩红字、历史空白」。已尝试过（含失败）由 historyLoadAttempted 收口，避免永久转圈。
+ */
 export function needsHistoryHydration(conversation: {
   started: boolean;
   sessionFile?: string;
   messages: readonly { optimistic?: boolean }[];
   spawning: boolean;
   status?: string;
+  historyLoadAttempted?: boolean;
 }): boolean {
   return (
-    conversation.status !== 'failed' &&
+    !conversation.historyLoadAttempted &&
     (conversation.started || Boolean(conversation.sessionFile)) &&
     !hasAuthoritativeMessages(conversation.messages) &&
     !conversation.spawning
@@ -75,6 +80,7 @@ export function chatSurfaceBusy(conversation: {
   messages: readonly { optimistic?: boolean }[];
   spawning: boolean;
   status?: string;
+  historyLoadAttempted?: boolean;
 }): boolean {
   if (conversation.status === 'running') return true;
   if (hasAuthoritativeMessages(conversation.messages)) return false;
@@ -88,6 +94,7 @@ export function chatTimelineBusy(conversation: {
   messages: readonly { optimistic?: boolean }[];
   spawning: boolean;
   status?: string;
+  historyLoadAttempted?: boolean;
 }): boolean {
   return (
     conversation.status === 'running' ||
@@ -98,7 +105,7 @@ export function chatTimelineBusy(conversation: {
       sessionFile: conversation.sessionFile,
       messages: conversation.messages,
       spawning: conversation.spawning,
-      status: conversation.status,
+      historyLoadAttempted: conversation.historyLoadAttempted,
     })
   );
 }
