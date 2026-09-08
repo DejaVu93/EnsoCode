@@ -193,7 +193,7 @@ export function archivedConversationGroups(
   return groups;
 }
 
-function isActiveTone(id: string, conversations: Conversations): boolean {
+export function isActiveTone(id: string, conversations: Conversations): boolean {
   const conversation = conversations[id];
   if (!conversation) return false;
   const tone = conversationDotTone({

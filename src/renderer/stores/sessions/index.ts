@@ -68,7 +68,7 @@ import {
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
 import { cachedPartializeSessions } from './persistSnapshot';
-import { staleUnarchivedConversationIds } from './pinned';
+import { isActiveTone, staleUnarchivedConversationIds } from './pinned';
 import { remapConversationProjectIds } from './projectAuthorityRemap';
 import {
   applyAgentEvent,
@@ -81,7 +81,12 @@ import {
 } from './reducer';
 import { applyConversationReload } from './reload';
 import { isPairViewed, nextUnread } from './unread';
-import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
+import {
+  DIRTY_MAIN_TREE,
+  workspaceFallbackNote,
+  workspaceMigratedNote,
+  worktreeReadyToAutoCleanup,
+} from './worktree';
 
 /** 离开时盖章；正在看的会话由 viewedId 保热，TTL 从离开起算 */
 const lastViewedAt: Record<string, number> = {};
@@ -280,6 +285,8 @@ interface SessionsState {
   toggleArchiveConversation(id: string): void;
   /** 闲置自动归档：只批量 patch，不 cleanup / remove */
   autoArchiveStaleConversations(now?: number): void;
+  /** 已合并隔离 worktree：开关开时 cleanup 后归档；exists===false 只归档 */
+  autoCleanupMergedWorktrees(now?: number): Promise<void>;
   dispatchAgent(
     typeKey: AgentTypeKey,
     task: AgentDispatchTask,
@@ -1577,6 +1584,7 @@ export const useSessionsStore = create<SessionsState>()(
               entries.filter((entry): entry is [string, WorktreeStatus] => entry !== null)
             ),
           });
+          await get().autoCleanupMergedWorktrees();
         },
 
         async newConversation(projectId, options) {
@@ -1868,6 +1876,40 @@ export const useSessionsStore = create<SessionsState>()(
             }
             return changed ? { conversations: next } : state;
           });
+        },
+
+        async autoCleanupMergedWorktrees(now = Date.now()) {
+          if (!useSettingsStore.getState().autoArchiveMergedWorktrees) return;
+          const { order, conversations, activeId, worktreeStatuses } = get();
+          const archive = (id: string) => {
+            set((state) => {
+              const conversation = state.conversations[id];
+              if (!conversation || conversation.archived === true) return state;
+              return patch(state, id, {
+                archived: true,
+                archivedAt: now,
+                pinned: undefined,
+              });
+            });
+          };
+          for (const id of order) {
+            const conversation = conversations[id];
+            if (!conversation?.worktree) continue;
+            if (conversation.archived === true) continue;
+            if (conversation.pinned === true) continue;
+            if (activeId && id === activeId) continue;
+            if (isActiveTone(id, conversations)) continue;
+            const status = worktreeStatuses[id];
+            if (!status) continue;
+            if (status.exists === false) {
+              archive(id);
+              continue;
+            }
+            if (!worktreeReadyToAutoCleanup(status)) continue;
+            const error = await get().cleanupWorktree(id);
+            if (error) continue;
+            archive(id);
+          }
         },
 
         removeConversation(id) {

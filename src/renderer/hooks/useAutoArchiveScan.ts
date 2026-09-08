@@ -12,15 +12,25 @@ function scanIdleArchive(idleDays: number): void {
   useSessionsStore.getState().autoArchiveStaleConversations();
 }
 
-/** 主窗：两边 persist 水合后、以及闲置天数变化后各扫一次。设置窗不持有 sessions，不挂。 */
+function scanMergedWorktrees(enabled: boolean): void {
+  if (!bothHydrated() || !enabled) return;
+  void useSessionsStore.getState().refreshWorktreeStatuses();
+}
+
+/** 主窗：两边 persist 水合后、以及闲置天数 / 已合并开关变化后各扫一次。设置窗不挂。 */
 export function useAutoArchiveScan(): void {
   const idleDays = useSettingsStore((state) => state.autoArchiveIdleDays);
+  const mergedEnabled = useSettingsStore((state) => state.autoArchiveMergedWorktrees);
   useEffect(() => {
     if (bothHydrated()) {
       scanIdleArchive(idleDays);
+      scanMergedWorktrees(mergedEnabled);
       return;
     }
-    const scan = () => scanIdleArchive(idleDays);
+    const scan = () => {
+      scanIdleArchive(idleDays);
+      scanMergedWorktrees(mergedEnabled);
+    };
     const unsubs = [
       useSessionsStore.persist.onFinishHydration(scan),
       useSettingsStore.persist.onFinishHydration(scan),
@@ -28,5 +38,5 @@ export function useAutoArchiveScan(): void {
     return () => {
       for (const unsub of unsubs) unsub();
     };
-  }, [idleDays]);
+  }, [idleDays, mergedEnabled]);
 }
