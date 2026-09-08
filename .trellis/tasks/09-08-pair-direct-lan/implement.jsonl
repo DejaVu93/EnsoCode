@@ -1,0 +1,9 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/main/index.md", "reason": "main 层入口与质量检查清单（pairHost/pairGuest/pairDirectPeer 都在 main services）"}
+{"file": ".trellis/spec/main/services.md", "reason": "main services 组织约定"}
+{"file": ".trellis/spec/main/native-modules.md", "reason": "若选用原生 WebRTC 模块，onlyBuiltDependencies / ABI 对齐规则"}
+{"file": ".trellis/spec/main/ipc.md", "reason": "PAIR_STATUS 载荷新增 transport 字段的 IPC 约定"}
+{"file": ".trellis/spec/shared/types.md", "reason": "shared 类型约定；pair 协议扩展与 PairStatusDevice/RemoteNodeStatus 改动"}
+{"file": ".trellis/spec/testing.md", "reason": "TDD 覆盖范围：状态机/分片/协议校验必须先红后绿"}
+{"file": ".trellis/spec/renderer/components.md", "reason": "DevicesSettings 标签与手机状态条组件约定"}
+{"file": ".trellis/tasks/09-08-pair-direct-lan/research/webrtc-electron-main.md", "reason": "main 侧 WebRTC 库选型结论、打包注意点、DirectPeer 最小 API"}

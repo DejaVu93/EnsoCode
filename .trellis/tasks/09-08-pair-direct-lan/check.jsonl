@@ -1,0 +1,7 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/main/index.md", "reason": "main 层质量检查"}
+{"file": ".trellis/spec/shared/index.md", "reason": "shared 层质量检查"}
+{"file": ".trellis/spec/renderer/index.md", "reason": "renderer 层质量检查"}
+{"file": ".trellis/spec/testing.md", "reason": "确认 TDD 纪律与测试覆盖"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "改动跨 pair 包 / main / renderer / phone 四层"}
+{"file": ".trellis/tasks/09-08-pair-direct-lan/research/webrtc-electron-main.md", "reason": "核对 adapter 是否遵循候选过滤/背压/lazy import 约束"}
