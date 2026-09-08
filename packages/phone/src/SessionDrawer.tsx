@@ -28,8 +28,15 @@ import {
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { useI18n } from '@/i18n';
 import { formatRelativeTime } from '@/lib/time';
 import { cn } from '@/lib/utils';
+import {
+  COLLAPSED_SESSION_LIMIT,
+  nextRevealedExtra,
+  SESSION_EXPAND_STEP,
+  shownConversationCount,
+} from '@/stores/sessions/sessionSwitchSlots';
 import type { StoredDevice } from './deviceList';
 import type { PushFailureReason } from './push';
 import {
@@ -44,8 +51,6 @@ import {
  * 相对时间 / 折叠更多），改为抽屉式呈现。桌面版的加项目、导入、删除属于
  * 宿主能力，手机端不提供。
  */
-
-const COLLAPSED_SESSION_LIMIT = 5;
 
 /** auto = 跟随桌面下发；其余为本地覆盖 */
 const THEME_OPTIONS: { value: ThemePreference; label: string }[] = [
@@ -122,7 +127,7 @@ export function SessionDrawer({
   onUnpairDevice,
 }: Props) {
   const [foldedProjects, setFoldedProjects] = useState<Record<string, boolean>>({});
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  const [revealedExtras, setRevealedExtras] = useState<Record<string, number>>({});
   // 底部「已归档」栏目的折叠态（与桌面一致：缺省收起）
   const [archivedOpen, setArchivedOpen] = useState(false);
   /** 待确认解绑的 pairId；null = 无确认框 */
@@ -340,7 +345,7 @@ export function SessionDrawer({
                   active.filter((c) => c.projectId === item.project.id)
                 )}
                 folded={foldedProjects[item.project.id] === true}
-                expanded={expandedProjects[item.project.id] === true}
+                revealedExtra={revealedExtras[item.project.id] ?? 0}
                 activeId={activeId}
                 nowTick={nowTick}
                 canCreate={canCreate}
@@ -350,11 +355,8 @@ export function SessionDrawer({
                     [item.project.id]: !prev[item.project.id],
                   }))
                 }
-                onToggleExpand={() =>
-                  setExpandedProjects((prev) => ({
-                    ...prev,
-                    [item.project.id]: !prev[item.project.id],
-                  }))
+                onRevealMore={(next) =>
+                  setRevealedExtras((prev) => ({ ...prev, [item.project.id]: next }))
                 }
                 onSelect={onSelect}
                 onNew={() => onNewConversation(item.project.id)}
@@ -367,16 +369,14 @@ export function SessionDrawer({
               name="其他"
               sessions={orphans}
               folded={foldedProjects.__orphan === true}
-              expanded={expandedProjects.__orphan === true}
+              revealedExtra={revealedExtras.__orphan ?? 0}
               activeId={activeId}
               nowTick={nowTick}
               canCreate={false}
               onToggleFold={() =>
                 setFoldedProjects((prev) => ({ ...prev, __orphan: !prev.__orphan }))
               }
-              onToggleExpand={() =>
-                setExpandedProjects((prev) => ({ ...prev, __orphan: !prev.__orphan }))
-              }
+              onRevealMore={(next) => setRevealedExtras((prev) => ({ ...prev, __orphan: next }))}
               onSelect={onSelect}
             />
           )}
@@ -612,12 +612,12 @@ function ProjectGroup({
   badge,
   sessions,
   folded,
-  expanded,
+  revealedExtra,
   activeId,
   nowTick,
   canCreate,
   onToggleFold,
-  onToggleExpand,
+  onRevealMore,
   onSelect,
   onNew,
 }: {
@@ -625,16 +625,19 @@ function ProjectGroup({
   badge?: string;
   sessions: CatalogEntry[];
   folded: boolean;
-  expanded: boolean;
+  revealedExtra: number;
   activeId: string | null;
   nowTick: number;
   canCreate: boolean;
   onToggleFold(): void;
-  onToggleExpand(): void;
+  onRevealMore(next: number): void;
   onSelect(id: string): void;
   onNew?(): void;
 }) {
-  const shown = expanded ? sessions : sessions.slice(0, COLLAPSED_SESSION_LIMIT);
+  const { t } = useI18n();
+  const shownCount = shownConversationCount(sessions.length, revealedExtra);
+  const shown = sessions.slice(0, shownCount);
+  const hidden = sessions.length - shownCount;
   return (
     <div>
       <div className="flex w-full items-center gap-1 rounded-lg px-2 py-2 transition-colors hover:bg-accent/30">
@@ -687,10 +690,12 @@ function ProjectGroup({
           {sessions.length > COLLAPSED_SESSION_LIMIT && (
             <button
               type="button"
-              onClick={onToggleExpand}
+              onClick={() => onRevealMore(nextRevealedExtra(sessions.length, revealedExtra))}
               className="rounded-lg py-1 text-center text-muted-foreground text-xs transition-colors hover:bg-muted/50 hover:text-foreground"
             >
-              {expanded ? '收起' : `展开其余 ${sessions.length - COLLAPSED_SESSION_LIMIT} 条`}
+              {hidden === 0
+                ? t('Collapse')
+                : t('Show {{n}} more', { n: Math.min(SESSION_EXPAND_STEP, hidden) })}
             </button>
           )}
         </div>

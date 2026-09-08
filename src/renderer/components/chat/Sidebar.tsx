@@ -99,7 +99,10 @@ import {
 } from '@/stores/sessions/pinned';
 import {
   COLLAPSED_SESSION_LIMIT,
+  nextRevealedExtra,
+  SESSION_EXPAND_STEP,
   sessionSwitchSlotIds,
+  shownConversationCount,
 } from '@/stores/sessions/sessionSwitchSlots';
 import { selectSidebarConversations } from '@/stores/sessions/sidebarDirectory';
 import { DIRTY_MAIN_TREE, worktreeHasPendingWork } from '@/stores/sessions/worktree';
@@ -394,8 +397,8 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     }
     setPendingRemove({ kind: 'conversation', id, worktreeWarning });
   };
-  // 展开显示全部会话的项目(会话级状态,重启回到折叠)
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  // 项目已额外露出的条数(会话级状态,重启回到折叠上限)
+  const [revealedExtras, setRevealedExtras] = useState<Record<string, number>>({});
   const [listQuery, setListQuery] = useState('');
   const [modHeld, setModHeld] = useState(false);
 
@@ -425,7 +428,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     projectIds: activeProjectIds,
     archivedProjectIds,
     collapsedProjects,
-    expandedProjects,
+    revealedExtras,
     searching,
     matches: convMatches,
     projectMatches: (projectId) => {
@@ -892,6 +895,11 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                     : projectConversations.filter(convMatches);
                 if (searching && visibleConversations.length === 0) return null;
                 const folded = searching ? false : collapsedProjects[project.id] === true;
+                const revealedExtra = revealedExtras[project.id] ?? 0;
+                const shownCount = searching
+                  ? visibleConversations.length
+                  : shownConversationCount(visibleConversations.length, revealedExtra);
+                const hiddenIds = visibleConversations.slice(shownCount);
                 return (
                   <SortableProject key={project.id} project={project}>
                     {(drag) => (
@@ -1018,10 +1026,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                       className="overflow-hidden"
                                     >
                                       <div className="mt-0.5 flex flex-col gap-y-0.5">
-                                        {(searching || expandedProjects[project.id]
-                                          ? visibleConversations
-                                          : visibleConversations.slice(0, COLLAPSED_SESSION_LIMIT)
-                                        ).map((id) => (
+                                        {visibleConversations.slice(0, shownCount).map((id) => (
                                           <motion.div
                                             key={id}
                                             layout="position"
@@ -1069,19 +1074,23 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                                     <button
                                                       type="button"
                                                       onClick={() =>
-                                                        setExpandedProjects((prev) => ({
+                                                        setRevealedExtras((prev) => ({
                                                           ...prev,
-                                                          [project.id]: !prev[project.id],
+                                                          [project.id]: nextRevealedExtra(
+                                                            visibleConversations.length,
+                                                            prev[project.id] ?? 0
+                                                          ),
                                                         }))
                                                       }
                                                       className="rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                                                     >
-                                                      {expandedProjects[project.id]
+                                                      {hiddenIds.length === 0
                                                         ? t('Collapse')
                                                         : t('Show {{n}} more', {
-                                                            n:
-                                                              projectConversations.length -
-                                                              COLLAPSED_SESSION_LIMIT,
+                                                            n: Math.min(
+                                                              SESSION_EXPAND_STEP,
+                                                              hiddenIds.length
+                                                            ),
                                                           })}
                                                     </button>
                                                   ) as React.ReactElement<Record<string, unknown>>
@@ -1089,19 +1098,11 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                               />
                                               <ContextMenuPopup className="min-w-36">
                                                 <ContextMenuItem
-                                                  onClick={() =>
-                                                    void handleArchiveMany(
-                                                      projectConversations.slice(
-                                                        COLLAPSED_SESSION_LIMIT
-                                                      )
-                                                    )
-                                                  }
+                                                  onClick={() => void handleArchiveMany(hiddenIds)}
                                                 >
                                                   <Archive />
                                                   {t('Archive {{n}} conversations', {
-                                                    n:
-                                                      projectConversations.length -
-                                                      COLLAPSED_SESSION_LIMIT,
+                                                    n: hiddenIds.length,
                                                   })}
                                                 </ContextMenuItem>
                                               </ContextMenuPopup>

@@ -2,7 +2,24 @@ import { pinnedConversationIds, projectConversationIds } from './pinned';
 
 /** 每个项目默认露出的会话数,超过折叠进「展开」 */
 export const COLLAPSED_SESSION_LIMIT = 5;
+/** 每次「展开其余」再露出的条数 */
+export const SESSION_EXPAND_STEP = 15;
 export const SESSION_SWITCH_SLOT_LIMIT = 9;
+
+/** 项目列表当前应露出的条数；searching 时调用方直接用 total */
+export function shownConversationCount(total: number, revealedExtra: number): number {
+  if (total <= 0) return 0;
+  return Math.min(total, COLLAPSED_SESSION_LIMIT + Math.max(0, revealedExtra));
+}
+
+/**
+ * 下一次点击后的 extra：已全部露出则收起为 0，否则 +15 并在「能露出的最大 extra」处封顶。
+ */
+export function nextRevealedExtra(total: number, revealedExtra: number): number {
+  const shown = shownConversationCount(total, revealedExtra);
+  if (shown >= total) return 0;
+  return Math.min(Math.max(0, total - COLLAPSED_SESSION_LIMIT), revealedExtra + SESSION_EXPAND_STEP);
+}
 
 interface SlotConversation {
   projectId: string;
@@ -23,7 +40,8 @@ export function sessionSwitchSlotIds(input: {
   projectIds: readonly string[];
   archivedProjectIds?: readonly string[];
   collapsedProjects?: Record<string, boolean>;
-  expandedProjects?: Record<string, boolean>;
+  /** 该项目已额外露出的条数；缺省 0 = 只露折叠上限 */
+  revealedExtras?: Record<string, number>;
   searching?: boolean;
   matches?: (id: string) => boolean;
   projectMatches?: (projectId: string) => boolean;
@@ -37,7 +55,7 @@ export function sessionSwitchSlotIds(input: {
     projectIds,
     archivedProjectIds = [],
     collapsedProjects = {},
-    expandedProjects = {},
+    revealedExtras = {},
     searching = false,
     matches = () => true,
     projectMatches = () => false,
@@ -66,10 +84,9 @@ export function sessionSwitchSlotIds(input: {
       !searching || projectMatches(projectId)
         ? projectConversations
         : projectConversations.filter(matches);
-    const shown =
-      searching || expandedProjects[projectId]
-        ? visible
-        : visible.slice(0, COLLAPSED_SESSION_LIMIT);
+    const shown = searching
+      ? visible
+      : visible.slice(0, shownConversationCount(visible.length, revealedExtras[projectId] ?? 0));
     for (const id of shown) push(id);
   }
 
