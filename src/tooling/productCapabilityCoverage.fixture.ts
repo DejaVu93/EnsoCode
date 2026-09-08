@@ -383,6 +383,12 @@ export const IPC_PRODUCT_COVERAGE = {
   FILES_SEARCH: surfaces('conversations.file-mention.attach'),
   FILES_READ: excluded('Internal bounded file reader used by reviewed UI flows.'),
   GIT_DIFF_HEAD: excluded('Internal git working-tree reader for the Changes panel.'),
+  CHANGES_SNAPSHOTS_READ: excluded(
+    'Internal per-conversation snapshot store for the Changes panel.'
+  ),
+  CHANGES_SNAPSHOTS_WRITE: excluded(
+    'Internal per-conversation snapshot store for the Changes panel.'
+  ),
   SESSIONS_SCAN_EXTERNAL: surfaces('conversations.import-external'),
   SESSIONS_READ_EXTERNAL: excluded('Preview phase of the external conversation import flow.'),
   SESSIONS_IMPORT_EXTERNAL: surfaces('conversations.import-external'),

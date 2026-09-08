@@ -2,7 +2,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { pruneSnapshots, readSnapshots, writeSnapshots } from './changesSnapshots';
+import {
+  liveConversationIds,
+  pruneSnapshots,
+  readSnapshots,
+  writeSnapshots,
+} from './changesSnapshots';
 
 const ID = '4aade2cb-d2a1-47c3-a4a2-848f28571a97';
 const OTHER_ID = '11111111-2222-3333-4444-555555555555';
@@ -66,5 +71,17 @@ describe('changesSnapshots', () => {
     pruneSnapshots(tmp, new Set([ID]));
     expect(fs.readdirSync(tmp).sort()).toEqual([`${ID}.json`, 'foo.json', 'notes.txt'].sort());
     expect(() => pruneSnapshots(path.join(tmp, 'missing'), new Set())).not.toThrow();
+  });
+
+  it('从 settings.json 取存活会话 id；读不到会话表时返回 null 以跳过清理', () => {
+    const settings = {
+      'enso-conversations': { state: { conversations: { [ID]: {}, [OTHER_ID]: {} } } },
+    };
+    expect(liveConversationIds(settings)).toEqual(new Set([ID, OTHER_ID]));
+    expect(liveConversationIds(null)).toBeNull();
+    expect(
+      liveConversationIds({ 'enso-conversations': { state: { conversations: [] } } })
+    ).toBeNull();
+    expect(liveConversationIds({})).toBeNull();
   });
 });

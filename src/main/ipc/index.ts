@@ -3,6 +3,7 @@ import { registerAgentHandlers } from './agent';
 import { registerAssetHandlers } from './assets';
 import { registerBrowserHandlers } from './browser';
 import { registerCapabilityHandlers } from './capabilities';
+import { registerChangesHandlers } from './changes';
 import { registerConfigSyncHandlers } from './configSync';
 import { registerFileHandlers } from './files';
 import { registerFilesWorkspaceHandlers } from './filesWorkspace';
@@ -38,6 +39,7 @@ export function registerIpcHandlers(): void {
   registerFileHandlers();
   registerFilesWorkspaceHandlers();
   registerGitHandlers();
+  registerChangesHandlers();
   registerMcpHandlers();
   registerPairHandlers();
   registerNodesHandlers();

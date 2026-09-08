@@ -45,6 +45,18 @@ export function writeSnapshots(
   }
 }
 
+/** settings.json 里 enso-conversations 的会话 id 集合；读不到会话表返回 null，调用方应跳过清理 */
+export function liveConversationIds(settings: unknown): Set<string> | null {
+  const state = (
+    settings as { 'enso-conversations'?: { state?: { conversations?: unknown } } } | null
+  )?.['enso-conversations']?.state;
+  const conversations = state?.conversations;
+  if (!conversations || typeof conversations !== 'object' || Array.isArray(conversations)) {
+    return null;
+  }
+  return new Set(Object.keys(conversations));
+}
+
 /** 删掉已不存在会话的快照；非 uuid 命名的文件不动 */
 export function pruneSnapshots(dir: string, liveIds: ReadonlySet<string>): void {
   let names: string[];

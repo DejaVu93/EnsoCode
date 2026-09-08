@@ -179,6 +179,10 @@ export const IPC_CHANNELS = {
 
   GIT_DIFF_HEAD: 'git:diff-head',
 
+  // Changes 面板「Session」模式的编辑前快照（主进程按会话落盘）
+  CHANGES_SNAPSHOTS_READ: 'changes:snapshots-read',
+  CHANGES_SNAPSHOTS_WRITE: 'changes:snapshots-write',
+
   // External session import
   SESSIONS_SCAN_EXTERNAL: 'sessions:scan-external',
   SESSIONS_READ_EXTERNAL: 'sessions:read-external',

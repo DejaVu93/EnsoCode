@@ -260,6 +260,16 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_DIFF_HEAD, request),
   },
 
+  changes: {
+    /** Changes 面板会话快照（编辑前全文）：主进程按会话落盘，不进 localStorage */
+    readSnapshots: (request: { conversationId: string }): Promise<Record<string, string>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CHANGES_SNAPSHOTS_READ, request),
+    writeSnapshots: (request: {
+      conversationId: string;
+      snapshots: Record<string, string>;
+    }): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.CHANGES_SNAPSHOTS_WRITE, request),
+  },
+
   workspaceFiles: {
     listDir: (request: {
       conversationId: string;
