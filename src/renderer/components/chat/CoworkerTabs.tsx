@@ -87,20 +87,23 @@ export function CoworkerTabs({
                 }
                 className={cn(
                   tabClass(displayedId === coworker.id),
-                  'group-hover/tab:pr-6',
                   displayedId !== coworker.id && 'group-hover/tab:bg-muted/50'
                 )}
                 leading={<Bot className="h-3 w-3 shrink-0" />}
-                trailing={<ConversationStatusIndicator tone={tone} size="sm" />}
+                trailing={
+                  <span className="inline-flex h-3 w-3 shrink-0 items-center justify-center group-hover/tab:invisible">
+                    <ConversationStatusIndicator tone={tone} size="sm" />
+                  </span>
+                }
                 reloadDisabled={coworker.reloading === true || coworker.spawning}
                 reloading={coworker.reloading === true}
                 onSelect={() => useSessionsStore.getState().selectTab(parent.id, coworker.id)}
               />
-              {/* 关闭钉在 tab 内右端(hover 现身,button 让出留白),避免游离在 tab 外 */}
+              {/* 关闭覆在状态灯槽上，hover 替换而不拉宽 tab */}
               <button
                 type="button"
                 title={t('Dismiss coworker')}
-                className="absolute top-1/2 right-1.5 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover/tab:block"
+                className="absolute top-1/2 right-2 hidden h-3 w-3 -translate-y-1/2 items-center justify-center text-muted-foreground hover:text-destructive group-hover/tab:flex"
                 onClick={() => {
                   if (window.confirm(t('Dismiss this coworker? Its session will be closed.'))) {
                     void useSessionsStore.getState().dismissCoworkerFromUI(parent.id, coworker.id);
