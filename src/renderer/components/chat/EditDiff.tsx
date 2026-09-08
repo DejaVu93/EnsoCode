@@ -2,6 +2,7 @@ import { parseDiffFromFile } from '@pierre/diffs';
 import { FileDiff } from '@pierre/diffs/react';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n';
+import { diffCacheKey } from '@/lib/diffCacheKey';
 import { reconstructOld } from '@/lib/sessionChanges';
 import type { EditBlock } from '@/stores/sessions/timeline';
 import { CODE_THEME, ensureHighlighter } from './codeHighlighter';
@@ -75,9 +76,11 @@ export function EditDiff({ path, blocks }: { path: string; blocks: EditBlock[] }
 }
 
 function DiffView({ name, oldText, newText }: { name: string; oldText: string; newText: string }) {
-  const fileDiff = useMemo(
-    () => parseDiffFromFile({ name, contents: oldText }, { name, contents: newText }),
-    [name, oldText, newText]
-  );
+  const fileDiff = useMemo(() => {
+    const diff = parseDiffFromFile({ name, contents: oldText }, { name, contents: newText });
+    // 同一文件多条 edit 同名不同内容，默认按名缓存会串高亮
+    diff.cacheKey = diffCacheKey(name, oldText, newText);
+    return diff;
+  }, [name, oldText, newText]);
   return <FileDiff fileDiff={fileDiff} options={DIFF_OPTIONS} />;
 }

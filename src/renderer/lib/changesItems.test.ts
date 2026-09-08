@@ -33,6 +33,14 @@ describe('buildChangeItems', () => {
     expect(collapsed[0].collapsed).toBe(true);
   });
 
+  it('同一路径内容变化后 cacheKey 不同，否则 worker 池会拿旧高亮套新 diff', () => {
+    const memo: ChangeItemMemo = new Map();
+    const first = buildChangeItems([file('a.ts', 'x', 'y')], new Set(), memo);
+    const changed = buildChangeItems([file('a.ts', 'x', 'z')], new Set(), memo);
+    expect(first[0].fileDiff.cacheKey).toBeTruthy();
+    expect(changed[0].fileDiff.cacheKey).not.toBe(first[0].fileDiff.cacheKey);
+  });
+
   it('消失的文件从 memo 清掉', () => {
     const memo: ChangeItemMemo = new Map();
     buildChangeItems([file('a.ts', 'x', 'y'), file('b.ts', '1', '2')], new Set(), memo);

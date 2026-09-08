@@ -1,4 +1,5 @@
 import { type CodeViewDiffItem, type FileDiffMetadata, parseDiffFromFile } from '@pierre/diffs';
+import { diffCacheKey } from './diffCacheKey';
 import type { SessionChangeFile } from './sessionChanges';
 
 interface MemoEntry {
@@ -31,6 +32,8 @@ export function buildChangeItems(
             { name: file.path, contents: file.newText }
           )
         : prev.fileDiff;
+    if (contentChanged || !prev)
+      fileDiff.cacheKey = diffCacheKey(file.path, file.oldText, file.newText);
     const version = !prev
       ? 0
       : contentChanged || prev.collapsed !== collapsed
