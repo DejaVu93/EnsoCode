@@ -855,6 +855,28 @@ describe('applyAgentEvent tool-output', () => {
     });
     expect(failed.toolOutputs).toEqual({});
   });
+
+  it('toolResult 落地即清掉该工具的流式输出与起点，不让 hasToolOutput 豁免拖到轮末', () => {
+    const withOutput = applyAgentEvent(
+      applyAgentEvent(base, 's1', toolOutput(1, 'partial', 1_000)),
+      's1',
+      { ...toolOutput(2, 'other'), toolCallId: 't2' } as RendererAgentEvent
+    );
+    const done = applyAgentEvent(withOutput, 's1', {
+      type: 'message-upsert',
+      identity: identity(),
+      seq: 3,
+      index: 0,
+      message: {
+        role: 'toolResult',
+        toolCallId: 't1',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    });
+    expect(done.toolOutputs).toEqual({ t2: 'other' });
+    expect(done.toolStartedAt).toEqual({});
+  });
 });
 
 describe('lastOutputAt stall heartbeat', () => {

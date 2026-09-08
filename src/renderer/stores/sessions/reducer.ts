@@ -422,9 +422,19 @@ export function applyAgentEvent(
         );
         if (matched !== -1) tail = tail.toSpliced(matched, 1);
       }
+      // 工具收口即清掉流式尾巴：toolOutputs 非空是 watchdog 的活跃豁免，不能拖到轮末
+      const settledId = event.message.role === 'toolResult' ? event.message.toolCallId : undefined;
+      const settledTool =
+        settledId && settledId in current.toolOutputs ? new Set([settledId]) : undefined;
       return {
         ...current,
         messages: [...authoritative, ...tail],
+        ...(settledTool
+          ? {
+              toolOutputs: omitKeys(current.toolOutputs, settledTool),
+              toolStartedAt: omitKeys(current.toolStartedAt ?? {}, settledTool),
+            }
+          : {}),
         lastOutputAt: hasOutput ? now : current.lastOutputAt,
         lastSeq: event.seq,
       };
