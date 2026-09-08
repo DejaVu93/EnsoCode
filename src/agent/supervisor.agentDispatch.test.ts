@@ -283,6 +283,31 @@ describe('SessionSupervisor deterministic child lifecycle', () => {
     expect(snapshot).not.toHaveProperty('sessionId');
   });
 
+  it('snapshot 带回 subagents / backgroundTasks，切会话不会清空 TaskBar', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({ type: 'spawn-parent', identity: parent, cwd: '/workspace', model });
+    await waitFor(events, 'parent-ready');
+    const internals = supervisor as unknown as {
+      sessions: Map<string, { subagents: Map<string, unknown> }>;
+      bgTasks: { snapshot: (sessionId: string) => unknown[] };
+    };
+    const agent = { id: 'a1', description: 'recon', status: 'running', startedAt: 1 };
+    internals.sessions.get(parent.sessionId)?.subagents.set(agent.id, agent);
+    const task = { taskId: 't1', command: 'pnpm test', status: 'running', startedAt: 1, tail: '' };
+    internals.bgTasks.snapshot = (sessionId) => (sessionId === parent.sessionId ? [task] : []);
+
+    supervisor.handleCommand({ type: 'snapshot', sessionId: parent.sessionId });
+    expect(events.at(-1)).toMatchObject({
+      type: 'snapshot',
+      sessions: [expect.objectContaining({ subagents: [agent], backgroundTasks: [task] })],
+    });
+  });
+
   it('targeted snapshot 带回请求的 sessionId，会话不在 worker 时 sessions 为空仍可路由', () => {
     const events: AgentWorkerEvent[] = [];
     const supervisor = new SessionSupervisor({

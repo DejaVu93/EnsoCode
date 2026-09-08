@@ -2902,20 +2902,28 @@ export class SessionSupervisor {
   }
 
   private snapshotSessions(): SessionSnapshot[] {
-    return Array.from(this.sessions.values()).map((managed) => ({
-      identity: managed.identity,
-      status: managed.status,
-      messages: managed.messages,
-      commands: managed.commands,
-      ...(managed.gate.snapshot().length > 0 ? { pendingApprovals: managed.gate.snapshot() } : {}),
-      ...(managed.asks.snapshot().length > 0 ? { pendingAsks: managed.asks.snapshot() } : {}),
-      ...(managed.childMetadata ? { child: managed.childMetadata } : {}),
-      ...(managed.customEntries.length > 0 ? { customEntries: managed.customEntries } : {}),
-      ...(managed.compaction ? { compaction: managed.compaction } : {}),
-      ...(managed.compactionNoticeAt !== undefined
-        ? { compactionNoticeAt: managed.compactionNoticeAt }
-        : {}),
-    }));
+    return Array.from(this.sessions.values()).map((managed) => {
+      const backgroundTasks = this.bgTasks.snapshot(managed.identity.sessionId);
+      return {
+        identity: managed.identity,
+        status: managed.status,
+        messages: managed.messages,
+        commands: managed.commands,
+        ...(managed.gate.snapshot().length > 0
+          ? { pendingApprovals: managed.gate.snapshot() }
+          : {}),
+        ...(managed.asks.snapshot().length > 0 ? { pendingAsks: managed.asks.snapshot() } : {}),
+        // 切会话/重连靠快照整段重建 TaskBar；不带这两项会把还在跑的子代理/后台任务条清空，等下一次 update 才回来
+        ...(backgroundTasks.length > 0 ? { backgroundTasks } : {}),
+        ...(managed.subagents.size > 0 ? { subagents: [...managed.subagents.values()] } : {}),
+        ...(managed.childMetadata ? { child: managed.childMetadata } : {}),
+        ...(managed.customEntries.length > 0 ? { customEntries: managed.customEntries } : {}),
+        ...(managed.compaction ? { compaction: managed.compaction } : {}),
+        ...(managed.compactionNoticeAt !== undefined
+          ? { compactionNoticeAt: managed.compactionNoticeAt }
+          : {}),
+      };
+    });
   }
 
   private must(identity: SessionIdentity): ManagedSession {
