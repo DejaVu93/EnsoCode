@@ -1,4 +1,5 @@
 import { ENSO_AGENT_TYPE_KEY, isReservedAgentTypeName } from '@shared/builtinAgents';
+import { SUBAGENT_MODELS_CONFIGURE_PROMPT } from '@shared/i18n';
 import type { AgentTypeEntry, AgentTypeModelMode } from '@shared/types';
 import { hasProviderCredentials, MODEL_THINKING_LEVEL_OVERRIDES } from '@shared/types';
 import { BUILTIN_AGENT_TYPES } from '@shared/types/assets';
@@ -53,7 +54,7 @@ export function AgentTypesSettings() {
               onClick={() => {
                 void window.electronAPI.window.summonAgent({
                   typeKey: ENSO_AGENT_TYPE_KEY,
-                  prompt: t('Ask Enso to configure subagent models'),
+                  prompt: t(SUBAGENT_MODELS_CONFIGURE_PROMPT),
                 });
               }}
             >
