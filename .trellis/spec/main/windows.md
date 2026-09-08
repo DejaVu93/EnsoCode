@@ -39,6 +39,8 @@ Windows 透明主窗口无框后系统不再画圆角和外框。主窗口渲染
 `enso-win-flush` 去掉这层。普通不透明窗口（如设置页）保留 Windows/DWM
 已有的圆角和边框，不要重复挂自绘 chrome。
 不要给透明主窗口开 Electron `roundedCorners`。
+描边用 `#root::after`：`inset: 1px` + `inset box-shadow`，不要用贴齐视口的 `border: 1px`。
+Windows DWM / 分数 DPI 会裁掉客户区右、下最外 1px，看起来只剩上、左边框。
 
 窗口状态事件可能先于初始 IPC 查询返回；初始快照不能覆盖已经收到事件的字段，
 Effect 清理后也不能让未完成的查询重新写 class。初始查询完成前挂
@@ -48,7 +50,7 @@ Windows 恢复窗口时 `unmaximize` 通知可能不到 pinned renderer；render
 
 Browser guest/devtools 是独立原生 `WebContentsView`，提到 workbench 上方时不受
 `#root` 的圆角裁切和 CSS z-index 约束。普通窗口下，renderer 上报 viewport 的
-`browser-native-stack` 必须给右描边留 1px、给底部圆角留 8px；flush 状态取消预留。
+`browser-native-stack` 必须给右描边留 2px（1px 窗口裁边 + 1px 描边）、给底部圆角留 8px；flush 状态取消预留。
 
 ## macOS 红绿灯
 
