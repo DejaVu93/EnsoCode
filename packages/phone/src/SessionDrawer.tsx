@@ -34,7 +34,7 @@ import { cn } from '@/lib/utils';
 import {
   COLLAPSED_SESSION_LIMIT,
   nextRevealedExtra,
-  SESSION_EXPAND_STEP,
+  prevRevealedExtra,
   shownConversationCount,
 } from '@/stores/sessions/sessionSwitchSlots';
 import type { StoredDevice } from './deviceList';
@@ -688,15 +688,26 @@ function ProjectGroup({
             />
           ))}
           {sessions.length > COLLAPSED_SESSION_LIMIT && (
-            <button
-              type="button"
-              onClick={() => onRevealMore(nextRevealedExtra(sessions.length, revealedExtra))}
-              className="rounded-lg py-1 text-center text-muted-foreground text-xs transition-colors hover:bg-muted/50 hover:text-foreground"
-            >
-              {hidden === 0
-                ? t('Collapse')
-                : t('Show {{n}} more', { n: Math.min(SESSION_EXPAND_STEP, hidden) })}
-            </button>
+            <div className="flex items-center gap-1">
+              {hidden > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onRevealMore(nextRevealedExtra(sessions.length, revealedExtra))}
+                  className="flex-1 rounded-lg py-1 text-center text-muted-foreground text-xs transition-colors hover:bg-muted/50 hover:text-foreground"
+                >
+                  {t('Show {{n}} more', { n: hidden })}
+                </button>
+              )}
+              {revealedExtra > 0 && (
+                <button
+                  type="button"
+                  onClick={() => onRevealMore(prevRevealedExtra(revealedExtra))}
+                  className="flex-1 rounded-lg py-1 text-center text-muted-foreground text-xs transition-colors hover:bg-muted/50 hover:text-foreground"
+                >
+                  {t('Collapse')}
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}

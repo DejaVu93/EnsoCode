@@ -10,6 +10,7 @@ type IncrementalExpandHelpers = {
   SESSION_EXPAND_STEP: number;
   shownConversationCount: (total: number, revealedExtra: number) => number;
   nextRevealedExtra: (total: number, revealedExtra: number) => number;
+  prevRevealedExtra: (revealedExtra: number) => number;
 };
 
 const expandHelpers = sessionSwitchSlots as typeof sessionSwitchSlots &
@@ -63,6 +64,14 @@ describe('增量展开辅助函数', () => {
     expect(expandHelpers.nextRevealedExtra?.(91, 0)).toBe(15);
     expect(expandHelpers.nextRevealedExtra?.(91, 15)).toBe(30);
     expect(expandHelpers.nextRevealedExtra?.(27, 15)).toBe(22);
+  });
+
+  it('收起与展开对称：每次回收 15 条，到折叠上限为止', () => {
+    expect(expandHelpers.prevRevealedExtra).toBeTypeOf('function');
+    expect(expandHelpers.prevRevealedExtra?.(30)).toBe(15);
+    expect(expandHelpers.prevRevealedExtra?.(15)).toBe(0);
+    expect(expandHelpers.prevRevealedExtra?.(7)).toBe(0);
+    expect(expandHelpers.prevRevealedExtra?.(0)).toBe(0);
   });
 });
 

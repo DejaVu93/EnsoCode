@@ -100,7 +100,7 @@ import {
 import {
   COLLAPSED_SESSION_LIMIT,
   nextRevealedExtra,
-  SESSION_EXPAND_STEP,
+  prevRevealedExtra,
   sessionSwitchSlotIds,
   shownConversationCount,
 } from '@/stores/sessions/sessionSwitchSlots';
@@ -1067,46 +1067,65 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                         ))}
                                         {!searching &&
                                           projectConversations.length > COLLAPSED_SESSION_LIMIT && (
-                                            <ContextMenu>
-                                              <ContextMenuTrigger
-                                                render={
-                                                  (
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        setRevealedExtras((prev) => ({
-                                                          ...prev,
-                                                          [project.id]: nextRevealedExtra(
-                                                            visibleConversations.length,
-                                                            prev[project.id] ?? 0
-                                                          ),
-                                                        }))
-                                                      }
-                                                      className="rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                                                    >
-                                                      {hiddenIds.length === 0
-                                                        ? t('Collapse')
-                                                        : t('Show {{n}} more', {
-                                                            n: Math.min(
-                                                              SESSION_EXPAND_STEP,
-                                                              hiddenIds.length
-                                                            ),
+                                            <div className="flex items-center gap-1">
+                                              {hiddenIds.length > 0 && (
+                                                <ContextMenu>
+                                                  <ContextMenuTrigger
+                                                    render={
+                                                      (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() =>
+                                                            setRevealedExtras((prev) => ({
+                                                              ...prev,
+                                                              [project.id]: nextRevealedExtra(
+                                                                visibleConversations.length,
+                                                                prev[project.id] ?? 0
+                                                              ),
+                                                            }))
+                                                          }
+                                                          className="flex-1 rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                                                        >
+                                                          {t('Show {{n}} more', {
+                                                            n: hiddenIds.length,
                                                           })}
-                                                    </button>
-                                                  ) as React.ReactElement<Record<string, unknown>>
-                                                }
-                                              />
-                                              <ContextMenuPopup className="min-w-36">
-                                                <ContextMenuItem
-                                                  onClick={() => void handleArchiveMany(hiddenIds)}
+                                                        </button>
+                                                      ) as React.ReactElement<
+                                                        Record<string, unknown>
+                                                      >
+                                                    }
+                                                  />
+                                                  <ContextMenuPopup className="min-w-36">
+                                                    <ContextMenuItem
+                                                      onClick={() =>
+                                                        void handleArchiveMany(hiddenIds)
+                                                      }
+                                                    >
+                                                      <Archive />
+                                                      {t('Archive {{n}} conversations', {
+                                                        n: hiddenIds.length,
+                                                      })}
+                                                    </ContextMenuItem>
+                                                  </ContextMenuPopup>
+                                                </ContextMenu>
+                                              )}
+                                              {revealedExtra > 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setRevealedExtras((prev) => ({
+                                                      ...prev,
+                                                      [project.id]: prevRevealedExtra(
+                                                        prev[project.id] ?? 0
+                                                      ),
+                                                    }))
+                                                  }
+                                                  className="flex-1 rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                                                 >
-                                                  <Archive />
-                                                  {t('Archive {{n}} conversations', {
-                                                    n: hiddenIds.length,
-                                                  })}
-                                                </ContextMenuItem>
-                                              </ContextMenuPopup>
-                                            </ContextMenu>
+                                                  {t('Collapse')}
+                                                </button>
+                                              )}
+                                            </div>
                                           )}
                                         {visibleConversations.length === 0 && (
                                           <p className="py-1.5 pl-10 text-xs text-muted-foreground">

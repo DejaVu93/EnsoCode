@@ -18,7 +18,15 @@ export function shownConversationCount(total: number, revealedExtra: number): nu
 export function nextRevealedExtra(total: number, revealedExtra: number): number {
   const shown = shownConversationCount(total, revealedExtra);
   if (shown >= total) return 0;
-  return Math.min(Math.max(0, total - COLLAPSED_SESSION_LIMIT), revealedExtra + SESSION_EXPAND_STEP);
+  return Math.min(
+    Math.max(0, total - COLLAPSED_SESSION_LIMIT),
+    revealedExtra + SESSION_EXPAND_STEP
+  );
+}
+
+/** 收起是展开的逆操作：每次回收 15 条，到折叠上限为止（不是一步跳回 5 条） */
+export function prevRevealedExtra(revealedExtra: number): number {
+  return Math.max(0, revealedExtra - SESSION_EXPAND_STEP);
 }
 
 interface SlotConversation {
