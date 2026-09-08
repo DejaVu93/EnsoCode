@@ -23,6 +23,7 @@ interface SidebarConversation {
   pendingAsks?: readonly { requestId: string }[];
   coworkerIds?: readonly string[];
   subagents?: readonly { status: string }[];
+  worktree?: { path?: string };
 }
 
 type Conversations = Record<string, SidebarConversation | undefined>;
@@ -192,7 +193,48 @@ export function archivedConversationGroups(
   return groups;
 }
 
+function isActiveTone(id: string, conversations: Conversations): boolean {
+  const conversation = conversations[id];
+  if (!conversation) return false;
+  const tone = conversationDotTone({
+    status: conversation.status ?? 'idle',
+    spawning: conversation.spawning,
+    unread: conversation.unread,
+    pendingAskCount: conversation.pendingAsks?.length ?? 0,
+    hasRunningChild: conversationHasRunningChild(
+      { ...conversation, status: conversation.status ?? 'idle' },
+      conversations as Record<string, { status: string; spawning?: boolean } | undefined>
+    ),
+  });
+  return tone === 'running' || tone === 'waiting' || tone === 'failed' || tone === 'unread';
+}
+
 const DAY_MS = 86_400_000;
+
+/**
+ * 闲置自动归档候选。idleDays=0 为从不。
+ * 排除已归档、置顶、当前打开、隔离 worktree、Active 态。
+ */
+export function staleUnarchivedConversationIds(input: {
+  order: readonly string[];
+  conversations: Conversations;
+  now: number;
+  idleDays: number;
+  activeId?: string | null;
+}): string[] {
+  const { order, conversations, now, idleDays, activeId } = input;
+  if (!(idleDays > 0)) return [];
+  const cutoff = now - idleDays * DAY_MS;
+  return order.filter((id) => {
+    const conversation = conversations[id];
+    if (!conversation || conversation.archived === true) return false;
+    if (conversation.pinned === true) return false;
+    if (activeId && id === activeId) return false;
+    if (conversation.worktree) return false;
+    if (isActiveTone(id, conversations)) return false;
+    return lastActiveAt(conversation) <= cutoff;
+  });
+}
 
 /** 归档超过 N 天的会话 id。缺 archivedAt 的旧数据回落最后活跃时间。 */
 export function staleArchivedConversationIds(
@@ -210,4 +252,21 @@ export function staleArchivedConversationIds(
     const archivedAt = conversation.archivedAt ?? lastActiveAt(conversation);
     return archivedAt <= cutoff;
   });
+}
+
+/**
+ * 自动删除超期归档。days=0 为从不（与手动「全部删除」的 days=0 不同）。
+ * 跳过当前打开的会话。
+ */
+export function staleArchivedConversationIdsToDelete(
+  order: readonly string[],
+  conversations: Conversations,
+  days: number,
+  now: number,
+  activeId?: string | null
+): string[] {
+  if (!(days > 0)) return [];
+  return staleArchivedConversationIds(order, conversations, days, now).filter(
+    (id) => id !== activeId
+  );
 }

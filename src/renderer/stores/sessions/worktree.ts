@@ -18,6 +18,13 @@ export function worktreeHasPendingWork(status: WorktreeStatus | undefined): bool
   return status.dirty || status.ahead > 0;
 }
 
+/** 已合并且干净：才允许后台自动清理。未知 / 不存在 / dirty / 未合并一律 false */
+export function worktreeReadyToAutoCleanup(
+  status: Pick<WorktreeStatus, 'exists' | 'dirty' | 'ahead'> | undefined
+): boolean {
+  return status?.exists === true && status.dirty === false && status.ahead === 0;
+}
+
 /**
  * 工作区迁移提醒：随下一条用户消息前置注入。
  * 此前对话里的绝对路径全部失效，必须显式告知 agent，否则它会继续往旧工作区写。

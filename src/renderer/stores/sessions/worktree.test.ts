@@ -8,12 +8,16 @@ import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SettingsModule from '../settings';
 import type * as SessionsModule from './index';
+import * as worktree from './worktree';
 import {
   DIRTY_MAIN_TREE,
   workspaceFallbackNote,
   workspaceMigratedNote,
   worktreeHasPendingWork,
 } from './worktree';
+
+type AutoCleanupHelper = { worktreeReadyToAutoCleanup: (status: unknown) => boolean };
+const autoCleanupHelper = worktree as typeof worktree & Partial<AutoCleanupHelper>;
 
 let sourceProjection: SourceAuthorityProjection = { projects: [], conversations: [] };
 
@@ -161,6 +165,24 @@ describe('helpers', () => {
     expect(worktreeHasPendingWork({ exists: true, dirty: true, ahead: 0 })).toBe(true);
     expect(worktreeHasPendingWork({ exists: true, dirty: false, ahead: 2 })).toBe(true);
     expect(worktreeHasPendingWork(undefined)).toBe(false);
+  });
+
+  it('仅存在、干净且没有领先提交的 worktree 可自动清理', () => {
+    expect(
+      autoCleanupHelper.worktreeReadyToAutoCleanup?.({ exists: true, dirty: false, ahead: 0 })
+    ).toBe(true);
+  });
+
+  it('未知、不存在、缺状态、脏或未合并的 worktree 均不可自动清理', () => {
+    expect(
+      [
+        undefined,
+        { dirty: false, ahead: 0 },
+        { exists: false, dirty: false, ahead: 0 },
+        { exists: true, dirty: true, ahead: 0 },
+        { exists: true, dirty: false, ahead: 1 },
+      ].map((status) => autoCleanupHelper.worktreeReadyToAutoCleanup?.(status))
+    ).toEqual([false, false, false, false, false]);
   });
 
   it('迁移/回退提醒包含目标路径', () => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as pinned from './pinned';
 import {
   activeConversationIds,
   archivedConversationGroups,
@@ -7,6 +8,25 @@ import {
   projectConversationIds,
   staleArchivedConversationIds,
 } from './pinned';
+
+type CandidateHelpers = {
+  staleUnarchivedConversationIds: (input: {
+    order: readonly string[];
+    conversations: Record<string, unknown>;
+    now: number;
+    idleDays: number;
+    activeId?: string | null;
+  }) => string[];
+  staleArchivedConversationIdsToDelete: (
+    order: readonly string[],
+    conversations: Record<string, unknown>,
+    days: number,
+    now: number,
+    activeId?: string | null
+  ) => string[];
+};
+
+const candidateHelpers = pinned as typeof pinned & Partial<CandidateHelpers>;
 
 type Minimal = {
   projectId: string;
@@ -17,6 +37,12 @@ type Minimal = {
   createdAt: number;
   lastActiveAt?: number;
   messages: { timestamp?: number }[];
+  status?: string;
+  spawning?: boolean;
+  unread?: boolean;
+  pendingAsks?: { requestId: string }[];
+  coworkerIds?: string[];
+  worktree?: { path: string };
 };
 
 /** 造会话:lastActive 为最后一条消息时间;省略则无消息(回落 createdAt) */
@@ -171,6 +197,93 @@ describe('项目归档(会话自身 archived 标记不动)', () => {
 
   it('已删项目残留的归档 id 不占组', () => {
     expect(archivedConversationGroups(order, conversations, ['p2'], ['gone'])).toEqual([]);
+  });
+});
+
+describe('自动归档与删除候选', () => {
+  const day = 86_400_000;
+  const now = 40 * day;
+  const candidates = (order: string[], conversations: Record<string, Minimal>, activeId = '') =>
+    candidateHelpers.staleUnarchivedConversationIds?.({
+      order,
+      conversations,
+      now,
+      idleDays: 30,
+      activeId,
+    });
+
+  it('闲置归档设为从不时没有候选', () => {
+    expect(
+      candidateHelpers.staleUnarchivedConversationIds?.({
+        order: ['old'],
+        conversations: { old: conv('p1', 0) },
+        now,
+        idleDays: 0,
+      })
+    ).toEqual([]);
+  });
+
+  it('按消息、持久化时间、创建时间依次判定，实时消息可保住会话', () => {
+    const items = {
+      created: conv('p1', 0),
+      persisted: conv('p1', 0, undefined, { lastActiveAt: now - 31 * day }),
+      live: conv('p1', 0, now - day, { lastActiveAt: 0 }),
+    };
+    expect(candidates(Object.keys(items), items)).toEqual(['created', 'persisted']);
+  });
+
+  it('排除已归档、置顶、当前打开与隔离会话', () => {
+    const items = {
+      archived: conv('p1', 0, undefined, { archived: true }),
+      pinned: conv('p1', 0, undefined, { pinned: true }),
+      active: conv('p1', 0),
+      isolated: conv('p1', 0, undefined, { worktree: { path: '/wt' } }),
+      ordinary: conv('p1', 0),
+    };
+    expect(candidates(Object.keys(items), items, 'active')).toEqual(['ordinary']);
+  });
+
+  it('排除运行、等待、失败、未读、启动中及有运行子项的会话', () => {
+    const items = {
+      run: conv('p1', 0, undefined, { status: 'running' }),
+      wait: conv('p1', 0, undefined, { pendingAsks: [{ requestId: 'a' }] }),
+      fail: conv('p1', 0, undefined, { status: 'failed' }),
+      unread: conv('p1', 0, undefined, { unread: true }),
+      spawn: conv('p1', 0, undefined, { spawning: true }),
+      parent: conv('p1', 0, undefined, { coworkerIds: ['kid'] }),
+      kid: conv('p1', 0, undefined, { status: 'running' }),
+      ordinary: conv('p1', 0),
+    };
+    expect(
+      candidates(
+        Object.keys(items).filter((id) => id !== 'kid'),
+        items
+      )
+    ).toEqual(['ordinary']);
+  });
+
+  it('自动删除设为从不时不会沿用手动入口的全部删除语义', () => {
+    const items = { old: conv('p1', 0, undefined, { archived: true, archivedAt: 0 }) };
+    expect(candidateHelpers.staleArchivedConversationIdsToDelete?.(['old'], items, 0, now)).toEqual(
+      []
+    );
+  });
+
+  it('自动删除只选超期归档且跳过当前打开会话', () => {
+    const items = {
+      active: conv('p1', 0, undefined, { archived: true, archivedAt: 0 }),
+      stale: conv('p1', 0, undefined, { archived: true, archivedAt: 0 }),
+      recent: conv('p1', 0, undefined, { archived: true, archivedAt: now - day }),
+    };
+    expect(
+      candidateHelpers.staleArchivedConversationIdsToDelete?.(
+        Object.keys(items),
+        items,
+        30,
+        now,
+        'active'
+      )
+    ).toEqual(['stale']);
   });
 });
 
