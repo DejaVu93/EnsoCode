@@ -1,6 +1,15 @@
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { createSshExecutor, resolveSshControlPath, type SpawnLike } from './executor';
+import {
+  createSshExecutor,
+  resolveSshControlPath,
+  type SpawnLike,
+  sshPasswordEnv,
+  writeSshAskpassHelper,
+} from './executor';
 
 class FakeProc extends EventEmitter {
   stdout = new EventEmitter();
@@ -172,5 +181,30 @@ describe('SshExecutor', () => {
     proc.stderr.emit('data', Buffer.from('Permission denied (publickey)'));
     proc.emit('close', 255);
     await expect(pending).resolves.toMatchObject({ code: 255, stderr: /Permission denied/ });
+  });
+});
+
+describe('sshPasswordEnv / writeSshAskpassHelper', () => {
+  it('Unix 写可执行 askpass.sh，SSH_ASKPASS 指向脚本', () => {
+    const dir = path.join(tmpdir(), `enso-askpass-unix-${Date.now()}`);
+    const helper = writeSshAskpassHelper(dir, 'darwin');
+    expect(helper.endsWith('askpass.sh')).toBe(true);
+    expect(readFileSync(helper, 'utf8')).toContain('printf %s');
+    const env = sshPasswordEnv(dir, 'secret', 'darwin');
+    expect(env.SSH_ASKPASS).toBe(helper);
+    expect(env.ENSO_SSH_ASKPASS_PASSWORD).toBe('secret');
+    expect(env.SSH_ASKPASS_REQUIRE).toBe('force');
+  });
+
+  it('Windows 不把 .sh 交给 CreateProcess，改用 node --require', () => {
+    const dir = path.join(tmpdir(), `enso-askpass-win-${Date.now()}`);
+    const helper = writeSshAskpassHelper(dir, 'win32');
+    expect(helper.endsWith('askpass.cjs')).toBe(true);
+    expect(readFileSync(helper, 'utf8')).toContain('ENSO_SSH_ASKPASS_PASSWORD');
+    const env = sshPasswordEnv(dir, 'secret', 'win32');
+    expect(env.SSH_ASKPASS).toBe(process.execPath);
+    expect(env.ELECTRON_RUN_AS_NODE).toBe('1');
+    expect(env.NODE_OPTIONS).toContain('askpass.cjs');
+    expect(env.SSH_ASKPASS).not.toMatch(/\.sh$/);
   });
 });

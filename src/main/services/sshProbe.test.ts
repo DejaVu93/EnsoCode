@@ -80,6 +80,20 @@ describe('classifySshProbeFailure', () => {
       )
     ).toMatch(/主机密钥已变更/);
     expect(classifySshProbeFailure(255, 'Permission denied', 'password')).toMatch(/密码/);
+    expect(
+      classifySshProbeFailure(
+        255,
+        'CreateProcessW failed error:193 ssh_askpass: posix_spawnp: Unknown error',
+        'password'
+      )
+    ).toMatch(/密码助手/);
+    expect(
+      classifySshProbeFailure(
+        255,
+        'CreateProcessW failed error:193 ssh_askpass: posix_spawnp: Unknown error',
+        'password'
+      )
+    ).not.toMatch(/密码不正确/);
     expect(classifySshProbeFailure(1, '')).toMatch(/目录|directory/i);
   });
 });

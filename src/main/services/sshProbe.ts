@@ -1,5 +1,4 @@
 import { execFile } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -9,6 +8,7 @@ import {
   shellQuote,
 } from '@shared/ssh';
 import type { SshHostKeyChallenge } from '@shared/types';
+import { sshPasswordEnv } from '../../agent/ssh/executor';
 import { challengeFromScan, classifySshHostKeyFailure, scanSshHostKey } from './sshHostKey';
 
 const CONNECT_TIMEOUT_SECONDS = 10;
@@ -47,6 +47,9 @@ export function classifySshProbeFailure(
     const hostKey = classifySshHostKeyFailure(stderr);
     if (hostKey === 'changed') return 'SSH 主机密钥已变更:请核对 known_hosts 后再连接。';
     if (hostKey === 'untrusted') return 'SSH 主机密钥未信任。';
+    if (/posix_spawnp|CreateProcessW failed|ssh_askpass/i.test(stderr)) {
+      return 'SSH 认证失败:无法调用密码助手。';
+    }
     if (/permission denied|authentication/i.test(stderr)) {
       return auth === 'password'
         ? 'SSH 认证失败:用户名或密码不正确。'
@@ -74,16 +77,7 @@ async function attachHostKey(
 
 function probeEnv(password?: string): NodeJS.ProcessEnv | undefined {
   if (!password) return undefined;
-  const helper = path.join(tmpdir(), 'enso-ssh-askpass.sh');
-  writeFileSync(helper, '#!/bin/sh\nprintf %s "$ENSO_SSH_ASKPASS_PASSWORD"\n', { mode: 0o700 });
-  return {
-    ...process.env,
-    SSH_ASKPASS: helper,
-    SSH_ASKPASS_REQUIRE: 'force',
-    DISPLAY: process.env.DISPLAY || ':',
-    ENSO_SSH_ASKPASS_PASSWORD: password,
-    SSH_AUTH_SOCK: '',
-  };
+  return sshPasswordEnv(path.join(tmpdir(), 'enso-ssh-askpass'), password);
 }
 
 function runSshProbe(

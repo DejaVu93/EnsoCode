@@ -45,17 +45,42 @@ export type SpawnLike = (
   options?: { env?: NodeJS.ProcessEnv }
 ) => ChildProcess;
 
-export function writeSshAskpassHelper(dir: string): string {
+export function writeSshAskpassHelper(dir: string, platform = process.platform): string {
   mkdirSync(dir, { recursive: true });
+  if (platform === 'win32') {
+    const file = path.join(dir, 'askpass.cjs');
+    writeFileSync(
+      file,
+      "process.stdout.write(process.env.ENSO_SSH_ASKPASS_PASSWORD ?? '');\nprocess.exit(0);\n"
+    );
+    return file;
+  }
   const file = path.join(dir, 'askpass.sh');
   writeFileSync(file, '#!/bin/sh\nprintf %s "$ENSO_SSH_ASKPASS_PASSWORD"\n', { mode: 0o700 });
   return file;
 }
 
-export function sshPasswordEnv(dir: string, password: string): NodeJS.ProcessEnv {
+export function sshPasswordEnv(
+  dir: string,
+  password: string,
+  platform = process.platform
+): NodeJS.ProcessEnv {
+  const helper = writeSshAskpassHelper(dir, platform);
+  if (platform === 'win32') {
+    return {
+      ...process.env,
+      SSH_ASKPASS: process.execPath,
+      SSH_ASKPASS_REQUIRE: 'force',
+      DISPLAY: process.env.DISPLAY || ':',
+      ENSO_SSH_ASKPASS_PASSWORD: password,
+      SSH_AUTH_SOCK: '',
+      ELECTRON_RUN_AS_NODE: '1',
+      NODE_OPTIONS: `--require ${JSON.stringify(helper)}`,
+    };
+  }
   return {
     ...process.env,
-    SSH_ASKPASS: writeSshAskpassHelper(dir),
+    SSH_ASKPASS: helper,
     SSH_ASKPASS_REQUIRE: 'force',
     DISPLAY: process.env.DISPLAY || ':',
     ENSO_SSH_ASKPASS_PASSWORD: password,
@@ -107,7 +132,7 @@ export function createSshExecutor(
   };
   const env =
     remote.auth === 'password' && remote.password
-      ? sshPasswordEnv(controlDir, remote.password)
+      ? sshPasswordEnv(controlDir, remote.password, platform)
       : undefined;
 
   function run(command: string[] | string, options: SshExecOptions): Promise<SshExecRawResult> {
