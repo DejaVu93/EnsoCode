@@ -13,7 +13,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 const dir = process.argv[2];
-if (!dir || !dir.startsWith('/tmp/')) {
+if (!dir?.startsWith('/tmp/')) {
   console.error(
     'usage: mk-env.mjs /tmp/<name> [providerCount=1]  （强制 /tmp 前缀，防误伤真实数据）'
   );

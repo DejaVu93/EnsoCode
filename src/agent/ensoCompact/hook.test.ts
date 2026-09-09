@@ -318,7 +318,7 @@ describe('enso compact hook', () => {
   it('摘要模型 contextWindow 很小时强制切块', async () => {
     const messages = Array.from({ length: 10 }, (_, i) => ({
       role: 'user',
-      content: `Goal: ship. Step ${i}: ` + 'x'.repeat(3000),
+      content: `Goal: ship. Step ${i}: ${'x'.repeat(3000)}`,
     }));
     const prompts: string[] = [];
     const handler = hookFor({

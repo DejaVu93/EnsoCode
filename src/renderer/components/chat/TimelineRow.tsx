@@ -668,9 +668,7 @@ function canActOnDisplayedSession(
 ) {
   if (host && !host.canRewind) return false;
   const conversation = displayedConversation(state);
-  return Boolean(
-    conversation?.started && !conversation.spawning && statusOk(conversation.status)
-  );
+  return Boolean(conversation?.started && !conversation.spawning && statusOk(conversation.status));
 }
 
 /** 回退：failed 也可（与 Retry 对齐）；分叉仍要 idle，worker fork 不接受非 idle 源 */

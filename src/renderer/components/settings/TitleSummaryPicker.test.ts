@@ -62,6 +62,7 @@ vi.mock('@/stores/oauthCredentials', () => ({
 }));
 
 vi.mock('@/components/chat/ModelPicker', () => ({
+  MODEL_PICKER_FORM_TRIGGER_CLASS: 'form-trigger',
   ModelPicker: (props: Record<string, unknown>) => {
     harness.pickerProps = props;
     return createElement('i', {
@@ -79,7 +80,7 @@ describe('TitleSummaryPicker', () => {
     expect(html).toContain('data-title-picker="true"');
     // 标题总结不需要推理档位：必须显式关掉级联菜单里的 reasoning 控件
     expect(html).toContain('data-reasoning-controls="false"');
-    expect(html).toContain('Follows the default model');
+    expect(harness.pickerProps?.emptyLabel).toBe('Follows the default model');
 
     const onSelect = harness.pickerProps?.onSelect;
     if (typeof onSelect === 'function') onSelect('api', 'model');
@@ -93,7 +94,8 @@ describe('TitleSummaryPicker', () => {
     harness.state.titleSummaryEnabled = true;
     harness.state.titleSummaryModel = { providerId: 'api', modelId: 'model' };
     const html = renderToStaticMarkup(createElement(TitleSummaryPicker));
-    expect(html).toContain('Chosen model');
+    expect(harness.pickerProps?.modelId).toBe('model');
+    expect(harness.pickerProps?.providerId).toBe('api');
     expect(html).toContain('Follow default model');
   });
 

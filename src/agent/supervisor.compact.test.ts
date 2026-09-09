@@ -272,14 +272,10 @@ describe('SessionSupervisor failTurn compaction cleanup', () => {
     await settle();
     await settle();
     expect(events.some((event) => event.type === 'turn-failed')).toBe(true);
-    expect(
-      events.some((event) => event.type === 'status' && event.status === 'failed')
-    ).toBe(true);
+    expect(events.some((event) => event.type === 'status' && event.status === 'failed')).toBe(true);
 
     // 失败应清掉 queued：emit compaction end，且不带 error（避免假「压缩失败」toast）
-    const ends = events.filter(
-      (event) => event.type === 'compaction' && event.state === 'end'
-    );
+    const ends = events.filter((event) => event.type === 'compaction' && event.state === 'end');
     expect(ends).toHaveLength(1);
     expect(ends[0]).toEqual(expect.objectContaining({ type: 'compaction', state: 'end' }));
     expect(ends[0]).not.toHaveProperty('error');
@@ -316,9 +312,9 @@ describe('SessionSupervisor failTurn compaction cleanup', () => {
 
     supervisor.handleCommand({ type: 'snapshot' });
     await settle();
-    const snapshot = events.find(
-      (event) => event.type === 'snapshot'
-    ) as { sessions: { compaction?: string }[] } | undefined;
+    const snapshot = events.find((event) => event.type === 'snapshot') as
+      | { sessions: { compaction?: string }[] }
+      | undefined;
     expect(snapshot?.sessions[0]?.compaction).toBeUndefined();
 
     await supervisor.shutdown();
@@ -399,9 +395,7 @@ describe('SessionSupervisor failTurn compaction cleanup', () => {
     failTurnViaAgentEnd(parentSession);
     await settle();
     await settle();
-    expect(
-      events.some((event) => event.type === 'status' && event.status === 'failed')
-    ).toBe(true);
+    expect(events.some((event) => event.type === 'status' && event.status === 'failed')).toBe(true);
 
     supervisor.handleCommand({
       type: 'rewind',

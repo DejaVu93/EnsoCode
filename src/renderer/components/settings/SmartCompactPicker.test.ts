@@ -66,6 +66,7 @@ vi.mock('@/stores/oauthCredentials', () => ({
 }));
 
 vi.mock('@/components/chat/ModelPicker', () => ({
+  MODEL_PICKER_FORM_TRIGGER_CLASS: 'form-trigger',
   ModelPicker: (props: Record<string, unknown>) => {
     harness.pickerProps = props;
     return createElement('i', {
@@ -82,7 +83,7 @@ describe('SmartCompactPicker', () => {
     const html = renderToStaticMarkup(createElement(SmartCompactPicker));
     expect(html).toContain('data-smart-compact-picker="true"');
     expect(html).toContain('data-reasoning-controls="false"');
-    expect(html).toContain('Follows the session model');
+    expect(harness.pickerProps?.emptyLabel).toBe('Follows the session model');
 
     const onSelect = harness.pickerProps?.onSelect;
     if (typeof onSelect === 'function') onSelect('api', 'model');
@@ -96,7 +97,8 @@ describe('SmartCompactPicker', () => {
     harness.state.smartCompactEnabled = true;
     harness.state.smartCompactModel = { providerId: 'api', modelId: 'model' };
     const html = renderToStaticMarkup(createElement(SmartCompactPicker));
-    expect(html).toContain('Cheap compact');
+    expect(harness.pickerProps?.modelId).toBe('model');
+    expect(harness.pickerProps?.providerId).toBe('api');
     expect(html).toContain('Follow session model');
   });
 
