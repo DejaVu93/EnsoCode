@@ -283,6 +283,8 @@ describe('SessionSupervisor failTurn compaction cleanup', () => {
     expect(ends).toHaveLength(1);
     expect(ends[0]).toEqual(expect.objectContaining({ type: 'compaction', state: 'end' }));
     expect(ends[0]).not.toHaveProperty('error');
+    // 放弃排队压缩：end 必须带 abandoned 标记，供投影区分「真正压完」与「放弃」，避免被当成成功而重钉锚点
+    expect(ends[0]).toEqual(expect.objectContaining({ abandoned: true }));
 
     await supervisor.shutdown();
   });

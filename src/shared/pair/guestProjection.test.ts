@@ -318,6 +318,17 @@ describe('compaction 投影', () => {
     expect(done.compactionNoticeAt).toBe(3);
   });
 
+  it('放弃排队压缩（abandoned end）清进度但不重钉锚点', () => {
+    const base = viewWith([[7, 'a']], { compaction: 'queued', compactionNoticeAt: 3 });
+    const done = applyGuestEvent(base, {
+      type: 'compaction',
+      state: 'end',
+      abandoned: true,
+    }).view;
+    expect(done.compaction).toBeUndefined();
+    expect(done.compactionNoticeAt).toBe(3);
+  });
+
   it('尾窗快照未带压缩进度则清除，避免漏掉 end 后永远贴底「正在压缩」', () => {
     const sessions = new Map([
       ['s1', viewWith([[0, 'a']], { compaction: 'running', compactionNoticeAt: 5 })],

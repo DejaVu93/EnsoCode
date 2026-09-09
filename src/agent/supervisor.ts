@@ -2724,7 +2724,7 @@ export class SessionSupervisor {
     // 失败轮不总结，但下一轮的起点仍要往前推，否则失败轮的消息会混进下一轮摘要
     managed.turnStartIndex = managed.messages.length;
     // 轮失败时放弃排队压缩（通常是 queued；running 压缩与 failTurn 时序上不可达）
-    // 不带 error：放弃排队 ≠ 压缩失败，避免假 toast
+    // abandoned：清进度但不重钉「压缩完成」锚点；不带 error，避免假 toast
     managed.pendingCompact = undefined;
     if (managed.compaction) {
       managed.compaction = undefined;
@@ -2733,6 +2733,7 @@ export class SessionSupervisor {
         identity: managed.identity,
         seq: ++managed.seq,
         state: 'end',
+        abandoned: true,
       });
     }
     this.emitStatus(managed, error);

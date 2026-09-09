@@ -1975,6 +1975,62 @@ describe('typed Agent child projection', () => {
     );
   });
 
+  describe('放弃排队压缩：清进度但不重钉锚点', () => {
+    function seedCompaction(over: Record<string, unknown> = {}) {
+      sessionsModule.useSessionsStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          parent: {
+            ...state.conversations.parent,
+            id: 'parent',
+            started: true,
+            status: 'idle' as const,
+            generation: 'pg1',
+            compaction: 'queued' as const,
+            compactionNoticeAt: 3,
+            compactionError: undefined,
+            messages: [
+              { role: 'user', content: [{ type: 'text', text: 'm0' }] },
+              { role: 'assistant', content: [{ type: 'text', text: 'm1' }] },
+              { role: 'user', content: [{ type: 'text', text: 'm2' }] },
+              { role: 'assistant', content: [{ type: 'text', text: 'm3' }] },
+              { role: 'user', content: [{ type: 'text', text: 'm4' }] },
+            ],
+            ...over,
+          },
+        },
+      }));
+    }
+
+    it('abandoned end 清掉 compaction 进度，但不更新 compactionNoticeAt，也不产生 compactionError', () => {
+      seedCompaction();
+      onAgentEvent?.({
+        type: 'compaction',
+        identity: { sessionId: 'parent', generation: 'pg1' },
+        seq: 1,
+        state: 'end',
+        abandoned: true,
+      } as RendererAgentEvent);
+      const conversation = sessionsModule.useSessionsStore.getState().conversations.parent;
+      expect(conversation.compaction).toBeUndefined();
+      expect(conversation.compactionNoticeAt).toBe(3);
+      expect(conversation.compactionError).toBeUndefined();
+    });
+
+    it('对照：普通 end 仍会更新锚点到 messages.length', () => {
+      seedCompaction({ compaction: 'running' });
+      onAgentEvent?.({
+        type: 'compaction',
+        identity: { sessionId: 'parent', generation: 'pg1' },
+        seq: 1,
+        state: 'end',
+      });
+      const conversation = sessionsModule.useSessionsStore.getState().conversations.parent;
+      expect(conversation.compaction).toBeUndefined();
+      expect(conversation.compactionNoticeAt).toBe(5);
+    });
+  });
+
   it('summon only pre-fills the parent composer and never dispatches', () => {
     sessionsModule.useSessionsStore.setState((state) => ({
       conversations: {

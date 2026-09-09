@@ -1076,8 +1076,8 @@ export const useSessionsStore = create<SessionsState>()(
                   ...(event.state === 'end'
                     ? {
                         compactionError: event.error,
-                        // 成功才钉提示；失败时消息没变，锚点保持原样
-                        ...(event.error
+                        // 真正压完才钉提示；失败 / 放弃排队都不改锚点
+                        ...(event.error || event.abandoned
                           ? {}
                           : {
                               compactionNoticeAt: state.conversations[id].messages?.length ?? 0,

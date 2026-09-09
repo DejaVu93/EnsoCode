@@ -119,8 +119,9 @@ export function applyGuestEvent(
     case 'compaction': {
       const state = event.state as string;
       view.compaction = state === 'queued' ? 'queued' : state === 'start' ? 'running' : undefined;
-      // host 先对齐消息再发 end，此时 maxIndex 已含摘要消息；失败则消息没变，锚点保持原样
-      if (state === 'end' && !event.error) view.compactionNoticeAt = maxIndex(view.messages) + 1;
+      // host 先对齐消息再发 end，此时 maxIndex 已含摘要消息；失败 / 放弃排队则不改锚点
+      if (state === 'end' && !event.error && !event.abandoned)
+        view.compactionNoticeAt = maxIndex(view.messages) + 1;
       break;
     }
   }

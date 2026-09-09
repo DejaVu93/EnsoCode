@@ -946,6 +946,8 @@ export type AgentWorkerEvent =
       seq: number;
       state: 'queued' | 'start' | 'end';
       error?: string;
+      /** 放弃排队压缩（非真正压完）：清进度但不重钉 compactionNoticeAt */
+      abandoned?: true;
     }
   | { type: 'commands'; identity: SessionIdentity; seq: number; commands: SlashCommand[] }
   | {
@@ -2273,7 +2275,8 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
         : null;
     case 'compaction':
       return (value.state === 'queued' || value.state === 'start' || value.state === 'end') &&
-        (value.error === undefined || typeof value.error === 'string')
+        (value.error === undefined || typeof value.error === 'string') &&
+        (value.abandoned === undefined || value.abandoned === true)
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'commands':
