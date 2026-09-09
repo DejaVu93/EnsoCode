@@ -14,7 +14,9 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 
 const dir = process.argv[2];
 if (!dir || !dir.startsWith('/tmp/')) {
-  console.error('usage: mk-env.mjs /tmp/<name> [providerCount=1]  （强制 /tmp 前缀，防误伤真实数据）');
+  console.error(
+    'usage: mk-env.mjs /tmp/<name> [providerCount=1]  （强制 /tmp 前缀，防误伤真实数据）'
+  );
   process.exit(2);
 }
 const count = Math.max(1, Math.min(4, Number(process.argv[3]) || 1));
