@@ -131,6 +131,7 @@ import {
   type SshExecutor,
   sshPasswordEnv,
 } from './ssh/executor';
+import { rewriteRemoteWorkingDirectoryPrompt } from './ssh/posixPath';
 import { createRemoteGrepToolDefinition } from './ssh/remoteGrep';
 import { createRemoteOperations } from './ssh/remoteOperations';
 import {
@@ -289,6 +290,8 @@ function createSessionResourceLoader(options: {
   instruction?: { path: string; content: string };
   /** 远程会话:替换掉本地 cwd 扫描出的 AGENTS.md(cwd 在本机不存在),只用预取的远端文件 */
   remoteAgentsFiles?: Array<{ path: string; content: string }>;
+  /** 远程会话:把系统提示里的 Windows 盘符 cwd 改回 POSIX */
+  remoteSsh?: { host: string };
   /** 加载项目内 .claude/.codex/.cursor 的 skills 与规则文件；远程会话不适用（cwd 不在本机） */
   loadHarnessAssets?: boolean;
   exploreFold?: ReturnType<typeof createExploreFoldState>;
@@ -330,6 +333,23 @@ function createSessionResourceLoader(options: {
                   messages: options.exploreFold!.apply(
                     event.messages as never
                   ) as typeof event.messages,
+                }));
+              },
+            } satisfies InlineExtension,
+          ]
+        : []),
+      ...(options.remoteSsh
+        ? [
+            {
+              name: 'ssh-cwd-prompt',
+              hidden: true,
+              factory: (pi) => {
+                pi.on('before_agent_start', (event) => ({
+                  systemPrompt: rewriteRemoteWorkingDirectoryPrompt(
+                    event.systemPrompt,
+                    options.cwd,
+                    options.remoteSsh!.host
+                  ),
                 }));
               },
             } satisfies InlineExtension,
@@ -1200,6 +1220,7 @@ export class SessionSupervisor {
       skillPaths,
       instruction,
       remoteAgentsFiles,
+      ...(remote ? { remoteSsh: { host: remote.host } } : {}),
       loadHarnessAssets,
       exploreFold,
       ...(smartCompactEnabled
@@ -1517,6 +1538,7 @@ export class SessionSupervisor {
               skillPaths: resolved || agentType ? [...selectedSkillPaths] : skillPaths,
               instruction,
               remoteAgentsFiles,
+              ...(remote ? { remoteSsh: { host: remote.host } } : {}),
               // 类型化子代理与项目资源隔离（同 noSkills/noExtensions），不追加 harness 资源
               loadHarnessAssets: resolved || agentType ? false : loadHarnessAssets,
               ...(childExploreFold ? { exploreFold: childExploreFold } : {}),

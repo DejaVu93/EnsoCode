@@ -117,17 +117,24 @@ const SUMMARY_KEYS = [
 const PATH_SUMMARY_KEYS = new Set(['path', 'file_path']);
 const HASHLINE_HEADER = /^\[(.+)#([0-9A-Fa-f]{4})\]$/;
 
+/** Windows 盘符根路径还原成 POSIX，便于远程 SSH 工具路径和项目 cwd 对齐 */
+function posixifyPath(value: string): string {
+  const normalized = value.replaceAll('\\', '/');
+  const drive = /^[A-Za-z]:(\/.*)?$/.exec(normalized);
+  if (drive) return drive[1] && drive[1].length > 0 ? drive[1] : '/';
+  return normalized;
+}
+
 /** 项目内绝对路径收成相对路径；前缀碰巧相同的目录不误切 */
 export function toProjectRelativePath(value: string, cwd?: string): string {
   if (!cwd) return value;
-  const root = cwd.replace(/[/\\]+$/, '');
-  if (!root) return value;
-  if (value === root) return '.';
-  const prefix = root.endsWith('/') || root.endsWith('\\') ? root : `${root}/`;
-  if (value.startsWith(prefix)) return value.slice(prefix.length);
-  const winPrefix = `${root}\\`;
-  if (value.startsWith(winPrefix)) return value.slice(winPrefix.length).replace(/\\/g, '/');
-  return value;
+  const root = posixifyPath(cwd).replace(/\/+$/, '');
+  const posixValue = posixifyPath(value);
+  if (!root) return posixValue;
+  if (posixValue === root) return '.';
+  const prefix = root.endsWith('/') ? root : `${root}/`;
+  if (posixValue.startsWith(prefix)) return posixValue.slice(prefix.length);
+  return posixValue === value ? value : posixValue;
 }
 
 function hashlinePathFromInput(input: unknown): string | undefined {

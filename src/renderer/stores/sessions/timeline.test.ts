@@ -1168,6 +1168,13 @@ describe('工具路径摘要相对化', () => {
     expect(tool({ path: cwd }, cwd)).toMatchObject({ summary: '.' });
   });
 
+  it('Windows 盘符路径相对 POSIX 项目 cwd', () => {
+    expect(tool({ path: 'D:/root/semble/README.md' }, '/root/semble')).toMatchObject({
+      summary: 'README.md',
+    });
+    expect(tool({ path: 'D:\\root\\semble' }, '/root/semble')).toMatchObject({ summary: '.' });
+  });
+
   it('command 不受影响', () => {
     expect(
       buildTimeline(
