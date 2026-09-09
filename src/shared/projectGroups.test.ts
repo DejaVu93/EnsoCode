@@ -106,4 +106,33 @@ describe('applyProjectGroupPatch', () => {
   it('写入新颜色', () => {
     expect(applyProjectGroupPatch(group, { color: '#22c55e' }).color).toBe('#22c55e');
   });
+
+  it('写入与清空默认模型', () => {
+    const withModel = applyProjectGroupPatch(group, {
+      defaultModel: { providerId: 'p', modelId: 'm' },
+    });
+    expect(withModel.defaultModel).toEqual({ providerId: 'p', modelId: 'm' });
+    expect(applyProjectGroupPatch(withModel, { name: 'Work' }).defaultModel).toEqual({
+      providerId: 'p',
+      modelId: 'm',
+    });
+    expect('defaultModel' in applyProjectGroupPatch(withModel, { defaultModel: null })).toBe(false);
+  });
+
+  it('写入与清空默认推理深度；清空模型时一并去掉推理字段', () => {
+    const withReasoning = applyProjectGroupPatch(group, {
+      defaultModel: { providerId: 'p', modelId: 'm' },
+      defaultReasoningEnabled: false,
+      defaultThinkingLevel: 'high',
+    });
+    expect(withReasoning.defaultReasoningEnabled).toBe(false);
+    expect(withReasoning.defaultThinkingLevel).toBe('high');
+    expect(applyProjectGroupPatch(withReasoning, { name: 'Work' }).defaultThinkingLevel).toBe(
+      'high'
+    );
+    const cleared = applyProjectGroupPatch(withReasoning, { defaultModel: null });
+    expect('defaultModel' in cleared).toBe(false);
+    expect('defaultReasoningEnabled' in cleared).toBe(false);
+    expect('defaultThinkingLevel' in cleared).toBe(false);
+  });
 });

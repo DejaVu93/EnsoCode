@@ -352,6 +352,13 @@ export const zhTranslations: Record<string, string> = {
   Local: '本地',
   'Default model': '默认模型',
   'Used for new conversations.': '用于普通新对话。',
+  'Used for new conversations in this project.': '用于本项目的新对话。',
+  'Used for new conversations in this group.': '用于本组的新对话。',
+  'Project settings': '项目设置',
+  'Default model for {{name}}': '{{name}} 的默认模型',
+  'Follows group, then global default': '跟随分组默认，再跟随全局默认',
+  'Follows the global default': '跟随全局默认',
+  'Session choice overrides the project default.': '会话里手动选的模型优先于项目默认。',
   'Conversation title summary': '会话标题总结',
   'Generate a short AI title from the first message of a new conversation.':
     '新会话发出首条消息后，用 AI 自动生成简短标题。',
@@ -376,6 +383,8 @@ export const zhTranslations: Record<string, string> = {
     '无法加载订阅凭证。请选择 API Key 模型，或重新加载凭证。',
   'Choose a model for this conversation or set a global default before sending.':
     '发送前请为此对话选择模型，或设置全局默认模型。',
+  'Choose a model for this conversation or set a project, group, or global default before sending.':
+    '发送前请为此对话选择模型，或设置项目、分组或全局默认模型。',
   'No usable model is available. Configure provider credentials and enable a model first.':
     '没有可用模型。请先配置提供商凭证并启用模型。',
   Agent: 'Agent',

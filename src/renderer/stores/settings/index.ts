@@ -618,6 +618,7 @@ export const useSettingsStore = create<SettingsState>()(
         set((state) => {
           const previous = state.projects.find((candidate) => candidate.id === project.id);
           const nextProject = {
+            ...previous,
             ...project,
             ...(project.groupId
               ? { groupId: project.groupId }
@@ -643,6 +644,20 @@ export const useSettingsStore = create<SettingsState>()(
           order: Math.max(-1, ...get().projectGroups.map((item) => item.order)) + 1,
           ...(input.emoji ? { emoji: input.emoji } : {}),
           ...(input.color ? { color: input.color } : {}),
+          ...(input.defaultModel
+            ? {
+                defaultModel: {
+                  providerId: input.defaultModel.providerId,
+                  modelId: input.defaultModel.modelId,
+                },
+                ...(typeof input.defaultReasoningEnabled === 'boolean'
+                  ? { defaultReasoningEnabled: input.defaultReasoningEnabled }
+                  : {}),
+                ...(input.defaultThinkingLevel
+                  ? { defaultThinkingLevel: input.defaultThinkingLevel }
+                  : {}),
+              }
+            : {}),
         };
         set((state) => ({ projectGroups: [...state.projectGroups, group] }));
         return group;
@@ -695,6 +710,32 @@ export const useSettingsStore = create<SettingsState>()(
               return rest;
             }
             return { ...project, groupId };
+          }),
+        }));
+      },
+      setProjectDefaultModel: (projectId, model, reasoning) => {
+        set((state) => ({
+          projects: state.projects.map((project) => {
+            if (project.id !== projectId) return project;
+            if (!model) {
+              const {
+                defaultModel: _removed,
+                defaultReasoningEnabled: _reasoning,
+                defaultThinkingLevel: _thinking,
+                ...rest
+              } = project;
+              return rest;
+            }
+            return {
+              ...project,
+              defaultModel: { providerId: model.providerId, modelId: model.modelId },
+              ...(reasoning
+                ? {
+                    defaultReasoningEnabled: reasoning.reasoningEnabled,
+                    defaultThinkingLevel: reasoning.thinkingLevel,
+                  }
+                : {}),
+            };
           }),
         }));
       },

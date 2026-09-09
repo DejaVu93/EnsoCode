@@ -63,6 +63,7 @@ vi.mock('@/stores/oauthCredentials', () => ({
 }));
 
 vi.mock('@/components/chat/ModelPicker', () => ({
+  MODEL_PICKER_FORM_TRIGGER_CLASS: 'form-trigger',
   ModelPicker: (props: Record<string, unknown>) => {
     harness.pickerProps = props;
     return createElement('i', {

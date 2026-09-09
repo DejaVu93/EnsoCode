@@ -221,6 +221,7 @@ export const SETTINGS_ACTION_COVERAGE = {
   removeProjectGroup: surfaces('projects.list'),
   reorderProjectGroups: surfaces('projects.list'),
   setProjectGroupId: surfaces('projects.list'),
+  setProjectDefaultModel: surfaces('projects.list'),
   removeProject: surfaces('projects.remove'),
   setUsageModelPricing: excluded(
     'Local usage cost override for Settings → Usage; desktop-only estimate, not an Enso capability.'

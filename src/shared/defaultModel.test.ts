@@ -4,6 +4,7 @@ import {
   type ModelCredentialContext,
   modelUsability,
   resolveChatModel,
+  resolveChatReasoning,
   sanitizeDefaultModel,
 } from './defaultModel';
 import type { ModelProvider } from './types';
@@ -176,6 +177,123 @@ describe('resolveChatModel', () => {
         credentials: oauthError,
       })
     ).toMatchObject({ source: 'session', providerId: 'session', modelId: 's' });
+  });
+
+  it('无会话选型时优先项目默认，再分组，最后全局', () => {
+    const providers = [
+      provider('project', ['p']),
+      provider('group', ['g']),
+      provider('default', ['d']),
+    ];
+    const credentials = ready();
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        projectDefaultModel: { providerId: 'project', modelId: 'p' },
+        groupDefaultModel: { providerId: 'group', modelId: 'g' },
+        providers,
+        credentials,
+      })
+    ).toMatchObject({ source: 'project', providerId: 'project', modelId: 'p' });
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        groupDefaultModel: { providerId: 'group', modelId: 'g' },
+        providers,
+        credentials,
+      })
+    ).toMatchObject({ source: 'group', providerId: 'group', modelId: 'g' });
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        providers,
+        credentials,
+      })
+    ).toMatchObject({ source: 'default', providerId: 'default', modelId: 'd' });
+  });
+
+  it('会话手动选型仍覆盖项目与分组默认', () => {
+    const providers = [
+      provider('session', ['s']),
+      provider('project', ['p']),
+      provider('group', ['g']),
+      provider('default', ['d']),
+    ];
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        projectDefaultModel: { providerId: 'project', modelId: 'p' },
+        groupDefaultModel: { providerId: 'group', modelId: 'g' },
+        lastProviderId: 'session',
+        lastModelId: 's',
+        providers,
+        credentials: ready(),
+      })
+    ).toMatchObject({ source: 'session', providerId: 'session', modelId: 's' });
+  });
+
+  it('项目默认不可用时回退分组，分组也不可用再回退全局', () => {
+    const providers = [provider('group', ['g']), provider('default', ['d'])];
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        projectDefaultModel: { providerId: 'gone', modelId: 'x' },
+        groupDefaultModel: { providerId: 'group', modelId: 'g' },
+        providers,
+        credentials: ready(),
+      })
+    ).toMatchObject({ source: 'group', providerId: 'group', modelId: 'g' });
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        projectDefaultModel: { providerId: 'gone', modelId: 'x' },
+        groupDefaultModel: { providerId: 'missing', modelId: 'y' },
+        providers,
+        credentials: ready(),
+      })
+    ).toMatchObject({ source: 'default', providerId: 'default', modelId: 'd' });
+  });
+
+  it('项目默认是 OAuth unknown 时不静默回退到全局', () => {
+    const oauth = oauthProvider('oauth', 'anthropic', ['claude']);
+    const global = provider('default', ['d']);
+    expect(
+      resolveChatModel({
+        defaultModel: { providerId: 'default', modelId: 'd' },
+        projectDefaultModel: { providerId: 'oauth', modelId: 'claude' },
+        providers: [oauth, global],
+        credentials: oauthError,
+      })
+    ).toMatchObject({ source: 'none', reason: 'oauth-credentials-error' });
+  });
+});
+
+describe('resolveChatReasoning', () => {
+  it('推理深度随项目 → 分组 → 全局回落，未设置不覆盖下一层', () => {
+    expect(
+      resolveChatReasoning({
+        projectReasoningEnabled: false,
+        projectThinkingLevel: 'high',
+        groupReasoningEnabled: true,
+        groupThinkingLevel: 'low',
+        defaultReasoningEnabled: true,
+        defaultThinkingLevel: 'medium',
+      })
+    ).toEqual({ reasoningEnabled: false, thinkingLevel: 'high' });
+    expect(
+      resolveChatReasoning({
+        groupReasoningEnabled: false,
+        groupThinkingLevel: 'low',
+        defaultReasoningEnabled: true,
+        defaultThinkingLevel: 'medium',
+      })
+    ).toEqual({ reasoningEnabled: false, thinkingLevel: 'low' });
+    expect(
+      resolveChatReasoning({
+        defaultReasoningEnabled: true,
+        defaultThinkingLevel: 'xhigh',
+      })
+    ).toEqual({ reasoningEnabled: true, thinkingLevel: 'xhigh' });
   });
 });
 

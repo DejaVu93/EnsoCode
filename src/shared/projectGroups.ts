@@ -1,3 +1,4 @@
+import { THINKING_LEVELS, type ThinkingLevel } from './types/agent';
 import type { Project, ProjectGroup } from './types/project';
 
 export type { ProjectGroup };
@@ -64,6 +65,9 @@ export type ProjectGroupPatch = {
   name?: string;
   emoji?: string;
   color?: string;
+  defaultModel?: ProjectGroup['defaultModel'] | null;
+  defaultReasoningEnabled?: boolean | null;
+  defaultThinkingLevel?: ThinkingLevel | null;
 };
 
 /** 编辑器会把「取消颜色」写成 color: undefined；不能当成「不改这个字段」。 */
@@ -82,6 +86,35 @@ export function applyProjectGroupPatch(
   if ('color' in patch) {
     if (patch.color) next.color = patch.color;
     else delete next.color;
+  }
+  if ('defaultModel' in patch) {
+    if (patch.defaultModel?.providerId && patch.defaultModel.modelId) {
+      next.defaultModel = {
+        providerId: patch.defaultModel.providerId,
+        modelId: patch.defaultModel.modelId,
+      };
+    } else {
+      delete next.defaultModel;
+      if (!('defaultReasoningEnabled' in patch)) delete next.defaultReasoningEnabled;
+      if (!('defaultThinkingLevel' in patch)) delete next.defaultThinkingLevel;
+    }
+  }
+  if ('defaultReasoningEnabled' in patch) {
+    if (typeof patch.defaultReasoningEnabled === 'boolean') {
+      next.defaultReasoningEnabled = patch.defaultReasoningEnabled;
+    } else {
+      delete next.defaultReasoningEnabled;
+    }
+  }
+  if ('defaultThinkingLevel' in patch) {
+    if (
+      patch.defaultThinkingLevel &&
+      (THINKING_LEVELS as readonly string[]).includes(patch.defaultThinkingLevel)
+    ) {
+      next.defaultThinkingLevel = patch.defaultThinkingLevel;
+    } else {
+      delete next.defaultThinkingLevel;
+    }
   }
   return next;
 }

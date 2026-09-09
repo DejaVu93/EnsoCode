@@ -2,7 +2,7 @@ import type { DefaultModelRef } from '@shared/defaultModel';
 import type { ModelProvider } from '@shared/types';
 import { CircleAlert, Server } from 'lucide-react';
 import { useMemo } from 'react';
-import { ModelPicker } from '@/components/chat/ModelPicker';
+import { MODEL_PICKER_FORM_TRIGGER_CLASS, ModelPicker } from '@/components/chat/ModelPicker';
 import { useI18n } from '@/i18n';
 import {
   usableProvidersForOauthSnapshot,
@@ -57,29 +57,27 @@ export function DefaultModelPicker() {
 
   return (
     <section className="space-y-2 rounded-lg border bg-card p-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <h4 className="font-medium text-sm">{t('Default model')}</h4>
-          <p className="mt-0.5 text-muted-foreground text-xs">{t('Used for new conversations.')}</p>
-          {defaultModel && selectedProvider && selectedModel && (
-            <p className="mt-1 truncate text-xs" title={selectionLabel(defaultModel, providers)}>
-              {selectionLabel(defaultModel, providers)}
-            </p>
-          )}
-        </div>
-        {candidates.length > 0 && (
+      <div className="min-w-0">
+        <h4 className="font-medium text-sm">{t('Default model')}</h4>
+        <p className="mt-0.5 text-muted-foreground text-xs">{t('Used for new conversations.')}</p>
+      </div>
+      {candidates.length > 0 && (
+        <div className="w-full min-w-0">
           <ModelPicker
             providers={candidates}
-            providerId={selectedProvider?.id ?? ''}
-            modelId={selectedModel?.id ?? ''}
+            providerId={selectedProvider?.id ?? defaultModel?.providerId ?? ''}
+            modelId={selectedModel?.id ?? defaultModel?.modelId ?? ''}
             reasoningEnabled={defaultReasoningEnabled}
             thinkingLevel={defaultThinkingLevel}
+            emptyLabel={t('Select model')}
+            side="bottom"
+            triggerClassName={MODEL_PICKER_FORM_TRIGGER_CLASS}
             onSelect={(providerId, modelId) => setDefaultModel({ providerId, modelId })}
             onReasoningChange={setDefaultReasoningEnabled}
             onThinkingChange={setDefaultThinkingLevel}
           />
-        )}
-      </div>
+        </div>
+      )}
 
       {candidates.length === 0 && (
         <div className="rounded-md border border-dashed px-3 py-5 text-center">

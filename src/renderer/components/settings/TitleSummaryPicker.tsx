@@ -1,7 +1,5 @@
-import type { DefaultModelRef } from '@shared/defaultModel';
-import type { ModelProvider } from '@shared/types';
 import { useMemo } from 'react';
-import { ModelPicker } from '@/components/chat/ModelPicker';
+import { MODEL_PICKER_FORM_TRIGGER_CLASS, ModelPicker } from '@/components/chat/ModelPicker';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
@@ -10,12 +8,6 @@ import {
   useOauthCredentialStore,
 } from '@/stores/oauthCredentials';
 import { useSettingsStore } from '@/stores/settings';
-
-function selectionLabel(selection: DefaultModelRef, providers: readonly ModelProvider[]): string {
-  const provider = providers.find((entry) => entry.id === selection.providerId);
-  const model = provider?.models.find((entry) => entry.id === selection.modelId);
-  return `${provider?.name ?? selection.providerId} / ${model?.label ?? selection.modelId}`;
-}
 
 /**
  * 会话标题总结设置：开关 + 独立模型（null = 跟随全局默认）。
@@ -51,24 +43,9 @@ export function TitleSummaryPicker() {
       </div>
 
       {enabled && (
-        <div className="flex items-center justify-between gap-4">
-          <p
-            className="min-w-0 truncate text-muted-foreground text-xs"
-            title={model ? selectionLabel(model, providers) : undefined}
-          >
-            {model && selectedProvider && selectedModel
-              ? selectionLabel(model, providers)
-              : model
-                ? t('Selected model is unavailable — falls back to the default model.')
-                : t('Follows the default model')}
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            {model && (
-              <Button variant="ghost" size="sm" onClick={() => setModel(null)}>
-                {t('Follow default model')}
-              </Button>
-            )}
-            {candidates.length > 0 && (
+        <div className="space-y-2">
+          {candidates.length > 0 && (
+            <div className="w-full min-w-0">
               <ModelPicker
                 providers={candidates}
                 providerId={selectedProvider?.id ?? ''}
@@ -76,12 +53,25 @@ export function TitleSummaryPicker() {
                 reasoningEnabled={false}
                 thinkingLevel="medium"
                 showReasoningControls={false}
+                emptyLabel={t('Follows the default model')}
+                side="bottom"
+                triggerClassName={MODEL_PICKER_FORM_TRIGGER_CLASS}
                 onSelect={(providerId, modelId) => setModel({ providerId, modelId })}
                 onReasoningChange={() => {}}
                 onThinkingChange={() => {}}
               />
-            )}
-          </div>
+            </div>
+          )}
+          {model && (!selectedProvider || !selectedModel) && (
+            <p className="text-muted-foreground text-xs">
+              {t('Selected model is unavailable — falls back to the default model.')}
+            </p>
+          )}
+          {model && (
+            <Button variant="ghost" size="sm" className="self-start" onClick={() => setModel(null)}>
+              {t('Follow default model')}
+            </Button>
+          )}
         </div>
       )}
     </section>

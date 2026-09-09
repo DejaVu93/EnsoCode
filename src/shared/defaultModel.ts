@@ -1,5 +1,5 @@
 import type { ModelProvider } from './types';
-import type { ApprovalMode } from './types/agent';
+import type { ApprovalMode, ThinkingLevel } from './types/agent';
 
 export interface DefaultModelRef {
   providerId: string;
@@ -51,9 +51,11 @@ interface NoChatModelBase {
   invalidDefault: boolean;
 }
 
+export type ChatModelSource = 'session' | 'project' | 'group' | 'default';
+
 export type ChatModelResolution =
   | (DefaultModelRef & {
-      source: 'session' | 'default';
+      source: ChatModelSource;
       invalidDefault: boolean;
     })
   | (NoChatModelBase & ({ reason: 'no-usable-model' } | OauthCredentialBlock));
@@ -159,8 +161,60 @@ export function defaultApprovalMode(
   return reviewerUsable ? 'assistant' : 'full';
 }
 
+type ScopedReasoningSource = {
+  defaultModel?: DefaultModelRef | null;
+  defaultReasoningEnabled?: boolean;
+  defaultThinkingLevel?: ThinkingLevel;
+};
+
+export function scopedDefaultModels(
+  project: (ScopedReasoningSource & { groupId?: string }) | null | undefined,
+  groups: readonly (ScopedReasoningSource & { id: string })[]
+): {
+  projectDefaultModel: DefaultModelRef | null;
+  groupDefaultModel: DefaultModelRef | null;
+  projectReasoningEnabled?: boolean;
+  projectThinkingLevel?: ThinkingLevel;
+  groupReasoningEnabled?: boolean;
+  groupThinkingLevel?: ThinkingLevel;
+} {
+  const group = project?.groupId ? groups.find((entry) => entry.id === project.groupId) : undefined;
+  return {
+    projectDefaultModel: project?.defaultModel ?? null,
+    groupDefaultModel: group?.defaultModel ?? null,
+    projectReasoningEnabled: project?.defaultReasoningEnabled,
+    projectThinkingLevel: project?.defaultThinkingLevel,
+    groupReasoningEnabled: group?.defaultReasoningEnabled,
+    groupThinkingLevel: group?.defaultThinkingLevel,
+  };
+}
+
+export function resolveChatReasoning(input: {
+  projectReasoningEnabled?: boolean;
+  projectThinkingLevel?: ThinkingLevel;
+  groupReasoningEnabled?: boolean;
+  groupThinkingLevel?: ThinkingLevel;
+  defaultReasoningEnabled?: boolean;
+  defaultThinkingLevel?: ThinkingLevel;
+}): { reasoningEnabled: boolean; thinkingLevel: ThinkingLevel } {
+  return {
+    reasoningEnabled:
+      input.projectReasoningEnabled ??
+      input.groupReasoningEnabled ??
+      input.defaultReasoningEnabled ??
+      true,
+    thinkingLevel:
+      input.projectThinkingLevel ??
+      input.groupThinkingLevel ??
+      input.defaultThinkingLevel ??
+      'medium',
+  };
+}
+
 export function resolveChatModel(input: {
   defaultModel: DefaultModelRef | null;
+  projectDefaultModel?: DefaultModelRef | null;
+  groupDefaultModel?: DefaultModelRef | null;
   lastProviderId?: string;
   lastModelId?: string;
   providers: readonly ModelProvider[];
@@ -175,26 +229,36 @@ export function resolveChatModel(input: {
     input.lastProviderId && input.lastModelId
       ? { providerId: input.lastProviderId, modelId: input.lastModelId }
       : null;
-  const sessionUsability = modelUsability(sessionModel, input.providers, input.credentials);
+  const candidates: Array<{ selection: DefaultModelRef | null; source: ChatModelSource }> = [
+    { selection: sessionModel, source: 'session' },
+    { selection: input.projectDefaultModel ?? null, source: 'project' },
+    { selection: input.groupDefaultModel ?? null, source: 'group' },
+    { selection: input.defaultModel, source: 'default' },
+  ];
 
-  if (sessionUsability === 'usable' && sessionModel) {
-    return { ...sessionModel, source: 'session', invalidDefault };
-  }
-  if (isOauthUnknown(sessionUsability)) {
-    const blocked = oauthCredentialBlock(input.credentials);
-    if (blocked) {
+  for (const candidate of candidates) {
+    const usability = modelUsability(candidate.selection, input.providers, input.credentials);
+    if (usability === 'usable' && candidate.selection) {
       return {
-        providerId: null,
-        modelId: null,
-        source: 'none',
-        invalidDefault,
-        ...blocked,
+        ...candidate.selection,
+        source: candidate.source,
+        invalidDefault: candidate.source === 'default' ? false : invalidDefault,
       };
     }
+    if (isOauthUnknown(usability)) {
+      const blocked = oauthCredentialBlock(input.credentials);
+      if (blocked) {
+        return {
+          providerId: null,
+          modelId: null,
+          source: 'none',
+          invalidDefault,
+          ...blocked,
+        };
+      }
+    }
   }
-  if (defaultUsability === 'usable' && input.defaultModel) {
-    return { ...input.defaultModel, source: 'default', invalidDefault: false };
-  }
+
   const blocked = isOauthUnknown(defaultUsability) ? oauthCredentialBlock(input.credentials) : null;
   return {
     providerId: null,

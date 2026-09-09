@@ -359,14 +359,33 @@ export interface SettingsState {
     groupId?: string
   ) => Promise<Project | null>;
   removeProject: (id: string) => Promise<boolean>;
-  createProjectGroup: (input: { name: string; emoji?: string; color?: string }) => ProjectGroup;
+  createProjectGroup: (input: {
+    name: string;
+    emoji?: string;
+    color?: string;
+    defaultModel?: DefaultModelRef | null;
+    defaultReasoningEnabled?: boolean | null;
+    defaultThinkingLevel?: ThinkingLevel | null;
+  }) => ProjectGroup;
   updateProjectGroup: (
     id: string,
-    patch: { name?: string; emoji?: string; color?: string }
+    patch: {
+      name?: string;
+      emoji?: string;
+      color?: string;
+      defaultModel?: DefaultModelRef | null;
+      defaultReasoningEnabled?: boolean | null;
+      defaultThinkingLevel?: ThinkingLevel | null;
+    }
   ) => void;
   removeProjectGroup: (id: string) => void;
   reorderProjectGroups: (activeId: string, overId: string) => void;
   setProjectGroupId: (projectId: string, groupId: string | null) => void;
+  setProjectDefaultModel: (
+    projectId: string,
+    model: DefaultModelRef | null,
+    reasoning?: { reasoningEnabled: boolean; thinkingLevel: ThinkingLevel } | null
+  ) => void;
 
   /** 非法条目不写入，返回 false */
   setUsageModelPricing: (modelId: string, pricing: ModelPricing) => boolean;

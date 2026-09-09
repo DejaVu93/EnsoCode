@@ -35,6 +35,10 @@ import { interceptRootCascadeEscape, markSubmenuOpen } from './modelPickerCascad
 
 export const OPEN_CHAT_MODEL_PICKER_EVENT = 'enso:open-chat-model-picker';
 
+/** 表单/设置里的整行下拉触发器 */
+export const MODEL_PICKER_FORM_TRIGGER_CLASS =
+  'h-8 w-full max-w-none border border-input bg-background px-2.5 text-sm text-foreground hover:bg-accent';
+
 export function requestOpenChatModelPicker() {
   window.dispatchEvent(new Event(OPEN_CHAT_MODEL_PICKER_EVENT));
 }
@@ -162,6 +166,12 @@ interface ModelPickerProps {
   /** 模型能力约束触发的自动归一化；缺省复用用户变更回调。 */
   onReasoningNormalize?: (enabled: boolean) => void;
   onThinkingNormalize?: (level: ThinkingLevel) => void;
+  /** 弹层层级；对话框内须高于模态层 */
+  zIndex?: number;
+  /** 未选模型时触发器文案 */
+  emptyLabel?: string;
+  triggerClassName?: string;
+  side?: 'top' | 'bottom';
 }
 
 /**
@@ -461,6 +471,10 @@ export function ModelPicker({
   onThinkingChange,
   onReasoningNormalize,
   onThinkingNormalize,
+  zIndex,
+  emptyLabel,
+  triggerClassName,
+  side = 'top',
 }: ModelPickerProps) {
   const { t } = useI18n();
   const normalizeReasoning = onReasoningNormalize ?? onReasoningChange;
@@ -486,6 +500,14 @@ export function ModelPicker({
     [providers, providerId]
   );
   const current = currentProvider?.models.find((m) => m.id === modelId);
+  const formTrigger = Boolean(triggerClassName);
+  const modelName = current?.label || current?.id || modelId;
+  const hasSelection = Boolean(modelName);
+  const triggerLabel = hasSelection
+    ? formTrigger && currentProvider?.name
+      ? `${currentProvider.name} / ${modelName}`
+      : modelName
+    : emptyLabel || t('Select model');
 
   const groups = useMemo(() => groupProviders(providers, oauthInfos), [providers, oauthInfos]);
 
@@ -724,261 +746,285 @@ export function ModelPicker({
   );
 
   return (
-    <Menu open={open} onOpenChange={handleRootOpenChange}>
-      <MenuTrigger
-        data-model-picker="trigger"
-        className="flex h-7 min-w-14 max-w-64 shrink items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        title={current?.label ?? modelId ?? t('Model')}
-      >
-        <span className="min-w-0 truncate">{current?.label ?? modelId ?? t('Model')}</span>
-        {showReasoningControls && reasoningMode ? (
-          <span className="shrink-0 text-[10px]" data-reasoning-summary={reasoningMode}>
-            {t(
-              reasoningMode === 'follow' ? 'Follow parent' : reasoningMode === 'on' ? 'On' : 'Off'
-            )}
-            {reasoningMode === 'on' && ` · ${t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}`}
+    <div className={cn(triggerClassName && 'w-full min-w-0')}>
+      <Menu open={open} onOpenChange={handleRootOpenChange}>
+        <MenuTrigger
+          data-model-picker="trigger"
+          className={cn(
+            'flex h-7 min-w-14 max-w-64 shrink items-center gap-1 rounded-lg px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground',
+            triggerClassName
+          )}
+          title={triggerLabel}
+        >
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="min-w-0 truncate">{triggerLabel}</span>
+            {hasSelection && showReasoningControls && reasoningMode ? (
+              <span className="shrink-0 text-[10px]" data-reasoning-summary={reasoningMode}>
+                {t(
+                  reasoningMode === 'follow'
+                    ? 'Follow parent'
+                    : reasoningMode === 'on'
+                      ? 'On'
+                      : 'Off'
+                )}
+                {reasoningMode === 'on' && ` · ${t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}`}
+              </span>
+            ) : hasSelection && showReasoningControls && displayedReasoningEnabled ? (
+              <span
+                className="flex shrink-0 items-center gap-0.5 text-primary"
+                data-trigger-thinking={displayedThinkingLevel}
+              >
+                <Brain className="h-3 w-3" />
+                {t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}
+              </span>
+            ) : null}
           </span>
-        ) : displayedReasoningEnabled ? (
-          <span className="flex shrink-0 items-center gap-0.5 text-primary">
-            <Brain className="h-3 w-3" />
-            {t(LEVEL_LABEL_KEYS[displayedThinkingLevel])}
-          </span>
-        ) : null}
-        <ChevronDown className="h-3 w-3 shrink-0" />
-      </MenuTrigger>
-      <MenuPopup data-model-picker="root" side="top" align="start" className="w-80">
-        {providers.map((provider) => (
-          <ModelMetaBridge key={provider.id} provider={provider} onData={handleMetaData} />
-        ))}
+          <ChevronDown className={cn('h-3 w-3 shrink-0', formTrigger && 'ms-auto opacity-80')} />
+        </MenuTrigger>
+        <MenuPopup
+          data-model-picker="root"
+          side={side}
+          align="start"
+          className="w-80"
+          zIndex={zIndex}
+        >
+          {providers.map((provider) => (
+            <ModelMetaBridge key={provider.id} provider={provider} onData={handleMetaData} />
+          ))}
 
-        <div className="-mx-1 -mt-1 mb-1 border-b p-2">
-          <input
-            ref={searchInputRef}
-            data-model-picker="search"
-            tabIndex={-1}
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-            onFocus={() => {
-              searchFocusedRef.current = true;
-            }}
-            onBlur={() => {
-              searchFocusedRef.current = false;
-            }}
-            onKeyDown={stopTypeaheadOnly}
-            placeholder={t('Search models')}
-            className="h-8 w-full rounded-md border bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground focus:border-ring"
-          />
-        </div>
+          <div className="-mx-1 -mt-1 mb-1 border-b p-2">
+            <input
+              ref={searchInputRef}
+              data-model-picker="search"
+              tabIndex={-1}
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+              onFocus={() => {
+                searchFocusedRef.current = true;
+              }}
+              onBlur={() => {
+                searchFocusedRef.current = false;
+              }}
+              onKeyDown={stopTypeaheadOnly}
+              placeholder={t('Search models')}
+              className="h-8 w-full rounded-md border bg-transparent px-2.5 text-sm outline-none placeholder:text-muted-foreground focus:border-ring"
+            />
+          </div>
 
-        <div className="max-h-72 overflow-y-auto">
-          {searching ? (
-            <>
-              {searchHits.map(({ provider, model, entryTag }) => (
-                <MenuItem
-                  key={`${provider.id}/${model.id}`}
-                  onClick={() => handleSelectModel(provider.id, model.id)}
-                >
-                  <ModelRowContent
-                    model={model}
-                    meta={metaByProvider[provider.id]?.[model.id]}
-                    entryTag={entryTag}
-                    selected={provider.id === providerId && model.id === modelId}
-                  />
-                </MenuItem>
-              ))}
-              {searchHits.length === 0 && (
-                <p className="px-1 py-4 text-center text-xs text-muted-foreground">
-                  {t('No models found')}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              {groups.map((group) => (
-                <MenuGroup key={group.vendorId}>
-                  <MenuGroupLabel>
-                    {group.vendorId === CUSTOM_VENDOR_ID ? t('Custom') : group.label}
-                  </MenuGroupLabel>
-                  {group.providers.map((provider) => {
-                    const info = entryInfoByProviderId[provider.id];
-                    const isSubscription =
-                      info?.isSubscription ?? Boolean(provider.oauthAccountKey);
-                    return (
-                      <MenuSub
-                        key={provider.id}
-                        onOpenChange={(next) => {
-                          markSubmenuOpen(openSubmenuIdsRef.current, provider.id, next);
-                        }}
-                      >
-                        <MenuSubTrigger
-                          openOnHover={!hoverLockedIds.has(provider.id)}
-                          onPointerLeave={() => {
-                            setHoverLockedIds((prev) => {
-                              if (!prev.has(provider.id)) return prev;
-                              const next = new Set(prev);
-                              next.delete(provider.id);
-                              return next;
-                            });
+          <div className="max-h-72 overflow-y-auto">
+            {searching ? (
+              <>
+                {searchHits.map(({ provider, model, entryTag }) => (
+                  <MenuItem
+                    key={`${provider.id}/${model.id}`}
+                    onClick={() => handleSelectModel(provider.id, model.id)}
+                  >
+                    <ModelRowContent
+                      model={model}
+                      meta={metaByProvider[provider.id]?.[model.id]}
+                      entryTag={entryTag}
+                      selected={provider.id === providerId && model.id === modelId}
+                    />
+                  </MenuItem>
+                ))}
+                {searchHits.length === 0 && (
+                  <p className="px-1 py-4 text-center text-xs text-muted-foreground">
+                    {t('No models found')}
+                  </p>
+                )}
+              </>
+            ) : (
+              <>
+                {groups.map((group) => (
+                  <MenuGroup key={group.vendorId}>
+                    <MenuGroupLabel>
+                      {group.vendorId === CUSTOM_VENDOR_ID ? t('Custom') : group.label}
+                    </MenuGroupLabel>
+                    {group.providers.map((provider) => {
+                      const info = entryInfoByProviderId[provider.id];
+                      const isSubscription =
+                        info?.isSubscription ?? Boolean(provider.oauthAccountKey);
+                      return (
+                        <MenuSub
+                          key={provider.id}
+                          onOpenChange={(next) => {
+                            markSubmenuOpen(openSubmenuIdsRef.current, provider.id, next);
                           }}
                         >
-                          {isSubscription ? (
-                            <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          ) : (
-                            <KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          )}
-                          <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
-                            <span className="w-full truncate text-left">
-                              {info?.primary ?? provider.name}
-                            </span>
-                            {info?.secondary && (
-                              <span className="w-full truncate text-left text-[10px] text-muted-foreground/60">
-                                {info.secondary}
+                          <MenuSubTrigger
+                            openOnHover={!hoverLockedIds.has(provider.id)}
+                            onPointerLeave={() => {
+                              setHoverLockedIds((prev) => {
+                                if (!prev.has(provider.id)) return prev;
+                                const next = new Set(prev);
+                                next.delete(provider.id);
+                                return next;
+                              });
+                            }}
+                          >
+                            {isSubscription ? (
+                              <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            ) : (
+                              <KeyRound className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            )}
+                            <span className="flex min-w-0 flex-1 flex-col items-start overflow-hidden">
+                              <span className="w-full truncate text-left">
+                                {info?.primary ?? provider.name}
                               </span>
+                              {info?.secondary && (
+                                <span className="w-full truncate text-left text-[10px] text-muted-foreground/60">
+                                  {info.secondary}
+                                </span>
+                              )}
+                            </span>
+                            {info?.plan && (
+                              <Badge
+                                variant="outline"
+                                size="sm"
+                                className="max-w-20 shrink-0 truncate text-[9px] uppercase"
+                              >
+                                {info.plan}
+                              </Badge>
                             )}
-                          </span>
-                          {info?.plan && (
-                            <Badge
-                              variant="outline"
-                              size="sm"
-                              className="max-w-20 shrink-0 truncate text-[9px] uppercase"
-                            >
-                              {info.plan}
-                            </Badge>
-                          )}
-                          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                            {provider.id === providerId && (
-                              <Check className="h-3.5 w-3.5 text-primary" />
+                            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                              {provider.id === providerId && (
+                                <Check className="h-3.5 w-3.5 text-primary" />
+                              )}
+                            </span>
+                          </MenuSubTrigger>
+                          <MenuSubPopup
+                            data-model-picker="submenu"
+                            className="w-72"
+                            zIndex={zIndex}
+                          >
+                            {provider.oauthAccountKey && (
+                              <SubmenuUsage accountKey={provider.oauthAccountKey} />
                             )}
-                          </span>
-                        </MenuSubTrigger>
-                        <MenuSubPopup data-model-picker="submenu" className="w-72">
-                          {provider.oauthAccountKey && (
-                            <SubmenuUsage accountKey={provider.oauthAccountKey} />
-                          )}
-                          <ProviderSubmenuList
-                            provider={provider}
-                            meta={metaByProvider[provider.id]}
-                            selectedProviderId={providerId}
-                            selectedModelId={modelId}
-                            onSelectModel={(mid) => handleSelectModel(provider.id, mid)}
-                          />
-                        </MenuSubPopup>
-                      </MenuSub>
-                    );
-                  })}
-                </MenuGroup>
-              ))}
-              {groups.length === 0 && (
-                <p className="px-1 py-4 text-center text-xs text-muted-foreground">
-                  {t('No models found')}
-                </p>
-              )}
-            </>
-          )}
-        </div>
-
-        {showReasoningControls && (
-          <div className="-mx-1 -mb-1 mt-1 border-t p-3">
-            <div className="flex items-center justify-between">
-              <span className="flex items-center gap-1 text-xs">
-                <Brain className="h-3.5 w-3.5 text-muted-foreground" />
-                {t('Reasoning')}
-              </span>
-              {!reasoningMode && (
-                <Switch
-                  tabIndex={-1}
-                  aria-label={t('Reasoning')}
-                  checked={displayedReasoningEnabled}
-                  onCheckedChange={onReasoningChange}
-                  disabled={reasoningUnsupported}
-                />
-              )}
-            </div>
-            {reasoningMode && (
-              <div className="mt-2 flex gap-1" role="group" aria-label={t('Reasoning')}>
-                {(['follow', 'on', 'off'] as const).map((mode) => (
-                  <Button
-                    key={mode}
-                    type="button"
-                    size="sm"
-                    variant={reasoningMode === mode ? 'default' : 'outline'}
-                    className="h-7 flex-1 px-2 text-xs"
-                    aria-pressed={reasoningMode === mode}
-                    data-reasoning-mode={mode}
-                    disabled={
-                      mode === 'on' && !!currentProvider?.oauthAccountKey && reasoningUnsupported
-                    }
-                    onClick={() => onReasoningModeChange?.(mode, displayedThinkingLevel)}
-                  >
-                    {t(mode === 'follow' ? 'Follow parent' : mode === 'on' ? 'On' : 'Off')}
-                  </Button>
+                            <ProviderSubmenuList
+                              provider={provider}
+                              meta={metaByProvider[provider.id]}
+                              selectedProviderId={providerId}
+                              selectedModelId={modelId}
+                              onSelectModel={(mid) => handleSelectModel(provider.id, mid)}
+                            />
+                          </MenuSubPopup>
+                        </MenuSub>
+                      );
+                    })}
+                  </MenuGroup>
                 ))}
-              </div>
-            )}
-            {reasoningUnsupported && (!reasoningMode || !!currentProvider?.oauthAccountKey) && (
-              <p className="mt-1 text-[10px] text-muted-foreground/70">
-                {t('{{model}} does not support reasoning', { model: current?.label ?? modelId })}
-              </p>
-            )}
-
-            {reasoningMode === 'on' && displayedReasoningEnabled && (
-              <p className="mt-2 text-xs">
-                {t('Depth: {{level}}', { level: t(LEVEL_LABEL_KEYS[displayedThinkingLevel]) })}
-              </p>
-            )}
-            {displayedReasoningEnabled && visibleLevels.length > 0 && (
-              <div className="mt-3">
-                <Slider
-                  tabIndex={-1}
-                  aria-label={t('Thinking level')}
-                  thumbAlignment="center"
-                  className="[&_[data-slot=slider-indicator]]:ms-0 [&_[data-slot=slider-track]]:before:inset-x-0"
-                  min={0}
-                  max={Math.max(1, visibleLevels.length - 1)}
-                  step={1}
-                  value={levelIndex}
-                  disabled={visibleLevels.length === 1}
-                  onValueChange={(value) => {
-                    const index = Array.isArray(value) ? value[0] : value;
-                    const target = visibleLevels[index] ?? visibleLevels[0];
-                    onThinkingChange(target);
-                  }}
-                />
-                <div className="relative mt-1 h-6">
-                  {visibleLevels.map((entry, index) => (
-                    <button
-                      key={entry}
-                      type="button"
-                      tabIndex={-1}
-                      data-thinking-tick={entry}
-                      style={{
-                        left: `${(index / Math.max(1, visibleLevels.length - 1)) * 100}%`,
-                      }}
-                      onClick={() => onThinkingChange(entry)}
-                      className="absolute top-0 flex w-0 flex-col items-center"
-                    >
-                      <span className="h-1.5 w-px shrink-0 bg-muted-foreground/40" />
-                      <span
-                        className={cn(
-                          'whitespace-nowrap text-[10px] transition-colors',
-                          index === 0
-                            ? 'self-start'
-                            : index === visibleLevels.length - 1 && 'self-end',
-                          entry === displayedThinkingLevel
-                            ? 'font-medium text-primary'
-                            : 'text-muted-foreground/70 hover:text-foreground'
-                        )}
-                      >
-                        {t(LEVEL_LABEL_KEYS[entry])}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
+                {groups.length === 0 && (
+                  <p className="px-1 py-4 text-center text-xs text-muted-foreground">
+                    {t('No models found')}
+                  </p>
+                )}
+              </>
             )}
           </div>
-        )}
-      </MenuPopup>
-    </Menu>
+
+          {showReasoningControls && (
+            <div className="-mx-1 -mb-1 mt-1 border-t p-3">
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1 text-xs">
+                  <Brain className="h-3.5 w-3.5 text-muted-foreground" />
+                  {t('Reasoning')}
+                </span>
+                {!reasoningMode && (
+                  <Switch
+                    tabIndex={-1}
+                    aria-label={t('Reasoning')}
+                    checked={displayedReasoningEnabled}
+                    onCheckedChange={onReasoningChange}
+                    disabled={reasoningUnsupported}
+                  />
+                )}
+              </div>
+              {reasoningMode && (
+                <div className="mt-2 flex gap-1" role="group" aria-label={t('Reasoning')}>
+                  {(['follow', 'on', 'off'] as const).map((mode) => (
+                    <Button
+                      key={mode}
+                      type="button"
+                      size="sm"
+                      variant={reasoningMode === mode ? 'default' : 'outline'}
+                      className="h-7 flex-1 px-2 text-xs"
+                      aria-pressed={reasoningMode === mode}
+                      data-reasoning-mode={mode}
+                      disabled={
+                        mode === 'on' && !!currentProvider?.oauthAccountKey && reasoningUnsupported
+                      }
+                      onClick={() => onReasoningModeChange?.(mode, displayedThinkingLevel)}
+                    >
+                      {t(mode === 'follow' ? 'Follow parent' : mode === 'on' ? 'On' : 'Off')}
+                    </Button>
+                  ))}
+                </div>
+              )}
+              {reasoningUnsupported && (!reasoningMode || !!currentProvider?.oauthAccountKey) && (
+                <p className="mt-1 text-[10px] text-muted-foreground/70">
+                  {t('{{model}} does not support reasoning', { model: current?.label ?? modelId })}
+                </p>
+              )}
+
+              {reasoningMode === 'on' && displayedReasoningEnabled && (
+                <p className="mt-2 text-xs">
+                  {t('Depth: {{level}}', { level: t(LEVEL_LABEL_KEYS[displayedThinkingLevel]) })}
+                </p>
+              )}
+              {displayedReasoningEnabled && visibleLevels.length > 0 && (
+                <div className="mt-3">
+                  <Slider
+                    tabIndex={-1}
+                    aria-label={t('Thinking level')}
+                    thumbAlignment="center"
+                    className="[&_[data-slot=slider-indicator]]:ms-0 [&_[data-slot=slider-track]]:before:inset-x-0"
+                    min={0}
+                    max={Math.max(1, visibleLevels.length - 1)}
+                    step={1}
+                    value={levelIndex}
+                    disabled={visibleLevels.length === 1}
+                    onValueChange={(value) => {
+                      const index = Array.isArray(value) ? value[0] : value;
+                      const target = visibleLevels[index] ?? visibleLevels[0];
+                      onThinkingChange(target);
+                    }}
+                  />
+                  <div className="relative mt-1 h-6">
+                    {visibleLevels.map((entry, index) => (
+                      <button
+                        key={entry}
+                        type="button"
+                        tabIndex={-1}
+                        data-thinking-tick={entry}
+                        style={{
+                          left: `${(index / Math.max(1, visibleLevels.length - 1)) * 100}%`,
+                        }}
+                        onClick={() => onThinkingChange(entry)}
+                        className="absolute top-0 flex w-0 flex-col items-center"
+                      >
+                        <span className="h-1.5 w-px shrink-0 bg-muted-foreground/40" />
+                        <span
+                          className={cn(
+                            'whitespace-nowrap text-[10px] transition-colors',
+                            index === 0
+                              ? 'self-start'
+                              : index === visibleLevels.length - 1 && 'self-end',
+                            entry === displayedThinkingLevel
+                              ? 'font-medium text-primary'
+                              : 'text-muted-foreground/70 hover:text-foreground'
+                          )}
+                        >
+                          {t(LEVEL_LABEL_KEYS[entry])}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </MenuPopup>
+      </Menu>
+    </div>
   );
 }

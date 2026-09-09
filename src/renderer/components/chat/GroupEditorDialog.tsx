@@ -1,6 +1,8 @@
-import type { ProjectGroup } from '@shared/types';
+import { type DefaultModelRef, resolveChatReasoning } from '@shared/defaultModel';
+import type { ProjectGroup, ThinkingLevel } from '@shared/types';
 import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { ScopedDefaultModelField } from '@/components/chat/ScopedDefaultModelField';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -15,6 +17,7 @@ import {
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { useI18n } from '@/i18n';
+import { useSettingsStore } from '@/stores/settings';
 
 const PRESET_COLORS = [
   '#3b82f6',
@@ -38,7 +41,15 @@ interface GroupEditorDialogProps {
   /** 仅新建：可勾选移入本组的项目 */
   projects?: readonly MovableProject[];
   onOpenChange: (open: boolean) => void;
-  onSave: (input: { name: string; emoji?: string; color?: string; projectIds?: string[] }) => void;
+  onSave: (input: {
+    name: string;
+    emoji?: string;
+    color?: string;
+    defaultModel?: DefaultModelRef | null;
+    defaultReasoningEnabled?: boolean | null;
+    defaultThinkingLevel?: ThinkingLevel | null;
+    projectIds?: string[];
+  }) => void;
   onDelete?: () => void;
 }
 
@@ -51,8 +62,13 @@ export function GroupEditorDialog({
   onDelete,
 }: GroupEditorDialogProps) {
   const { t } = useI18n();
+  const defaultReasoningEnabled = useSettingsStore((state) => state.defaultReasoningEnabled);
+  const defaultThinkingLevel = useSettingsStore((state) => state.defaultThinkingLevel);
   const [name, setName] = useState('');
   const [color, setColor] = useState<string | undefined>();
+  const [defaultModel, setDefaultModel] = useState<DefaultModelRef | null>(null);
+  const [reasoningEnabled, setReasoningEnabled] = useState(true);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('medium');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [projectQuery, setProjectQuery] = useState('');
   const creating = group === null;
@@ -66,9 +82,16 @@ export function GroupEditorDialog({
     if (!open) return;
     setName(group?.name ?? '');
     setColor(group?.color);
+    setDefaultModel(group?.defaultModel ?? null);
+    const inherited = resolveChatReasoning({
+      defaultReasoningEnabled,
+      defaultThinkingLevel,
+    });
+    setReasoningEnabled(group?.defaultReasoningEnabled ?? inherited.reasoningEnabled);
+    setThinkingLevel(group?.defaultThinkingLevel ?? inherited.thinkingLevel);
     setSelectedIds(new Set());
     setProjectQuery('');
-  }, [open, group]);
+  }, [open, group, defaultReasoningEnabled, defaultThinkingLevel]);
 
   const toggleProject = (id: string) => {
     setSelectedIds((prev) => {
@@ -81,7 +104,7 @@ export function GroupEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={movable.length > 0 ? 'max-w-md' : 'max-w-sm'}>
+      <DialogContent className="max-w-md">
         <form
           className="flex flex-col"
           onSubmit={(event) => {
@@ -91,6 +114,9 @@ export function GroupEditorDialog({
             onSave({
               name: trimmed,
               color,
+              defaultModel,
+              defaultReasoningEnabled: defaultModel ? reasoningEnabled : null,
+              defaultThinkingLevel: defaultModel ? thinkingLevel : null,
               ...(creating && selectedIds.size > 0 ? { projectIds: [...selectedIds] } : {}),
             });
             onOpenChange(false);
@@ -133,6 +159,25 @@ export function GroupEditorDialog({
                 />
               ))}
             </div>
+            <ScopedDefaultModelField
+              value={defaultModel}
+              reasoningEnabled={reasoningEnabled}
+              thinkingLevel={thinkingLevel}
+              onChange={(model) => {
+                setDefaultModel(model);
+                if (model) return;
+                const inherited = resolveChatReasoning({
+                  defaultReasoningEnabled,
+                  defaultThinkingLevel,
+                });
+                setReasoningEnabled(inherited.reasoningEnabled);
+                setThinkingLevel(inherited.thinkingLevel);
+              }}
+              onReasoningChange={setReasoningEnabled}
+              onThinkingChange={setThinkingLevel}
+              description={t('Used for new conversations in this group.')}
+              inheritLabel={t('Follows the global default')}
+            />
             {movable.length > 0 && (
               <Field className="w-full items-stretch">
                 <FieldLabel>{t('Move projects into this group')}</FieldLabel>

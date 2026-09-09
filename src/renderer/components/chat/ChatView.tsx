@@ -1,6 +1,6 @@
 import { ENSO_AGENT_TYPE_KEY } from '@shared/builtinAgents';
 import { conversationDotTone } from '@shared/conversationDotTone';
-import { resolveChatModel } from '@shared/defaultModel';
+import { resolveChatModel, scopedDefaultModels } from '@shared/defaultModel';
 import type { AgentTypeMentionCandidate } from '@shared/types/mentions';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgentChildOauthHost } from '@/components/agent/AgentChildOauthHost';
@@ -45,6 +45,7 @@ export function ChatView() {
   const providers = useSettingsStore((state) => state.providers);
   const defaultModel = useSettingsStore((state) => state.defaultModel);
   const projects = useSettingsStore((state) => state.projects);
+  const projectGroups = useSettingsStore((state) => state.projectGroups);
   const parent = useSessionsStore((state) =>
     state.activeId ? state.conversations[state.activeId] : null
   );
@@ -75,11 +76,28 @@ export function ChatView() {
     () => usableProvidersForOauthSnapshot(providers, oauthSnapshot),
     [providers, oauthSnapshot]
   );
-  // 会话显式选择优先；没有 last* 的新草稿只使用全局默认，不再退化到 providers 第一项。
+  // 会话显式选择优先；新草稿沿 项目默认 → 分组默认 → 全局默认，不再退化到 providers 第一项。
+  const conversationProject = useMemo(
+    () => projects.find((entry) => entry.id === conversation?.projectId),
+    [conversation?.projectId, projects]
+  );
+  const parentProject = useMemo(
+    () => projects.find((entry) => entry.id === parent?.projectId),
+    [parent?.projectId, projects]
+  );
+  const conversationDefaults = useMemo(
+    () => scopedDefaultModels(conversationProject, projectGroups),
+    [conversationProject, projectGroups]
+  );
+  const parentDefaults = useMemo(
+    () => scopedDefaultModels(parentProject, projectGroups),
+    [parentProject, projectGroups]
+  );
   const modelResolution = useMemo(
     () =>
       resolveChatModel({
         defaultModel,
+        ...conversationDefaults,
         lastProviderId: conversation?.lastProviderId,
         lastModelId: conversation?.lastModelId,
         providers,
@@ -88,6 +106,7 @@ export function ChatView() {
     [
       conversation?.lastModelId,
       conversation?.lastProviderId,
+      conversationDefaults,
       defaultModel,
       oauthSnapshot,
       providers,
@@ -97,12 +116,20 @@ export function ChatView() {
     () =>
       resolveChatModel({
         defaultModel,
+        ...parentDefaults,
         lastProviderId: parent?.lastProviderId,
         lastModelId: parent?.lastModelId,
         providers,
         credentials: oauthCredentialContext(oauthSnapshot),
       }),
-    [defaultModel, oauthSnapshot, parent?.lastModelId, parent?.lastProviderId, providers]
+    [
+      defaultModel,
+      oauthSnapshot,
+      parent?.lastModelId,
+      parent?.lastProviderId,
+      parentDefaults,
+      providers,
+    ]
   );
   const parentSelectedModel =
     parentModelResolution.source === 'none'
@@ -127,7 +154,9 @@ export function ChatView() {
             modelResolution.reason === 'oauth-credentials-unloaded'
           ? t('Subscription credentials are loading. Choose an API-key model or wait, then retry.')
           : enabledProviders.length > 0
-            ? t('Choose a model for this conversation or set a global default before sending.')
+            ? t(
+                'Choose a model for this conversation or set a project, group, or global default before sending.'
+              )
             : t(
                 'No usable model is available. Configure provider credentials and enable a model first.'
               );

@@ -442,6 +442,44 @@ describe('ModelPicker reasoning controls mode', () => {
     expect(html).toContain('data-slider="true"');
   });
 
+  it('表单触发器选中后显示「厂商 / 模型」和推理档', () => {
+    const html = renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        emptyLabel: 'Select model',
+        triggerClassName: 'form-trigger',
+      })
+    );
+    expect(html).toContain('API entry / Chosen model');
+    expect(html).toContain('data-trigger-thinking="medium"');
+  });
+
+  it('跟随默认时表单触发器不显示推理档', () => {
+    const html = renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        providerId: '',
+        modelId: '',
+        emptyLabel: 'Follows the global default',
+        triggerClassName: 'form-trigger',
+      })
+    );
+    expect(html).toContain('Follows the global default');
+    expect(html).not.toContain('data-trigger-thinking');
+  });
+
+  it('已选模型没有 label 时仍显示 id，不被 emptyLabel 盖掉', () => {
+    const html = renderToStaticMarkup(
+      createElement(ModelPicker, {
+        ...commonProps,
+        providers: [{ ...providers[0], models: [{ id: 'model' }] }],
+        emptyLabel: 'Select model',
+      })
+    );
+    expect(html).toContain('model');
+    expect(html).not.toContain('Select model');
+  });
+
   it('hides session-only reasoning and thinking controls for default model settings', () => {
     const html = renderToStaticMarkup(
       createElement(ModelPicker, { ...commonProps, showReasoningControls: false })

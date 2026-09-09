@@ -69,6 +69,7 @@ import {
 import { GroupEditorDialog } from '@/components/chat/GroupEditorDialog';
 import { GroupSelector } from '@/components/chat/GroupSelector';
 import { ImportSessionDialog } from '@/components/chat/ImportSessionDialog';
+import { ProjectSettingsDialog } from '@/components/chat/ProjectSettingsDialog';
 import { reloadConversationFromMenu } from '@/components/chat/reloadConversationAction';
 import { NodeSwitcher } from '@/components/nodes/NodeSwitcher';
 import {
@@ -316,6 +317,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   const [groupEditor, setGroupEditor] = useState<
     { mode: 'create' } | { mode: 'edit'; id: string } | null
   >(null);
+  const [projectSettingsId, setProjectSettingsId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [pendingProject, setPendingProject] = useState<{
     name: string;
@@ -378,7 +380,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   };
 
   const [importProject, setImportProject] = useState<Project | null>(null);
-  // 项目行展开了次级操作(导入/归档/删除)的项目 id
+  // 项目行展开了次级操作(设置/导入/归档/删除)的项目 id
   const [expandedActions, setExpandedActions] = useState<string | null>(null);
   // 待确认的删除动作(项目连带其对话 / 单个对话)
   const [pendingRemove, setPendingRemove] = useState<
@@ -944,17 +946,8 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                       )}
                                     </span>
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => void newConversation(project.id)}
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    title={t('New conversation')}
-                                  >
-                                    <MessageSquarePlus className="h-3.5 w-3.5" />
-                                  </button>
-                                  {/* 展开的次级操作随焦点离开自动收起 */}
                                   <div
-                                    className="contents"
+                                    className="flex shrink-0 items-center"
                                     onBlur={(event) => {
                                       if (
                                         expandedActions === project.id &&
@@ -964,40 +957,71 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                       }
                                     }}
                                   >
-                                    {expandedActions === project.id && (
-                                      <>
-                                        <button
-                                          type="button"
-                                          onClick={() => setImportProject(project)}
-                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                          title={t('Import session')}
+                                    <AnimatePresence initial={false} mode="popLayout">
+                                      {expandedActions === project.id ? (
+                                        <motion.div
+                                          key="extra"
+                                          className="flex items-center overflow-hidden"
+                                          initial={{ width: 0, opacity: 0 }}
+                                          animate={{ width: 'auto', opacity: 1 }}
+                                          exit={{ width: 0, opacity: 0 }}
+                                          transition={springStandard}
                                         >
-                                          <HardDriveDownload className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
+                                          <button
+                                            type="button"
+                                            onClick={() => setProjectSettingsId(project.id)}
+                                            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            title={t('Project settings')}
+                                          >
+                                            <Settings className="h-3.5 w-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setImportProject(project)}
+                                            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            title={t('Import session')}
+                                          >
+                                            <HardDriveDownload className="h-3.5 w-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleArchiveProject(project.id)}
+                                            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                            title={t('Archive project')}
+                                          >
+                                            <Archive className="h-3.5 w-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() =>
+                                              setPendingRemove({
+                                                kind: 'project',
+                                                project,
+                                                conversationIds: projectConversations,
+                                              })
+                                            }
+                                            className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                                            title={t('Remove project')}
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                          </button>
+                                        </motion.div>
+                                      ) : (
+                                        <motion.button
+                                          key="new"
                                           type="button"
-                                          onClick={() => toggleArchiveProject(project.id)}
-                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                          title={t('Archive project')}
+                                          onClick={() => void newConversation(project.id)}
+                                          className="shrink-0 overflow-hidden rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          title={t('New conversation')}
+                                          initial={{ width: 0, opacity: 0 }}
+                                          animate={{ width: 'auto', opacity: 1 }}
+                                          exit={{ width: 0, opacity: 0 }}
+                                          transition={springStandard}
                                         >
-                                          <Archive className="h-3.5 w-3.5" />
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setPendingRemove({
-                                              kind: 'project',
-                                              project,
-                                              conversationIds: projectConversations,
-                                            })
-                                          }
-                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                                          title={t('Remove project')}
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </button>
-                                      </>
-                                    )}
+                                          <MessageSquarePlus className="h-3.5 w-3.5" />
+                                        </motion.button>
+                                      )}
+                                    </AnimatePresence>
                                     <button
                                       type="button"
                                       onClick={() =>
@@ -1141,6 +1165,10 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                           }
                         />
                         <ContextMenuPopup className="min-w-36">
+                          <ContextMenuItem onClick={() => setProjectSettingsId(project.id)}>
+                            {t('Project settings')}
+                          </ContextMenuItem>
+                          <ContextMenuSeparator />
                           <ContextMenuItem onClick={() => setProjectGroupId(project.id, null)}>
                             {t('Move to ungrouped')}
                           </ContextMenuItem>
@@ -1437,6 +1465,13 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
               }
             : undefined
         }
+      />
+      <ProjectSettingsDialog
+        open={projectSettingsId !== null}
+        project={projects.find((project) => project.id === projectSettingsId) ?? null}
+        onOpenChange={(open) => {
+          if (!open) setProjectSettingsId(null);
+        }}
       />
       <ImportSessionDialog project={importProject} onClose={() => setImportProject(null)} />
       <ConfirmDialog

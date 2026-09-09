@@ -4,6 +4,7 @@ import { Menu as MenuPrimitive } from '@base-ui/react/menu';
 import { ChevronRightIcon } from 'lucide-react';
 import type * as React from 'react';
 import { cn } from '@/lib/utils';
+import { Z_INDEX } from '@/lib/z-index';
 
 /**
  * 扩展 CSSProperties 以支持 Electron 特有的 WebkitAppRegion 属性
@@ -32,23 +33,30 @@ function MenuPopup({
   align = 'center',
   alignOffset,
   side = 'bottom',
+  zIndex,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props['align'];
   sideOffset?: MenuPrimitive.Positioner.Props['sideOffset'];
   alignOffset?: MenuPrimitive.Positioner.Props['alignOffset'];
   side?: MenuPrimitive.Positioner.Props['side'];
+  zIndex?: number;
 }) {
+  const layer = zIndex ?? Z_INDEX.MODAL_BACKDROP;
   return (
     <MenuPrimitive.Portal>
-      <MenuPrimitive.Backdrop className="fixed inset-0 z-40" data-enso-float="" />
+      <MenuPrimitive.Backdrop
+        className="fixed inset-0"
+        data-enso-float=""
+        style={{ zIndex: layer - 1 }}
+      />
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}
-        className="z-50"
         data-slot="menu-positioner"
         side={side}
         sideOffset={sideOffset}
+        style={{ zIndex: layer }}
       >
         <MenuPrimitive.Popup
           className={cn(MENU_POPUP_CLASS, className)}
@@ -254,11 +262,13 @@ function MenuSubPopup({
   sideOffset = 0,
   alignOffset,
   align = 'start',
+  zIndex,
   ...props
 }: MenuPrimitive.Popup.Props & {
   align?: MenuPrimitive.Positioner.Props['align'];
   sideOffset?: MenuPrimitive.Positioner.Props['sideOffset'];
   alignOffset?: MenuPrimitive.Positioner.Props['alignOffset'];
+  zIndex?: number;
 }) {
   const defaultAlignOffset = align !== 'center' ? -5 : undefined;
 
@@ -267,10 +277,10 @@ function MenuSubPopup({
       <MenuPrimitive.Positioner
         align={align}
         alignOffset={alignOffset ?? defaultAlignOffset}
-        className="z-50"
         data-slot="menu-sub-positioner"
         side="inline-end"
         sideOffset={sideOffset}
+        style={{ zIndex: zIndex ?? Z_INDEX.MODAL_BACKDROP }}
       >
         <MenuPrimitive.Popup
           className={cn(MENU_POPUP_CLASS, className)}

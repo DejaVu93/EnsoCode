@@ -1,7 +1,13 @@
 import type { AgentTypeKey } from '@shared/builtinAgents';
 import type { CapabilityAskRequest } from '@shared/capabilities/types';
 import { parseCompactCommand } from '@shared/compactCommand';
-import { type DefaultModelRef, defaultApprovalMode, resolveChatModel } from '@shared/defaultModel';
+import {
+  type DefaultModelRef,
+  defaultApprovalMode,
+  resolveChatModel,
+  resolveChatReasoning,
+  scopedDefaultModels,
+} from '@shared/defaultModel';
 import { isContinuationTurn } from '@shared/titleContinuation';
 import type {
   ApprovalMode,
@@ -1636,6 +1642,7 @@ export const useSessionsStore = create<SessionsState>()(
           const id = created.value.conversationId;
           const pendingAgentPrefill = get().pendingAgentPrefill;
           // 新会话应用默认预设；'default'（内置全局）或预设已删除时不写，spawn 时自然回落全局
+          const settings = useSettingsStore.getState();
           const {
             defaultPresetId,
             presets,
@@ -1644,7 +1651,17 @@ export const useSessionsStore = create<SessionsState>()(
             approvalReviewer,
             lastApprovalMode,
             providers,
-          } = useSettingsStore.getState();
+            projects,
+            projectGroups,
+          } = settings;
+          const scopedReasoning = resolveChatReasoning({
+            ...scopedDefaultModels(
+              projects.find((entry) => entry.id === projectId),
+              projectGroups
+            ),
+            defaultReasoningEnabled,
+            defaultThinkingLevel,
+          });
           const defaultPreset =
             defaultPresetId !== 'default' && presets.some((preset) => preset.id === defaultPresetId)
               ? { presetId: defaultPresetId }
@@ -1657,8 +1674,8 @@ export const useSessionsStore = create<SessionsState>()(
             started: false,
             spawning: false,
             createdAt: Date.now(),
-            reasoningEnabled: defaultReasoningEnabled ?? true,
-            thinkingLevel: defaultThinkingLevel ?? 'medium',
+            reasoningEnabled: scopedReasoning.reasoningEnabled,
+            thinkingLevel: scopedReasoning.thinkingLevel,
             approvalMode: defaultApprovalMode(
               approvalReviewer,
               providers,
@@ -2319,6 +2336,7 @@ export const useSessionsStore = create<SessionsState>()(
           const snapshot = useOauthCredentialStore.getState().snapshot;
           const resolution = resolveChatModel({
             defaultModel: settings.defaultModel,
+            ...scopedDefaultModels(project, settings.projectGroups),
             lastProviderId: conversation.lastProviderId,
             lastModelId: conversation.lastModelId,
             providers: settings.providers,
