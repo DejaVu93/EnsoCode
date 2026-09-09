@@ -126,6 +126,12 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
     description: 'PowerShell or Git Bash for the local Windows agent',
   },
   {
+    id: 'general.terminalShell',
+    category: 'general',
+    title: 'Terminal shell',
+    description: 'Shell launched by new side panel terminals',
+  },
+  {
     id: 'general.openChangesOnFileEdit',
     category: 'general',
     title: 'Open Changes when files are edited',
@@ -134,6 +140,18 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
     id: 'general.compactReadOnlyTools',
     category: 'general',
     title: 'Compact read-only tool calls',
+  },
+  {
+    id: 'general.expandLiveEdits',
+    category: 'general',
+    title: 'Expand file edits while running',
+  },
+  {
+    id: 'general.notifyMainAgentOnly',
+    category: 'general',
+    title: 'Notify only for the main agent',
+    description:
+      'Skip coworker completion and failure notifications on this computer and the paired phone. Questions and approvals still notify.',
   },
   {
     id: 'general.smartCompactEnabled',
@@ -166,6 +184,13 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
     title: 'Force read/find tools',
     description:
       'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.',
+  },
+  {
+    id: 'tools.hashlineEditEnabled',
+    category: 'tools',
+    title: 'Hashline edit',
+    description:
+      'Line-anchored read/edit with snapshot tags. Off by default. Takes effect on the next session. oldText replace still works when Force read/find is off.',
   },
   { id: 'skills.root', category: 'skills', title: 'Skills' },
   { id: 'mcp.root', category: 'mcp', title: 'MCP Servers' },

@@ -29,12 +29,16 @@ function persistOne(conversation: PersistableConversation): PersistableConversat
     status: _status,
     runStartedAt: _runStartedAt,
     lastOutputAt: _lastOutputAt,
+    toolOutputs: _toolOutputs,
+    toolStartedAt: _toolStartedAt,
     pendingApprovals: _pendingApprovals,
     pendingAsks: _pendingAsks,
     pendingCapabilityAsks: _pendingCapabilityAsks,
     activeOauthAsk: _activeOauthAsk,
     historyOnly: _historyOnly,
     historyLoadAttempted: _historyLoadAttempted,
+    historyLoading: _historyLoading,
+    reloading: _reloading,
     backgroundTasks: _backgroundTasks,
     subagents: _subagents,
     activeTabId: _activeTabId,
@@ -45,6 +49,10 @@ function persistOne(conversation: PersistableConversation): PersistableConversat
     abortRequested: _abortRequested,
     compaction: _compaction,
     compactionError: _compactionError,
+    // 标题总结的运行态：在飞 Map 随重启作废，失败与摘要都不值得跨重启保留
+    titleSummaryPending: _titleSummaryPending,
+    titleSummaryError: _titleSummaryError,
+    lastTurnDigest: _lastTurnDigest,
     ...kept
   } = conversation;
   return {
@@ -68,12 +76,16 @@ function persistOne(conversation: PersistableConversation): PersistableConversat
     started: false,
     runStartedAt: undefined,
     lastOutputAt: undefined,
+    toolOutputs: {},
+    toolStartedAt: {},
     pendingApprovals: [],
     pendingAsks: [],
     pendingCapabilityAsks: [],
     activeOauthAsk: undefined,
     historyOnly: undefined,
     historyLoadAttempted: undefined,
+    historyLoading: undefined,
+    reloading: undefined,
     backgroundTasks: [],
     subagents: [],
     activeTabId: undefined,
@@ -84,6 +96,9 @@ function persistOne(conversation: PersistableConversation): PersistableConversat
     abortRequested: undefined,
     compaction: undefined,
     compactionError: undefined,
+    titleSummaryPending: undefined,
+    titleSummaryError: undefined,
+    lastTurnDigest: undefined,
   };
 }
 

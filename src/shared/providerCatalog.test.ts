@@ -34,21 +34,22 @@ describe('provider catalog', () => {
     );
   });
 
-  it('静态厂商完整且 __custom 恒定在最后', () => {
+  it('静态厂商完整且 __custom 恒定在最前', () => {
     expect(new Set(STATIC_PROVIDER_DEFINITIONS.map((definition) => definition.id)).size).toBe(
       STATIC_PROVIDER_DEFINITIONS.length
     );
-    expect(STATIC_PROVIDER_DEFINITIONS.at(-1)).toMatchObject({
+    expect(STATIC_PROVIDER_DEFINITIONS[0]).toMatchObject({
       id: '__custom',
       supportsApiKey: true,
     });
   });
 
-  it('运行时 OAuth 合并到同 id 静态厂商，并把扩展 provider 放在 custom 前', () => {
+  it('运行时 OAuth 合并到同 id 静态厂商，扩展 provider 接在 custom 之后', () => {
     const merged = mergeProviderDefinitions([
       { id: 'anthropic', name: 'Anthropic Subscription' },
       { id: 'cursor', name: 'Cursor' },
     ]);
+    expect(merged[0]?.id).toBe('__custom');
     expect(merged.find((definition) => definition.id === 'anthropic')).toMatchObject({
       label: 'Anthropic Subscription',
       oauthProviderId: 'anthropic',
@@ -60,6 +61,6 @@ describe('provider catalog', () => {
       oauthProviderId: 'cursor',
       supportsApiKey: false,
     });
-    expect(merged.at(-1)?.id).toBe('__custom');
+    expect(merged.findIndex((definition) => definition.id === 'cursor')).toBeGreaterThan(0);
   });
 });

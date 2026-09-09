@@ -281,6 +281,21 @@ describe('parent/child commands', () => {
     expect(parseAgentCommand({ ...base, bashInterceptEnabled: 1 })).toBeNull();
   });
 
+  it('spawn-parent 携 hashlineEditEnabled:合法通过,脏值拒绝,缺省当关', () => {
+    const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
+    expect(parseAgentCommand(base)).toEqual(base);
+    expect(parseAgentCommand({ ...base, hashlineEditEnabled: true })).toEqual({
+      ...base,
+      hashlineEditEnabled: true,
+    });
+    expect(parseAgentCommand({ ...base, hashlineEditEnabled: false })).toEqual({
+      ...base,
+      hashlineEditEnabled: false,
+    });
+    expect(parseAgentCommand({ ...base, hashlineEditEnabled: 'true' })).toBeNull();
+    expect(parseAgentCommand({ ...base, hashlineEditEnabled: 1 })).toBeNull();
+  });
+
   it('spawn-parent 携 smartCompactEnabled:合法通过,脏值拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
     expect(parseAgentCommand({ ...base, smartCompactEnabled: true })).toEqual({
@@ -563,11 +578,12 @@ describe('removed project memory protocol', () => {
 });
 
 describe('标题总结命令与事件', () => {
+  const secondModel = { ...model, modelId: 'fallback-model' };
   const summarizeInitial = {
     type: 'summarize-title',
     conversationId: 'conversation-1',
     input: { kind: 'initial', text: '帮我把登录页的 bug 修一下' },
-    model,
+    candidates: [model],
   };
   const summarizeRolling = {
     type: 'summarize-title',
@@ -575,10 +591,11 @@ describe('标题总结命令与事件', () => {
     input: {
       kind: 'rolling',
       currentTitle: '修复登录 bug',
+      firstUserText: '帮我把登录页的 bug 修一下',
       userText: '这个修复有通用性吗',
       assistantText: '只影响登录路径',
     },
-    model,
+    candidates: [model, secondModel],
   };
 
   it('summarize-title 命令 initial 输入完整往返；缺字段或空值拒绝', () => {
@@ -587,12 +604,32 @@ describe('标题总结命令与事件', () => {
     expect(
       parseAgentCommand({ ...summarizeInitial, input: { kind: 'initial', text: '' } })
     ).toBeNull();
-    expect(parseAgentCommand({ ...summarizeInitial, model: undefined })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, candidates: undefined })).toBeNull();
     expect(parseAgentCommand({ ...summarizeInitial, extra: 1 })).toBeNull();
   });
 
-  it('summarize-title 命令 rolling 输入完整往返', () => {
+  it('summarize-title 命令 rolling 输入完整往返（含多候选）', () => {
     expect(parseAgentCommand(summarizeRolling)).toEqual(summarizeRolling);
+  });
+
+  it('summarize-title candidates 接受 1–3 项；空数组、超过 3 项、非数组拒绝', () => {
+    const third = { ...model, modelId: 'third-model' };
+    expect(
+      parseAgentCommand({ ...summarizeInitial, candidates: [model, secondModel, third] })
+    ).not.toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, candidates: [] })).toBeNull();
+    expect(
+      parseAgentCommand({
+        ...summarizeInitial,
+        candidates: [model, secondModel, third, { ...model, modelId: 'fourth' }],
+      })
+    ).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, candidates: model })).toBeNull();
+  });
+
+  it('summarize-title 旧形状（单 model 字段而无 candidates）拒绝', () => {
+    const { candidates: _omitted, ...rest } = summarizeInitial;
+    expect(parseAgentCommand({ ...rest, model })).toBeNull();
   });
 
   it('summarize-title 旧形状（顶层 text 字段而无 input）拒绝', () => {
@@ -600,7 +637,7 @@ describe('标题总结命令与事件', () => {
       type: 'summarize-title',
       conversationId: 'conversation-1',
       text: '帮我把登录页的 bug 修一下',
-      model,
+      candidates: [model],
     };
     expect(parseAgentCommand(legacy)).toBeNull();
   });
@@ -612,6 +649,7 @@ describe('标题总结命令与事件', () => {
         input: {
           kind: 'rolling',
           currentTitle: '',
+          firstUserText: 'f',
           userText: 'x',
           assistantText: 'y',
         },
@@ -619,11 +657,37 @@ describe('标题总结命令与事件', () => {
     ).toBeNull();
   });
 
+  it('summarize-title rolling 缺 firstUserText 键拒绝；firstUserText 允许为空串', () => {
+    expect(
+      parseAgentCommand({
+        ...summarizeRolling,
+        input: { kind: 'rolling', currentTitle: 't', userText: 'x', assistantText: 'y' },
+      })
+    ).toBeNull();
+    const emptyAnchor = {
+      ...summarizeRolling,
+      input: {
+        kind: 'rolling',
+        currentTitle: 't',
+        firstUserText: '',
+        userText: 'x',
+        assistantText: 'y',
+      },
+    };
+    expect(parseAgentCommand(emptyAnchor)).toEqual(emptyAnchor);
+  });
+
   it('summarize-title rolling 的 userText 与 assistantText 都为空串拒绝', () => {
     expect(
       parseAgentCommand({
         ...summarizeRolling,
-        input: { kind: 'rolling', currentTitle: 't', userText: '', assistantText: '' },
+        input: {
+          kind: 'rolling',
+          currentTitle: 't',
+          firstUserText: 'f',
+          userText: '',
+          assistantText: '',
+        },
       })
     ).toBeNull();
   });
@@ -634,9 +698,10 @@ describe('标题总结命令与事件', () => {
     ).toBeNull();
   });
 
-  it('summarize-title 的 model 缺 settingsProviderId 拒绝（与 spawn 同约束）', () => {
+  it('summarize-title 的候选缺 settingsProviderId 拒绝（与 spawn 同约束）', () => {
     const { settingsProviderId: _omitted, ...rest } = model;
-    expect(parseAgentCommand({ ...summarizeInitial, model: rest })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, candidates: [rest] })).toBeNull();
+    expect(parseAgentCommand({ ...summarizeInitial, candidates: [model, rest] })).toBeNull();
   });
 
   it('parseTitleSummaryInput 直接单测：initial / rolling 合法形状通过', () => {
@@ -648,10 +713,17 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: 't',
+        firstUserText: 'f',
         userText: 'u',
         assistantText: 'a',
       })
-    ).toEqual({ kind: 'rolling', currentTitle: 't', userText: 'u', assistantText: 'a' });
+    ).toEqual({
+      kind: 'rolling',
+      currentTitle: 't',
+      firstUserText: 'f',
+      userText: 'u',
+      assistantText: 'a',
+    });
   });
 
   it('parseTitleSummaryInput 直接单测：非法形状返回 null', () => {
@@ -663,6 +735,7 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: '',
+        firstUserText: 'f',
         userText: 'u',
         assistantText: 'a',
       })
@@ -671,6 +744,7 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: 't',
+        firstUserText: 'f',
         userText: '',
         assistantText: '',
       })
@@ -679,7 +753,17 @@ describe('标题总结命令与事件', () => {
       parseTitleSummaryInput({
         kind: 'rolling',
         currentTitle: 't',
+        firstUserText: 'f',
         userText: 1,
+        assistantText: 'a',
+      })
+    ).toBeNull();
+    expect(
+      parseTitleSummaryInput({
+        kind: 'rolling',
+        currentTitle: 't',
+        firstUserText: 1,
+        userText: 'u',
         assistantText: 'a',
       })
     ).toBeNull();
@@ -700,6 +784,28 @@ describe('标题总结命令与事件', () => {
     expect(parseAgentWorkerEvent({ ...event, extra: true })).toBeNull();
   });
 
+  it('snapshot 事件外壳保留 partial / sessionId：空 targeted 快照靠 sessionId 路由收回 started', () => {
+    const empty = { type: 'snapshot', sessions: [], partial: true, sessionId: 'evicted' };
+    expect(parseAgentWorkerEvent(empty)).toEqual(empty);
+    const full = { type: 'snapshot', sessions: [] };
+    expect(parseAgentWorkerEvent(full)).toEqual(full);
+    expect(parseAgentWorkerEvent({ type: 'snapshot', sessions: [{ bogus: true }] })).toBeNull();
+  });
+
+  it('title-failed 事件完整往返；缺 error / 空串 / 多余键 → null', () => {
+    const event = {
+      type: 'title-failed',
+      conversationId: 'conversation-1',
+      error: 'cursor/composer-2.5-fast: timed out after 60s',
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+    expect(parseAgentWorkerEvent({ ...event, error: '' })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...event, error: undefined })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...event, error: 7 })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...event, conversationId: '' })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...event, identity: parent })).toBeNull();
+  });
+
   it('turn-failed 的 undelivered 只接受 true/缺省', () => {
     const event = { type: 'turn-failed', identity: parent, seq: 3, turnId: 't', error: 'stuck' };
     expect(parseAgentWorkerEvent(event)).toEqual(event);
@@ -717,7 +823,18 @@ describe('标题总结命令与事件', () => {
       identity: parent,
       seq: 1,
       turnId: 'turn-1',
-      digest: { userText: '本轮请求', assistantText: '本轮结论' },
+      digest: { firstUserText: '开场请求', userText: '本轮请求', assistantText: '本轮结论' },
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+  });
+
+  it('turn-completed digest 的 firstUserText 允许空串（冷会话无首条）', () => {
+    const event = {
+      type: 'turn-completed',
+      identity: parent,
+      seq: 1,
+      turnId: 'turn-1',
+      digest: { firstUserText: '', userText: '本轮请求', assistantText: '本轮结论' },
     };
     expect(parseAgentWorkerEvent(event)).toEqual(event);
   });
@@ -730,12 +847,24 @@ describe('标题总结命令与事件', () => {
       turnId: 'turn-1',
     };
     expect(
-      parseAgentWorkerEvent({ ...base, digest: { userText: 1, assistantText: 'a' } })
+      parseAgentWorkerEvent({
+        ...base,
+        digest: { firstUserText: 'f', userText: 1, assistantText: 'a' },
+      })
     ).toBeNull();
-    expect(parseAgentWorkerEvent({ ...base, digest: { userText: 'u' } })).toBeNull();
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { firstUserText: 'f', userText: 'u' } })
+    ).toBeNull();
+    // 旧两键形状：缺 firstUserText 即拒绝，不做兼容层
+    expect(
+      parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a' } })
+    ).toBeNull();
     expect(parseAgentWorkerEvent({ ...base, digest: 'nope' })).toBeNull();
     expect(
-      parseAgentWorkerEvent({ ...base, digest: { userText: 'u', assistantText: 'a', extra: 1 } })
+      parseAgentWorkerEvent({
+        ...base,
+        digest: { firstUserText: 'f', userText: 'u', assistantText: 'a', extra: 1 },
+      })
     ).toBeNull();
   });
 
@@ -1182,6 +1311,14 @@ describe('tool-output 事件跨进程边界', () => {
 
   it('合法事件原样通过（否则 worker→main 边界会静默丢弃）', () => {
     expect(parseAgentWorkerEvent(event)).toEqual(event);
+  });
+
+  it('可选 startedAt 随事件通过，脏数字拒绝', () => {
+    expect(parseAgentWorkerEvent({ ...event, startedAt: 1_000 })).toEqual({
+      ...event,
+      startedAt: 1_000,
+    });
+    expect(parseAgentWorkerEvent({ ...event, startedAt: 'now' })).toBeNull();
   });
 
   it('脏输入拒绝', () => {

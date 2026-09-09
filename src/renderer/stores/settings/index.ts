@@ -1,6 +1,7 @@
 import { sanitizeDefaultModel } from '@shared/defaultModel';
 import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
+import { projectNameFromPath } from '@shared/projectName';
 import { applyIncomingProviders } from '@shared/providerIdentity';
 import { normalizeProxyMode, type ProxyMode } from '@shared/proxy';
 import { parseSmartCompactMode } from '@shared/smartCompactMode';
@@ -9,6 +10,7 @@ import {
   normalizeStatusLineSegments,
   type StatusLineSegmentId,
 } from '@shared/statusLine';
+import { parseTerminalShell } from '@shared/terminalShell';
 import type { SourceAuthorityProjection } from '@shared/types/agent';
 import { parseUsageModelPricing } from '@shared/usage/pricing';
 import { parseWindowsLocalShell } from '@shared/windowsLocalShell';
@@ -24,6 +26,12 @@ import {
   oauthCredentialContext,
   useOauthCredentialStore,
 } from '@/stores/oauthCredentials';
+import {
+  DEFAULT_AUTO_ARCHIVE_IDLE_DAYS,
+  DEFAULT_AUTO_DELETE_ARCHIVED_DAYS,
+  normalizeAutoArchiveIdleDays,
+  normalizeAutoDeleteArchivedDays,
+} from './autoArchiveIdleDays';
 import { migrateSettings, SETTINGS_VERSION } from './migrate';
 import { electronStorage, getWriteGeneration, openPersistWriteGate } from './storage';
 import type {
@@ -73,6 +81,7 @@ function applySettings(state: {
   terminalFontFamily: string;
   terminalFontSize: number;
   language: Locale;
+  chatWide?: boolean;
 }): void {
   if (state.theme === 'sync-terminal') {
     applyTerminalThemeToApp(state.terminalTheme, true);
@@ -82,6 +91,7 @@ function applySettings(state: {
   }
   applyTerminalFont(state.terminalFontFamily, state.terminalFontSize);
   document.documentElement.lang = normalizeLocale(state.language) === 'zh' ? 'zh-CN' : 'en';
+  document.documentElement.classList.toggle('enso-chat-wide', Boolean(state.chatWide));
 }
 
 function getDefaultLocale(): Locale {
@@ -102,6 +112,8 @@ const initialState = {
   terminalFontFamily: 'ui-monospace, SF Mono, Menlo, Monaco, Consolas, monospace',
   terminalFontWeight: 'normal' as FontWeight,
   terminalFontWeightBold: '500' as FontWeight,
+  terminalShell: 'auto' as const,
+  worktreeRoot: '',
   favoriteTerminalThemes: [] as string[],
   statusLineSegments: [...DEFAULT_STATUS_LINE_SEGMENTS] as StatusLineSegmentId[],
   loadLocalSkills: true,
@@ -109,6 +121,7 @@ const initialState = {
   windowsLocalShell: 'auto' as const,
   exploreFoldEnabled: false,
   bashInterceptEnabled: false,
+  hashlineEditEnabled: false,
   smartCompactEnabled: false,
   smartCompactModel: null as import('@shared/defaultModel').DefaultModelRef | null,
   smartCompactMode: 'auto' as import('@shared/smartCompactMode').SmartCompactMode,
@@ -117,7 +130,13 @@ const initialState = {
   customProxyUrl: '',
   openChangesOnFileEdit: false,
   compactReadOnlyTools: true,
+  expandLiveEdits: true,
+  chatWide: false,
+  notifyMainAgentOnly: true,
   generationStallTimeoutMin: 0,
+  autoArchiveIdleDays: DEFAULT_AUTO_ARCHIVE_IDLE_DAYS,
+  autoArchiveMergedWorktrees: false,
+  autoDeleteArchivedDays: DEFAULT_AUTO_DELETE_ARCHIVED_DAYS,
   backgroundImageEnabled: false,
   backgroundSourceType: 'file' as BackgroundSourceType,
   backgroundImagePath: '',
@@ -210,6 +229,9 @@ export const useSettingsStore = create<SettingsState>()(
 
       setTerminalFontWeight: (terminalFontWeight) => set({ terminalFontWeight }),
       setTerminalFontWeightBold: (terminalFontWeightBold) => set({ terminalFontWeightBold }),
+      setTerminalShell: (terminalShell) =>
+        set({ terminalShell: parseTerminalShell(terminalShell) }),
+      setWorktreeRoot: (worktreeRoot) => set({ worktreeRoot: worktreeRoot.trim() }),
 
       toggleFavoriteTerminalTheme: (theme) =>
         set((state) => ({
@@ -224,6 +246,7 @@ export const useSettingsStore = create<SettingsState>()(
         set({ windowsLocalShell: parseWindowsLocalShell(windowsLocalShell) }),
       setExploreFoldEnabled: (exploreFoldEnabled) => set({ exploreFoldEnabled }),
       setBashInterceptEnabled: (bashInterceptEnabled) => set({ bashInterceptEnabled }),
+      setHashlineEditEnabled: (hashlineEditEnabled) => set({ hashlineEditEnabled }),
       setSmartCompactEnabled: (smartCompactEnabled) => set({ smartCompactEnabled }),
       setSmartCompactModel: (smartCompactModel) => set({ smartCompactModel }),
       setSmartCompactMode: (smartCompactMode) =>
@@ -235,12 +258,24 @@ export const useSettingsStore = create<SettingsState>()(
       setCustomProxyUrl: (customProxyUrl) => set({ customProxyUrl }),
       setOpenChangesOnFileEdit: (openChangesOnFileEdit) => set({ openChangesOnFileEdit }),
       setCompactReadOnlyTools: (compactReadOnlyTools) => set({ compactReadOnlyTools }),
+      setExpandLiveEdits: (expandLiveEdits) => set({ expandLiveEdits }),
+      setChatWide: (chatWide) => {
+        document.documentElement.classList.toggle('enso-chat-wide', chatWide);
+        set({ chatWide });
+      },
+      setNotifyMainAgentOnly: (notifyMainAgentOnly) => set({ notifyMainAgentOnly }),
       setGenerationStallTimeoutMin: (minutes) =>
         set({
           generationStallTimeoutMin: Number.isFinite(minutes)
             ? Math.min(120, Math.max(0, Math.round(minutes)))
             : 0,
         }),
+      setAutoArchiveIdleDays: (days) =>
+        set({ autoArchiveIdleDays: normalizeAutoArchiveIdleDays(days) }),
+      setAutoArchiveMergedWorktrees: (autoArchiveMergedWorktrees) =>
+        set({ autoArchiveMergedWorktrees }),
+      setAutoDeleteArchivedDays: (days) =>
+        set({ autoDeleteArchivedDays: normalizeAutoDeleteArchivedDays(days) }),
 
       setBackgroundImageEnabled: (backgroundImageEnabled) => set({ backgroundImageEnabled }),
       setBackgroundSourceType: (backgroundSourceType) => set({ backgroundSourceType }),
@@ -566,9 +601,7 @@ export const useSettingsStore = create<SettingsState>()(
         }
         const project = {
           id: result.value.projectId,
-          name:
-            result.value.canonicalPath.split('/').filter(Boolean).pop() ??
-            result.value.canonicalPath,
+          name: projectNameFromPath(result.value.canonicalPath),
           path: result.value.canonicalPath,
           ...(groupId ? { groupId } : {}),
           ...(result.value.kind === 'ssh'
@@ -729,6 +762,10 @@ export const useSettingsStore = create<SettingsState>()(
         if (windowsLocalShell !== s.windowsLocalShell) {
           useSettingsStore.setState({ windowsLocalShell });
         }
+        const terminalShell = parseTerminalShell(s.terminalShell);
+        if (terminalShell !== s.terminalShell) {
+          useSettingsStore.setState({ terminalShell });
+        }
         const smartCompactMode = parseSmartCompactMode(s.smartCompactMode) ?? 'auto';
         if (smartCompactMode !== s.smartCompactMode) {
           useSettingsStore.setState({ smartCompactMode });
@@ -739,6 +776,17 @@ export const useSettingsStore = create<SettingsState>()(
           segments.some((id, i) => s.statusLineSegments[i] !== id)
         ) {
           useSettingsStore.setState({ statusLineSegments: segments });
+        }
+        const autoArchiveIdleDays = normalizeAutoArchiveIdleDays(s.autoArchiveIdleDays);
+        if (autoArchiveIdleDays !== s.autoArchiveIdleDays) {
+          useSettingsStore.setState({ autoArchiveIdleDays });
+        }
+        const autoDeleteArchivedDays = normalizeAutoDeleteArchivedDays(s.autoDeleteArchivedDays);
+        if (autoDeleteArchivedDays !== s.autoDeleteArchivedDays) {
+          useSettingsStore.setState({ autoDeleteArchivedDays });
+        }
+        if (s.autoArchiveMergedWorktrees !== true && s.autoArchiveMergedWorktrees !== false) {
+          useSettingsStore.setState({ autoArchiveMergedWorktrees: false });
         }
         // 老用户（升级前已有配置）视为已完成引导，避免被打扰
         if (
@@ -770,7 +818,7 @@ function applyProjectAuthorityProjection(projection: SourceAuthorityProjection):
       const previous = previousById.get(project.projectId);
       return {
         id: project.projectId,
-        name: project.canonicalPath.split('/').filter(Boolean).pop() ?? project.canonicalPath,
+        name: projectNameFromPath(project.canonicalPath),
         path: project.canonicalPath,
         ...(previous?.groupId ? { groupId: previous.groupId } : {}),
         ...(project.kind === 'ssh'

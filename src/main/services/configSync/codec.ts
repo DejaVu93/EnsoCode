@@ -14,6 +14,7 @@ import {
   MODEL_API_KINDS,
   THINKING_LEVELS,
 } from '@shared/types';
+import { hasBase64Shape } from './assets';
 import type { ConfigSyncBundle, ConfigSyncMcpServer, ConfigSyncProvider } from './types';
 import { CONFIG_SYNC_MCP_OMISSIONS, CONFIG_SYNC_PROVIDER_OMISSIONS } from './types';
 
@@ -78,9 +79,16 @@ const STATE_KEYS = [
   'loadHarnessAssets',
   'exploreFoldEnabled',
   'bashInterceptEnabled',
+  'hashlineEditEnabled',
   'openChangesOnFileEdit',
   'compactReadOnlyTools',
+  'expandLiveEdits',
+  'chatWide',
+  'notifyMainAgentOnly',
   'generationStallTimeoutMin',
+  'autoArchiveIdleDays',
+  'autoArchiveMergedWorktrees',
+  'autoDeleteArchivedDays',
   'backgroundRandomInterval',
   'backgroundOpacity',
   'backgroundBlur',
@@ -308,11 +316,7 @@ function passwordBytes(password: string | undefined): Buffer {
 function canonicalBase64(value: unknown, label: string, maxBytes = MAX_FILE_BYTES): Buffer {
   const maxLength =
     maxBytes === MAX_FILE_BYTES ? MAX_BASE64_LENGTH : Math.ceil((maxBytes * 4) / 3) + 4;
-  if (
-    typeof value !== 'string' ||
-    value.length > maxLength ||
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
-  ) {
+  if (typeof value !== 'string' || value.length > maxLength || !hasBase64Shape(value)) {
     throw new Error(`Invalid ${label}`);
   }
   const decoded = Buffer.from(value, 'base64');
@@ -570,14 +574,9 @@ function validatePreset(raw: unknown): RecordValue {
 function validateAgentType(raw: unknown): RecordValue {
   const entry = assertRecord(raw, 'agent type');
   assertExactKeys(entry, AGENT_TYPE_KEYS, 'agent type');
+  // 与设置页/registry 同口径：同名 custom 覆盖 builtin 是合法配置，仅保留名 fail-closed。
   const name = nonEmptyStringField(entry, 'name', 'agent type');
-  const builtinNames = new Set(BUILTIN_AGENT_TYPES.map((type) => type.name.toLocaleLowerCase()));
-  if (
-    isReservedAgentTypeName(name) ||
-    builtinNames.has(name.normalize('NFKC').trim().toLocaleLowerCase())
-  ) {
-    throw new Error('Reserved agent type name');
-  }
+  if (isReservedAgentTypeName(name)) throw new Error('Reserved agent type name');
   const id = nonEmptyStringField(entry, 'id', 'agent type');
   if (id.startsWith('builtin:')) throw new Error('Reserved agent type id');
   stringField(entry, 'description', 'agent type');
@@ -674,19 +673,6 @@ function assertPlainBundle(bundle: ConfigSyncBundle): void {
   }
 }
 
-function validateUniqueNames(entries: RecordValue[], category: string): void {
-  const names = new Set<string>();
-  for (const entry of entries) {
-    const name =
-      typeof entry.name === 'string'
-        ? entry.name.normalize('NFKC').trim().replace(/\s+/gu, ' ').toLocaleLowerCase()
-        : '';
-    if (!name) continue;
-    if (names.has(name)) throw new Error(`Duplicate ${category} name`);
-    names.add(name);
-  }
-}
-
 function validateReferences(
   state: RecordValue,
   providers: RecordValue[],
@@ -712,12 +698,6 @@ function validateReferences(
   uniqueIds(providers, 'provider');
   uniqueIds(agentTypes, 'agent type');
   uniqueIds(subagentModels, 'subagent model');
-  validateUniqueNames(providers, 'provider');
-  validateUniqueNames(skills, 'skill');
-  validateUniqueNames(mcpServers, 'MCP server');
-  validateUniqueNames(instructions, 'instruction');
-  validateUniqueNames(presets, 'preset');
-  validateUniqueNames(agentTypes, 'agent type');
   const checkIds = (value: unknown, known: Set<string>, label: string) => {
     for (const id of idList(value, label))
       if (!known.has(id)) throw new Error(`Unknown ${label} reference`);
@@ -889,11 +869,18 @@ export function validateBundle(value: unknown): ConfigSyncBundle {
     'loadHarnessAssets',
     'exploreFoldEnabled',
     'bashInterceptEnabled',
+    'hashlineEditEnabled',
     'openChangesOnFileEdit',
     'compactReadOnlyTools',
+    'expandLiveEdits',
+    'chatWide',
+    'notifyMainAgentOnly',
+    'autoArchiveMergedWorktrees',
   ])
     booleanField(state, key, 'state', false);
   numberField(state, 'generationStallTimeoutMin', 'state', 0, 120, true);
+  numberField(state, 'autoArchiveIdleDays', 'state', 0, 90, true);
+  numberField(state, 'autoDeleteArchivedDays', 'state', 0, 90, true);
   numberField(state, 'backgroundRandomInterval', 'state', 5, 86400, true);
   for (const [key, min, max] of [
     ['backgroundOpacity', 0, 1],

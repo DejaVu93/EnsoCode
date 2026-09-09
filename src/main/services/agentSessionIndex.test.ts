@@ -35,6 +35,17 @@ function readyChild(child: ChildSessionIdentity) {
 }
 
 describe('AgentSessionIndex generation and reservation authority', () => {
+  it('手动只读响应不进入生命周期索引', () => {
+    const sessions = index();
+    const response = {
+      type: 'session-reloaded' as const,
+      requestId: 'reload-1',
+      result: { ok: false as const, error: 'gone' },
+    };
+    expect(() => sessions.observe(response)).not.toThrow();
+    expect(sessions.observe(response)).toBe(false);
+  });
+
   it('accepts a revived session restarting at seq 1 after parent-ended or worker-exited', () => {
     const ready = (seq: number) => ({
       type: 'parent-ready' as const,

@@ -60,6 +60,7 @@ import type {
   ChildHistoryResult,
   ConversationAuthorityProjection,
   ConversationAuthorityRequest,
+  ConversationReloadResult,
   CreateConversationAuthorityRequest,
   CreateProjectAuthorityRequest,
   DispatchMainEvent,
@@ -260,6 +261,16 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.GIT_DIFF_HEAD, request),
   },
 
+  changes: {
+    /** Changes 面板会话快照（编辑前全文）：主进程按会话落盘，不进 localStorage */
+    readSnapshots: (request: { conversationId: string }): Promise<Record<string, string>> =>
+      ipcRenderer.invoke(IPC_CHANNELS.CHANGES_SNAPSHOTS_READ, request),
+    writeSnapshots: (request: {
+      conversationId: string;
+      snapshots: Record<string, string>;
+    }): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.CHANGES_SNAPSHOTS_WRITE, request),
+  },
+
   workspaceFiles: {
     listDir: (request: {
       conversationId: string;
@@ -430,8 +441,14 @@ const electronAPI = {
     /** 已结束 child 的只读历史；只传 conversationId，路径由 Main 推导 */
     readChildHistory: (conversationId: string): Promise<ChildHistoryResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.AGENT_CHILD_HISTORY_READ, { conversationId }),
-    readParentHistoryTail: (conversationId: string): Promise<ParentHistoryTailResult> =>
-      ipcRenderer.invoke(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, { conversationId }),
+    /** 手动「重新读取会话」：只传 conversationId，来源（worker 活快照 / safe journal）由 Main 决定，只读不 spawn */
+    reloadConversation: (conversationId: string): Promise<ConversationReloadResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AGENT_CONVERSATION_RELOAD, { conversationId }),
+    readParentHistoryTail: (
+      conversationId: string,
+      beforeIndex?: number
+    ): Promise<ParentHistoryTailResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, { conversationId, beforeIndex }),
     /** 标题总结：只传 id + 输入（首条即时 / 每轮滚动，+会话模型作回退链末级），凭证由 Main 自读；结果经 title-generated 事件回流 */
     summarizeTitle: (
       conversationId: string,

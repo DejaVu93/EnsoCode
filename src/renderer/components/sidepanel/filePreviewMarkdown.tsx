@@ -58,12 +58,15 @@ const olOverride: Components['ol'] = ({ children, node: _node, ...rest }) => (
   </ol>
 );
 const thOverride: Components['th'] = ({ children, node: _node, ...rest }) => (
-  <th className="border-b border-border px-2 py-1 text-left font-medium" {...rest}>
+  <th
+    className="whitespace-nowrap border-b border-border px-2 py-1 text-left font-medium"
+    {...rest}
+  >
     {children}
   </th>
 );
 const tdOverride: Components['td'] = ({ children, node: _node, ...rest }) => (
-  <td className="border-b border-border/50 px-2 py-1" {...rest}>
+  <td className="whitespace-nowrap border-b border-border/50 px-2 py-1" {...rest}>
     {children}
   </td>
 );

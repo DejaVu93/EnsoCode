@@ -2,10 +2,12 @@ import { statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildSshPtyArgs, resolveSshTarget } from '@shared/ssh';
+import { parseTerminalShell } from '@shared/terminalShell';
 import type { TerminalCreateRequest, TerminalCreateResult } from '@shared/types';
 import { IPC_CHANNELS } from '@shared/types';
 import { app, ipcMain } from 'electron';
 import { resolveSshControlPath, sshPasswordEnv } from '../../agent/ssh/executor';
+import { readSettingsState } from '../services/agentHost';
 import { getSshConnectionStore } from '../services/sshConnectionStore';
 import {
   createTerminal,
@@ -73,7 +75,7 @@ function resolveSpawnSpec(conversationId?: string, projectId?: string): Terminal
     home: os.homedir(),
     exists: isDirectory,
   });
-  return localShellSpec(cwd);
+  return localShellSpec(cwd, parseTerminalShell(readSettingsState()?.terminalShell));
 }
 
 function toCreateRequest(value: unknown): TerminalCreateRequest | null {

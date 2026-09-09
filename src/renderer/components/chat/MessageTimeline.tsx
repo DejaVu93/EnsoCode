@@ -14,15 +14,20 @@ import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { Button } from '@/components/ui/button';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
-import { foldTimeline, type TimelineItem } from '@/stores/sessions/timeline';
+import {
+  foldTimeline,
+  type HistoryPageChrome,
+  historyPageChrome,
+  type TimelineItem,
+} from '@/stores/sessions/timeline';
 import { useSettingsStore } from '@/stores/settings';
 import { ChatSearchHighlightContext } from './highlightQuery';
 import { NavRail } from './NavRail';
-import { isCompactRow, TimelineRow } from './TimelineRow';
+import { isCompactRow, RetryTurnButton, TimelineRow } from './TimelineRow';
 
-/** 消息列/输入区共用的列：阶梯 max-w + 水平 padding。padding 必须在列上而不是 @container 上，否则两侧查询宽度差 2rem，会在断点附近上下错位。 */
+/** 消息列/输入区共用的列：阶梯 max-w + 水平 padding。padding 必须在列上而不是 @container 上，否则两侧查询宽度差 2rem，会在断点附近上下错位。默认到 4xl 保持原阅读宽度，更宽再逐级加档。 */
 export const CHAT_COL =
-  'mx-auto w-full max-w-3xl px-4 @min-[56rem]:max-w-4xl @min-[72rem]:max-w-5xl @min-[96rem]:max-w-6xl';
+  'enso-chat-col mx-auto w-full max-w-2xl px-4 @min-[56rem]:max-w-3xl @min-[72rem]:max-w-4xl @min-[84rem]:max-w-5xl @min-[96rem]:max-w-6xl @min-[112rem]:max-w-7xl';
 
 /** 贴底判定阈值（px）：与旧实现一致，离底 40px 内视为贴底 */
 const AT_BOTTOM_THRESHOLD = 40;
@@ -63,10 +68,16 @@ interface MessageTimelineProps {
    */
   virtualize?: boolean;
   /**
-   * 滚动接近顶部时回调（仅非虚拟化模式；带锁存，离开顶部区域后才会再次触发）。
-   * 手机端用于上滑加载更早的历史分页。
+   * 滚动接近顶部时回调（带锁存，离开顶部区域后才会再次触发）。
+   * 桌面 Virtuoso / 手机全量渲染都走这条：上滑加载更早的历史分页。
    */
   onStartReached?: () => void;
+  /** 上滑翻页在途：顶部转圈 */
+  historyLoading?: boolean;
+  /** 还有更早一页；false = 已到第 0 条，顶部给出到头提示 */
+  hasOlder?: boolean;
+  /** 当前权威区绝对起点；Virtuoso prepend 时靠它钉住已渲染行 */
+  firstItemIndex?: number;
   searchQuery?: string;
   activeHit?: { key: string; nth: number } | null;
 }
@@ -87,6 +98,9 @@ export function MessageTimeline({
   onRetryResume,
   virtualize = true,
   onStartReached,
+  historyLoading = false,
+  hasOlder,
+  firstItemIndex = 0,
   searchQuery = '',
   activeHit = null,
 }: MessageTimelineProps) {
@@ -285,8 +299,14 @@ export function MessageTimeline({
     scrollToKey: jumpTo,
   }));
 
-  // 顶部触发锁存：进入顶部区域只触发一次，滚离后解锁（避免加载期间连环触发）
+  // 顶部触发锁存：进入顶部区域只触发一次，滚离后解锁（避免加载期间连环触发）。
+  // firstItemIndex 变了 = 新页已前置，必须立刻解锁，否则停在第一页。
   const startReachedLatch = useRef(false);
+  const latchedFirstItemIndex = useRef(firstItemIndex);
+  if (latchedFirstItemIndex.current !== firstItemIndex) {
+    latchedFirstItemIndex.current = firstItemIndex;
+    startReachedLatch.current = false;
+  }
 
   // 两条渲染路径（虚拟化 / 全量）共用，保证外观完全一致
   const searchHighlight = useMemo(
@@ -320,6 +340,15 @@ export function MessageTimeline({
       </div>
     );
   };
+  const everHadOlderRef = useRef(false);
+  if (hasOlder === true) everHadOlderRef.current = true;
+  const pageChrome = historyPageChrome(
+    items.length > 0,
+    historyLoading,
+    hasOlder,
+    everHadOlderRef.current
+  );
+  const renderHeader = () => <HistoryPageHeader chrome={pageChrome} />;
   const renderFooter = () => (
     <div className={cn(CHAT_COL, 'pb-6 [overflow-wrap:anywhere]')}>
       {busy && (
@@ -330,7 +359,17 @@ export function MessageTimeline({
           )}
         </div>
       )}
-      {error && <p className="text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>}
+      {error && (
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 text-sm text-destructive whitespace-pre-wrap">{t(error)}</p>
+          <RetryTurnButton />
+          {onRetryResume && (
+            <Button size="sm" variant="outline" onClick={onRetryResume}>
+              {t('Retry resume')}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -425,7 +464,7 @@ export function MessageTimeline({
             className="h-full select-text overflow-y-auto [overflow-anchor:none]"
           >
             <div ref={attachContent}>
-              <div className="h-6" />
+              {renderHeader()}
               {folded.map((item, index) => renderRow(item, index))}
               {renderFooter()}
             </div>
@@ -435,6 +474,12 @@ export function MessageTimeline({
             ref={virtuosoRef}
             data={folded}
             computeItemKey={(_, item) => item.key}
+            firstItemIndex={firstItemIndex}
+            startReached={() => {
+              if (!onStartReached || startReachedLatch.current) return;
+              startReachedLatch.current = true;
+              onStartReached();
+            }}
             // 贴底时新内容自动跟随（含流式增高）；非贴底不抢滚
             followOutput={(isAtBottom) => (isAtBottom ? 'auto' : false)}
             atBottomThreshold={AT_BOTTOM_THRESHOLD}
@@ -446,6 +491,7 @@ export function MessageTimeline({
             initialTopMostItemIndex={{ index: 'LAST', align: 'end' }}
             // 可视范围起点附近的 user 轮次作为导航条高亮
             rangeChanged={({ startIndex }) => {
+              if (startIndex > firstItemIndex + 4) startReachedLatch.current = false;
               scheduleActiveNavKey(() => {
                 let current: string | null = null;
                 for (let i = 0; i <= Math.min(startIndex + 1, folded.length - 1); i++) {
@@ -459,7 +505,7 @@ export function MessageTimeline({
             }}
             className="h-full select-text"
             components={{
-              Header: () => <div className="h-6" />,
+              Header: renderHeader,
               Footer: renderFooter,
             }}
             itemContent={(index, item) => renderRow(item, index)}
@@ -486,6 +532,23 @@ function groupContainsKey(
 ): boolean {
   return group.children.some(
     (child) => child.key === key || (child.kind === 'tool-group' && groupContainsKey(child, key))
+  );
+}
+
+function HistoryPageHeader({ chrome }: { chrome: HistoryPageChrome }) {
+  const { t } = useI18n();
+  if (chrome === 'none') return <div className="h-6" />;
+  return (
+    <div className={cn(CHAT_COL, 'flex items-center justify-center gap-2 py-3')}>
+      {chrome === 'loading' ? (
+        <>
+          <LoaderCircle className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          <p className="text-xs text-muted-foreground">{t('Loading earlier messages…')}</p>
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">{t('Beginning of conversation')}</p>
+      )}
+    </div>
   );
 }
 

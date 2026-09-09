@@ -5,9 +5,9 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  '@rahularya01/pi-cursor@1.4.31':
-    hash: 54a3a00dd988bf78f091c2553f5b6aad0cbf9015280e61a02e8b0ac3ec046727
-    path: patches/@rahularya01__pi-cursor@1.4.31.patch
+  '@rahularya01/pi-cursor@1.4.32':
+    hash: b95cec46849c5da5490267c2d77c969b1da1534a4ff674709380bc9edffc5e4b
+    path: patches/@rahularya01__pi-cursor@1.4.32.patch
 
 importers:
 
@@ -44,8 +44,8 @@ importers:
         specifier: ^1.3.5
         version: 1.3.5(@shikijs/themes@4.4.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@rahularya01/pi-cursor':
-        specifier: 1.4.31
-        version: 1.4.31(patch_hash=54a3a00dd988bf78f091c2553f5b6aad0cbf9015280e61a02e8b0ac3ec046727)(@earendil-works/pi-ai@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-coding-agent@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))
+        specifier: 1.4.32
+        version: 1.4.32(patch_hash=b95cec46849c5da5490267c2d77c969b1da1534a4ff674709380bc9edffc5e4b)(@earendil-works/pi-ai@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-coding-agent@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))
       '@shikijs/themes':
         specifier: 4.4.3
         version: 4.4.3
@@ -97,6 +97,9 @@ importers:
       mermaid:
         specifier: ^11.17.2
         version: 11.17.2
+      node-datachannel:
+        specifier: ^0.33.2
+        version: 0.33.2
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
@@ -1405,6 +1408,55 @@ packages:
     resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
     engines: {node: '>= 20.19.0'}
 
+  '@node-datachannel/android-arm64@0.33.2':
+    resolution: {integrity: sha512-I71a0jICUNYgh4ZI5AcINEMuRtQSVyrpp4FV3kJZMcx31xS0vKKtf06tpsUAtW5uS+uRXbZR+vlMEqS1h710wQ==}
+    cpu: [arm64]
+    os: [android]
+
+  '@node-datachannel/darwin-arm64@0.33.2':
+    resolution: {integrity: sha512-EwBGiaMh3MX6zjYoZHuK02Q6hmQQIvR39335Kb/ZnP3fXZU0/VWx6ksHLM6K0XFFYRfP+yJeVgU79g++xoeQpw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@node-datachannel/darwin-x64@0.33.2':
+    resolution: {integrity: sha512-a1nvL6MiskSjV3TWTNXdVpI/2kHNIOP2AbuBZjR5eC7VSrH/6hCFfHIBW4SFKXGFm8LOGliY9Df10UnJUutjwA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@node-datachannel/linux-arm64-gnu@0.33.2':
+    resolution: {integrity: sha512-YWAu3EiMl2HRi/fwWlfFTW30wFTkRVYJWRHQcI1uDSeZYG/tfyBqBy6CRy9Sgrb0xjOYZ6XhLDj8cdX0foPlpg==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@node-datachannel/linux-arm64-musl@0.33.2':
+    resolution: {integrity: sha512-16o3Ny5hbxTTjDmhsZog/t7p2tRP6s/Oa/V9kKzZfiGlCqvxxCE4ACOWw/MWHOhN0xI9/63IIRfrrnQnPxjK8g==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@node-datachannel/linux-x64-gnu@0.33.2':
+    resolution: {integrity: sha512-grLRAbZgSIX8nmObciblyCmnevDCst0snhV+z1fvDmUlzXIVXeDmv6lEzAaWs3KRleagqwSsFg5d1td1bwMT9w==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@node-datachannel/linux-x64-musl@0.33.2':
+    resolution: {integrity: sha512-PlpgvYjo+gmBhIkRFaZWIhCF335FMTJmCpl+FVa4XliEgyOqD+cvjQPWcbnlrA2Jd+QnLiZt+NxT7nv4QXpoiQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@node-datachannel/win32-arm64-msvc@0.33.2':
+    resolution: {integrity: sha512-8NpHkm7R8EY0jHGHOXdK7K0wjWY34PJ+PJY++2VDHTAtXGazNm28zcnVE/4IU0N26YGdCDSSWat3OO3W6nwoRw==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@node-datachannel/win32-x64-msvc@0.33.2':
+    resolution: {integrity: sha512-aLk0O/M1JNVpzxx4RVBXMJTMlpswE04Cz5baayKwuEN+qk9hO6DSJgYMR6Wq9a5zGYAmvLFlOg+LsePyXkWliA==}
+    cpu: [x64]
+    os: [win32]
+
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
 
@@ -1489,8 +1541,8 @@ packages:
   '@protobufjs/utf8@1.1.2':
     resolution: {integrity: sha512-b1UQwcEZ4yCnMCD8DAL1VlbvBJE9/IX4FTIp7BG1xYpf29SLazLSrqUkj4w7Y5y7cCVP6E5tcqqcI0xemPkHug==}
 
-  '@rahularya01/pi-cursor@1.4.31':
-    resolution: {integrity: sha512-m3J5nAkX4TeMucHGfvCH5i8yvgY3TL06BPJe8sNL1sW/wjR2A8iLyWFUIk+kS7IfojgBEYRwUgYP8u8iK4ODbQ==}
+  '@rahularya01/pi-cursor@1.4.32':
+    resolution: {integrity: sha512-8OBLVX9hPBzBud2e5a6ISL9GGkeGOk3tPLRhccz9tGDbp9RunCHCnAHmf4s86sQRswhxXR4mgwvVjo9BooaUyw==}
     engines: {bun: '>=1.4.0'}
     peerDependencies:
       '@earendil-works/pi-ai': '>=0.80.0'
@@ -4005,6 +4057,10 @@ packages:
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
 
+  node-datachannel@0.33.2:
+    resolution: {integrity: sha512-WRL+uqYG2eSvpnKuCOKueaMiyKlDjkJFd6pFH/f2SbD/EiXLMXwmYNU5z+TDQPrAv+BMgkuC40UESeRRL+4zBw==}
+    engines: {node: '>=18.20.0'}
+
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
@@ -6111,6 +6167,33 @@ snapshots:
 
   '@noble/hashes@2.3.0': {}
 
+  '@node-datachannel/android-arm64@0.33.2':
+    optional: true
+
+  '@node-datachannel/darwin-arm64@0.33.2':
+    optional: true
+
+  '@node-datachannel/darwin-x64@0.33.2':
+    optional: true
+
+  '@node-datachannel/linux-arm64-gnu@0.33.2':
+    optional: true
+
+  '@node-datachannel/linux-arm64-musl@0.33.2':
+    optional: true
+
+  '@node-datachannel/linux-x64-gnu@0.33.2':
+    optional: true
+
+  '@node-datachannel/linux-x64-musl@0.33.2':
+    optional: true
+
+  '@node-datachannel/win32-arm64-msvc@0.33.2':
+    optional: true
+
+  '@node-datachannel/win32-x64-msvc@0.33.2':
+    optional: true
+
   '@oxc-project/types@0.146.0': {}
 
   '@peculiar/asn1-schema@2.9.4':
@@ -6191,7 +6274,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
-  '@rahularya01/pi-cursor@1.4.31(patch_hash=54a3a00dd988bf78f091c2553f5b6aad0cbf9015280e61a02e8b0ac3ec046727)(@earendil-works/pi-ai@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-coding-agent@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))':
+  '@rahularya01/pi-cursor@1.4.32(patch_hash=b95cec46849c5da5490267c2d77c969b1da1534a4ff674709380bc9edffc5e4b)(@earendil-works/pi-ai@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))(@earendil-works/pi-coding-agent@0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3))':
     dependencies:
       '@bufbuild/protobuf': 2.14.0
       '@earendil-works/pi-ai': 0.85.1(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(ws@8.21.3)(zod@4.4.3)
@@ -8946,6 +9029,20 @@ snapshots:
   node-api-version@0.2.1:
     dependencies:
       semver: 7.8.5
+
+  node-datachannel@0.33.2:
+    dependencies:
+      detect-libc: 2.1.2
+    optionalDependencies:
+      '@node-datachannel/android-arm64': 0.33.2
+      '@node-datachannel/darwin-arm64': 0.33.2
+      '@node-datachannel/darwin-x64': 0.33.2
+      '@node-datachannel/linux-arm64-gnu': 0.33.2
+      '@node-datachannel/linux-arm64-musl': 0.33.2
+      '@node-datachannel/linux-x64-gnu': 0.33.2
+      '@node-datachannel/linux-x64-musl': 0.33.2
+      '@node-datachannel/win32-arm64-msvc': 0.33.2
+      '@node-datachannel/win32-x64-msvc': 0.33.2
 
   node-domexception@1.0.0: {}
 

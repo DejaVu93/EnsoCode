@@ -24,6 +24,7 @@ import type {
 } from '@shared/capabilities/types';
 import { modelUsability } from '@shared/defaultModel';
 import { normalizeLocale, translate } from '@shared/i18n';
+import { TERMINAL_SHELLS } from '@shared/terminalShell';
 import {
   type AgentTypeEntry,
   BUILTIN_AGENT_TYPES,
@@ -41,6 +42,7 @@ import type {
 } from '@shared/types/oauthProviders';
 import type { RecentProject } from '@shared/types/project';
 import type { ListModelsResult, TestProviderResult } from '@shared/types/providerApi';
+import { isAbsolutePathLike } from '@shared/worktreeRoot';
 import type { TeamExecutionGuard } from './agentDispatchService';
 import type { AgentSessionIndex } from './agentSessionIndex';
 import { createSecretSet, type SecretSet } from './secretRedactor';
@@ -183,6 +185,8 @@ function resultSettingField(capabilityId: string): string | null {
     'general.load-local-skills': 'loadLocalSkills',
     'general.load-harness-assets': 'loadHarnessAssets',
     'general.windows-local-shell': 'windowsLocalShell',
+    'general.terminal-shell': 'terminalShell',
+    'general.worktree-root': 'worktreeRoot',
     'general.automatic-updates': 'autoUpdate',
     'general.proxy-mode': 'proxyMode',
     'general.custom-proxy-url': 'customProxyUrl',
@@ -502,7 +506,8 @@ function parseSubagentModelFields(
             (MODEL_THINKING_LEVEL_OVERRIDES as readonly string[]).includes(existing.thinkingLevel)
           ? existing.thinkingLevel
           : undefined;
-  const thinkingLevel = reasoning === 'on' ? levelInput : undefined;
+  // Off 保留上次深度，与设置页三态一致；只有 follow 清空
+  const thinkingLevel = reasoning ? levelInput : undefined;
   return {
     value: {
       providerId,
@@ -711,6 +716,14 @@ export function createCapabilityHandlers(
       services,
       'terminalFontWeightBold',
       stringValue
+    ),
+    'general.terminal-shell': settingValueHandler(services, 'terminalShell', (value) =>
+      (TERMINAL_SHELLS as readonly unknown[]).includes(value)
+    ),
+    'general.worktree-root': settingValueHandler(
+      services,
+      'worktreeRoot',
+      (value) => typeof value === 'string' && (value === '' || isAbsolutePathLike(value))
     ),
     'appearance.favorite-terminal-themes': settingValueHandler(
       services,

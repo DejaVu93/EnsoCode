@@ -614,6 +614,7 @@ describe('CapabilityGateway OAuth/default/secret/receipt', () => {
     );
     expect(badReasoning.modelResult).toMatchObject({ ok: false, code: 'invalid' });
 
+    // Off 保留上次深度（与设置页三态一致），再开 On 直接恢复
     const updated = await gateway.invoke(
       request('sm-6', 'providers.subagent-models.update', {
         id,
@@ -622,7 +623,16 @@ describe('CapabilityGateway OAuth/default/secret/receipt', () => {
       })
     );
     expect(updated.modelResult).toMatchObject({ ok: true });
-    expect(entriesOf()[0]).toMatchObject({ description: 'strong', reasoning: 'off' });
+    expect(entriesOf()[0]).toMatchObject({
+      description: 'strong',
+      reasoning: 'off',
+      thinkingLevel: 'high',
+    });
+    const reopened = await gateway.invoke(
+      request('sm-6b', 'providers.subagent-models.update', { id, reasoning: 'on' })
+    );
+    expect(reopened.modelResult).toMatchObject({ ok: true });
+    expect(entriesOf()[0]).toMatchObject({ reasoning: 'on', thinkingLevel: 'high' });
 
     // 'follow' 清除覆盖（回到跟随父会话）
     const followed = await gateway.invoke(

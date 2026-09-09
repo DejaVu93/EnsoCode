@@ -9,6 +9,7 @@ import {
 } from '@/components/chat/composerMentionBridge';
 import { addToast } from '@/components/ui/toast';
 import { useI18n } from '@/i18n';
+import { syncOverlayGuard } from '@/lib/overlayGuard';
 import { cn } from '@/lib/utils';
 import { useSessionsStore } from '@/stores/sessions';
 import { useSidePanelStore } from '@/stores/sidePanel';
@@ -152,6 +153,8 @@ export function BrowserView({
     let raf = 0;
     let disposed = false;
     const root = document.getElementById('root');
+    // 挂载即全量重推：矩形 / covered 靠首帧必发，浮层状态靠这一次显式同步
+    syncOverlayGuard();
     const tick = () => {
       if (disposed) return;
       const visible =

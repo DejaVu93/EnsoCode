@@ -1,5 +1,6 @@
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
 import { STATUS_LINE_SEGMENT_IDS } from '../statusLine';
+import { TERMINAL_SHELLS } from '../terminalShell';
 import { BUILTIN_AGENT_TYPES, BUILTIN_TOOLS } from '../types';
 import type {
   AvailabilityRequirement,
@@ -395,6 +396,27 @@ export const CAPABILITY_CATALOG = {
       required: ['value'],
       additionalProperties: false,
     })
+  ),
+  'general.terminal-shell': executable(
+    'general.terminal-shell',
+    reversibleGlobal('Read or change the shell used by new side panel terminals.', {
+      type: 'object',
+      properties: { value: { type: 'string', enum: [...TERMINAL_SHELLS] } },
+      required: ['value'],
+      additionalProperties: false,
+    })
+  ),
+  'general.worktree-root': executable(
+    'general.worktree-root',
+    reversibleGlobal(
+      'Read or change the root directory hosting isolated session worktrees. Empty string restores the default under app data. Must be an absolute path.',
+      {
+        type: 'object',
+        properties: { value: { type: 'string' } },
+        required: ['value'],
+        additionalProperties: false,
+      }
+    )
   ),
   'general.automatic-updates': executable(
     'general.automatic-updates',
@@ -1211,6 +1233,8 @@ export const CAPABILITY_HANDLER_CONTRACT: Readonly<Record<ExecutableCapabilityId
   'general.load-local-skills': true,
   'general.load-harness-assets': true,
   'general.windows-local-shell': true,
+  'general.terminal-shell': true,
+  'general.worktree-root': true,
   'general.automatic-updates': true,
   'general.proxy-mode': true,
   'general.custom-proxy-url': true,

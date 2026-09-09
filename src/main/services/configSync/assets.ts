@@ -30,6 +30,11 @@ export interface PortableInstructionResource {
   content: string;
 }
 
+/** 仅做字符集与长度形状检查；规范性由调用方 decode→encode 回环保证。避免分组重复正则在数 MB 输入上栈溢出。 */
+export function hasBase64Shape(value: string): boolean {
+  return value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/u.test(value);
+}
+
 function inside(root: string, candidate: string): boolean {
   const base = resolve(root);
   const target = resolve(candidate);
@@ -118,11 +123,7 @@ export function stageResources(
         const target = join(skillRoot, ...rel.split('/'));
         if (!inside(skillRoot, target)) throw new Error('Invalid resource path');
         mkdirSync(join(target, '..'), { recursive: true, mode: 0o700 });
-        if (
-          !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.content)
-        ) {
-          throw new Error('Invalid resource content');
-        }
+        if (!hasBase64Shape(file.content)) throw new Error('Invalid resource content');
         const bytes = Buffer.from(file.content, 'base64');
         if (bytes.toString('base64') !== file.content || bytes.byteLength > MAX_FILE_BYTES) {
           throw new Error('Invalid resource content');

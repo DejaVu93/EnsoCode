@@ -2,7 +2,7 @@ import { useDraggable } from '@dnd-kit/core';
 import { Editor, type EditorOptions } from '@pierre/diffs/edit';
 import { EditProvider, File, Virtualizer } from '@pierre/diffs/react';
 import type { FilesDirEntry } from '@shared/types';
-import { ChevronRight, Code2, Eye } from 'lucide-react';
+import { ChevronRight, Code2, Eye, RefreshCw } from 'lucide-react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ConfirmDialog } from '@/components/chat/ConfirmDialog';
 import { CODE_THEME, ensureHighlighter } from '@/components/chat/codeHighlighter';
@@ -23,10 +23,12 @@ import { useI18n } from '@/i18n';
 import { addSidePanelBrowser, registerFilesTabCloser } from '@/lib/sidePanelDock';
 import { cn } from '@/lib/utils';
 import { useSessionsStore } from '@/stores/sessions';
+import { hasAuthoritativeMessages } from '@/stores/sessions/messageCache';
 import { buildTimeline } from '@/stores/sessions/timeline';
 import { useSettingsStore } from '@/stores/settings';
 import { fileTypeIcon, fileTypeIconClass } from './fileIcons';
 import { FileMarkdownPreview } from './filePreviewMarkdown';
+import { ancestorDirs, applyCompletedWrites } from './filesTreeRefresh';
 import {
   fromPreviewKey,
   type RelMutation,
@@ -93,7 +95,8 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
   const [draft, setDraft] = useState<null | { parent: string; kind: 'file' | 'dir' }>(null);
   const [renaming, setRenaming] = useState<null | { rel: string; name: string }>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { rel: string; name: string }>(null);
-  const local = useSettingsStore((s) => s.projects.find((p) => p.id === projectId)?.kind !== 'ssh');
+  const project = useSettingsStore((s) => s.projects.find((p) => p.id === projectId));
+  const local = project?.kind !== 'ssh';
   const openDocsRef = useRef(openDocs);
   openDocsRef.current = openDocs;
   const activeRelRef = useRef(activeRel);
@@ -281,25 +284,38 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
 
   const conversation = useSessionsStore((s) => s.conversations[conversationId]);
   const running = conversation?.status === 'running';
+  const root = conversation?.worktree?.path ?? project?.path;
   const timeline = useMemo(
-    () => buildTimeline(conversation?.messages ?? [], running, conversation?.customEntries ?? []),
-    [conversation?.customEntries, conversation?.messages, running]
+    () =>
+      buildTimeline(conversation?.messages ?? [], running, conversation?.customEntries ?? [], root),
+    [conversation?.customEntries, conversation?.messages, root, running]
+  );
+  // 已完成的 edit/write 路径按次序折成字符串 key（不去重，同文件再改一次 key 也变）：
+  // 流式重建 timeline 时 key 不变就不重新读盘
+  const editedRelsKey = useMemo(
+    () =>
+      timeline
+        .flatMap((item) => {
+          if (item.kind !== 'tool' || item.state !== 'ok') return [];
+          if (item.name !== 'edit' && item.name !== 'write') return [];
+          return item.summary ? [item.summary] : [];
+        })
+        .join('\n'),
+    [timeline]
   );
   useEffect(() => {
-    const rels = new Set(
-      timeline.flatMap((item) => {
-        if (item.kind !== 'tool' || item.state !== 'ok') return [];
-        if (item.name !== 'edit' && item.name !== 'write') return [];
-        return item.summary ? [item.summary] : [];
-      })
-    );
+    const rels = new Set(editedRelsKey ? editedRelsKey.split('\n') : []);
     for (const rel of rels) {
       if (!openDocsRef.current.some((doc) => doc.rel === rel)) continue;
       void window.electronAPI.workspaceFiles.read({ ...req, rel }).then((result) => {
         if (result.ok) applyDisk(rel, result.content);
       });
     }
-  }, [applyDisk, req, timeline]);
+  }, [applyDisk, req, editedRelsKey]);
+
+  const seenWritesRef = useRef<Set<string> | null>(null);
+  const seenWritesSessionRef = useRef(conversationId);
+  const seenWritesEpochRef = useRef(conversation?.historyBaseIndex);
 
   const bumpTree = useCallback(() => setTreeGen((n) => n + 1), []);
 
@@ -312,6 +328,45 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
       return next;
     });
   }, []);
+
+  const expandDirs = useCallback((rels: string[]) => {
+    if (rels.length === 0) return;
+    setExpandedDirs((set) => {
+      let changed = false;
+      const next = new Set(set);
+      for (const rel of rels) {
+        if (!rel || next.has(rel)) continue;
+        next.add(rel);
+        changed = true;
+      }
+      return changed ? next : set;
+    });
+  }, []);
+
+  useEffect(() => {
+    const epoch = conversation?.historyBaseIndex;
+    if (seenWritesSessionRef.current !== conversationId || seenWritesEpochRef.current !== epoch) {
+      seenWritesSessionRef.current = conversationId;
+      seenWritesEpochRef.current = epoch;
+      seenWritesRef.current = null;
+    }
+    const { refreshRels, nextSeen } = applyCompletedWrites(
+      timeline,
+      seenWritesRef.current,
+      hasAuthoritativeMessages(conversation?.messages ?? [])
+    );
+    seenWritesRef.current = nextSeen;
+    if (refreshRels.length === 0) return;
+    expandDirs(refreshRels.flatMap(ancestorDirs));
+    bumpTree();
+  }, [
+    bumpTree,
+    conversation?.historyBaseIndex,
+    conversation?.messages,
+    conversationId,
+    expandDirs,
+    timeline,
+  ]);
 
   const toggleDir = useCallback((rel: string) => {
     setExpandedDirs((set) => {
@@ -504,108 +559,123 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
   return (
     <EditProvider createEditor={createEditor}>
       <div className="flex h-full min-h-0 bg-background">
-        <div className="w-56 shrink-0 overflow-auto border-r text-sm">
-          <FileTreeMenu
-            target={{ kind: 'blank' }}
-            local={local}
-            onNewFile={handleNewFile}
-            onNewFolder={handleNewFolder}
-            onCopyPath={() => undefined}
-            onCopyRel={() => undefined}
-          >
-            <div className="min-h-full">
-              <FileTree
-                rel=""
-                depth={0}
-                conversationId={conversationId}
-                projectId={projectId}
-                treeEpoch={treeGen}
-                draft={draft}
-                renaming={renaming}
-                local={local}
-                expandedDirs={expandedDirs}
-                onToggleDir={toggleDir}
-                onOpen={openFile}
-                onPreview={openPreview}
-                onBrowser={openInBrowser}
-                onCopyPath={(rel) =>
-                  void window.electronAPI.workspaceFiles.copyPath({ ...req, rel, mode: 'absolute' })
-                }
-                onCopyRel={(rel) =>
-                  void window.electronAPI.workspaceFiles.copyPath({ ...req, rel, mode: 'relative' })
-                }
-                onCopyFile={(rel) =>
-                  void window.electronAPI.workspaceFiles.copyFile({ ...req, rel }).then((r) => {
-                    if (!r.ok) failToast(r.error);
-                  })
-                }
-                onReveal={(rel) => void window.electronAPI.workspaceFiles.reveal({ ...req, rel })}
-                onNewFile={handleNewFile}
-                onNewFolder={handleNewFolder}
-                onRenameStart={(rel, name) => setRenaming({ rel, name })}
-                onDelete={(rel, name) => setConfirmDelete({ rel, name })}
-                onDraftCancel={() => setDraft(null)}
-                onRenameCancel={() => setRenaming(null)}
-                onDraftCommit={async (parent, kind, name) => {
-                  const api =
-                    kind === 'dir'
-                      ? window.electronAPI.workspaceFiles.mkdir
-                      : window.electronAPI.workspaceFiles.createFile;
-                  const result = await api({ ...req, rel: parent || undefined, name });
-                  if (!result.ok) {
-                    failToast(result.error);
-                    return;
+        <div className="flex w-56 shrink-0 flex-col overflow-hidden border-r text-sm">
+          <div className="flex justify-end px-1 py-0.5">
+            <Button variant="ghost" size="icon-sm" onClick={bumpTree} aria-label={t('Refresh')}>
+              <RefreshCw />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto">
+            <FileTreeMenu
+              target={{ kind: 'blank' }}
+              local={local}
+              onNewFile={handleNewFile}
+              onNewFolder={handleNewFolder}
+              onCopyPath={() => undefined}
+              onCopyRel={() => undefined}
+            >
+              <div className="min-h-full">
+                <FileTree
+                  rel=""
+                  depth={0}
+                  conversationId={conversationId}
+                  projectId={projectId}
+                  treeEpoch={treeGen}
+                  draft={draft}
+                  renaming={renaming}
+                  local={local}
+                  expandedDirs={expandedDirs}
+                  onToggleDir={toggleDir}
+                  onOpen={openFile}
+                  onPreview={openPreview}
+                  onBrowser={openInBrowser}
+                  onCopyPath={(rel) =>
+                    void window.electronAPI.workspaceFiles.copyPath({
+                      ...req,
+                      rel,
+                      mode: 'absolute',
+                    })
                   }
-                  setDraft(null);
-                  bumpTree();
-                  if (kind === 'file' && result.rel) void openFile(result.rel);
-                }}
-                onRenameCommit={async (rel, name) => {
-                  const result = await window.electronAPI.workspaceFiles.rename({
-                    ...req,
-                    rel,
-                    name,
-                  });
-                  if (!result.ok) {
-                    failToast(result.error);
-                    return;
+                  onCopyRel={(rel) =>
+                    void window.electronAPI.workspaceFiles.copyPath({
+                      ...req,
+                      rel,
+                      mode: 'relative',
+                    })
                   }
-                  setRenaming(null);
-                  const toRel = result.rel;
-                  if (toRel) {
-                    recordMutation(rel);
-                    for (const doc of openDocsRef.current) {
-                      if (doc.preview || doc.tooLarge) continue;
-                      const nextRel = remapRelForRename(doc.rel, rel, toRel);
-                      if (nextRel == null) continue;
-                      void window.electronAPI.workspaceFiles.watchStop({ ...req, rel: doc.rel });
-                      void window.electronAPI.workspaceFiles.watchStart({ ...req, rel: nextRel });
+                  onCopyFile={(rel) =>
+                    void window.electronAPI.workspaceFiles.copyFile({ ...req, rel }).then((r) => {
+                      if (!r.ok) failToast(r.error);
+                    })
+                  }
+                  onReveal={(rel) => void window.electronAPI.workspaceFiles.reveal({ ...req, rel })}
+                  onNewFile={handleNewFile}
+                  onNewFolder={handleNewFolder}
+                  onRenameStart={(rel, name) => setRenaming({ rel, name })}
+                  onDelete={(rel, name) => setConfirmDelete({ rel, name })}
+                  onDraftCancel={() => setDraft(null)}
+                  onRenameCancel={() => setRenaming(null)}
+                  onDraftCommit={async (parent, kind, name) => {
+                    const api =
+                      kind === 'dir'
+                        ? window.electronAPI.workspaceFiles.mkdir
+                        : window.electronAPI.workspaceFiles.createFile;
+                    const result = await api({ ...req, rel: parent || undefined, name });
+                    if (!result.ok) {
+                      failToast(result.error);
+                      return;
                     }
-                    setOpenDocs((docs) =>
-                      docs.map((doc) => {
-                        const nextRel = remapRelForRename(doc.rel, rel, toRel);
-                        return nextRel == null ? doc : { ...doc, rel: nextRel };
-                      })
-                    );
-                    setActiveRel((cur) =>
-                      cur == null ? cur : (remapRelForRename(cur, rel, toRel) ?? cur)
-                    );
-                    setExpandedDirs((set) => {
-                      let changed = false;
-                      const next = new Set<string>();
-                      for (const dirRel of set) {
-                        const mapped = remapRelForRename(dirRel, rel, toRel) ?? dirRel;
-                        if (mapped !== dirRel) changed = true;
-                        next.add(mapped);
-                      }
-                      return changed ? next : set;
+                    setDraft(null);
+                    bumpTree();
+                    if (kind === 'file' && result.rel) void openFile(result.rel);
+                  }}
+                  onRenameCommit={async (rel, name) => {
+                    const result = await window.electronAPI.workspaceFiles.rename({
+                      ...req,
+                      rel,
+                      name,
                     });
-                  }
-                  bumpTree();
-                }}
-              />
-            </div>
-          </FileTreeMenu>
+                    if (!result.ok) {
+                      failToast(result.error);
+                      return;
+                    }
+                    setRenaming(null);
+                    const toRel = result.rel;
+                    if (toRel) {
+                      recordMutation(rel);
+                      for (const doc of openDocsRef.current) {
+                        if (doc.preview || doc.tooLarge) continue;
+                        const nextRel = remapRelForRename(doc.rel, rel, toRel);
+                        if (nextRel == null) continue;
+                        void window.electronAPI.workspaceFiles.watchStop({ ...req, rel: doc.rel });
+                        void window.electronAPI.workspaceFiles.watchStart({ ...req, rel: nextRel });
+                      }
+                      setOpenDocs((docs) =>
+                        docs.map((doc) => {
+                          const nextRel = remapRelForRename(doc.rel, rel, toRel);
+                          return nextRel == null ? doc : { ...doc, rel: nextRel };
+                        })
+                      );
+                      setActiveRel((cur) =>
+                        cur == null ? cur : (remapRelForRename(cur, rel, toRel) ?? cur)
+                      );
+                      setExpandedDirs((set) => {
+                        let changed = false;
+                        const next = new Set<string>();
+                        for (const dirRel of set) {
+                          const mapped = remapRelForRename(dirRel, rel, toRel) ?? dirRel;
+                          if (mapped !== dirRel) changed = true;
+                          next.add(mapped);
+                        }
+                        return changed ? next : set;
+                      });
+                    }
+                    bumpTree();
+                  }}
+                />
+              </div>
+            </FileTreeMenu>
+          </div>
         </div>
         <div className="flex min-w-0 flex-1 flex-col">
           {openDocs.length > 0 && (

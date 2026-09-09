@@ -108,6 +108,7 @@ function buildPayload(): PairCatalogPayload {
     terminal: getXtermTheme(settings.terminalTheme),
     terminalFontFamily: settings.terminalFontFamily,
     compactReadOnlyTools: settings.compactReadOnlyTools,
+    expandLiveEdits: settings.expandLiveEdits,
   };
 }
 
@@ -122,13 +123,23 @@ function catalogPushFingerprint(payload: PairCatalogPayload): string {
     terminal: payload.terminal,
     terminalFontFamily: payload.terminalFontFamily,
     compactReadOnlyTools: payload.compactReadOnlyTools,
+    expandLiveEdits: payload.expandLiveEdits,
   });
+}
+
+/**
+ * 两个数据源 store 都已 merge 磁盘状态才能推：水合前的 conversations/projects 是 initialState 的空值，
+ * 推给 main 会被当真目录下发，对端（手机/远程节点）据“曾在目录现在没了”把仍在订阅的会话判为幽灵而跳离。
+ */
+function storesHydrated(): boolean {
+  return useSessionsStore.persist.hasHydrated() && useSettingsStore.persist.hasHydrated();
 }
 
 function schedulePush(): void {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
+    if (!storesHydrated()) return;
     const payload = buildPayload();
     const fingerprint = catalogPushFingerprint(payload);
     if (fingerprint === lastPushFingerprint) return;
@@ -142,6 +153,9 @@ export function bindPairCatalogSync(): void {
   if (bound) return;
   bound = true;
   schedulePush();
+  // 水合完成时补推一次：上面那次可能因未水合被跳过；多窗口 rehydrate 后也由此重推（指纹相同则不发）
+  useSessionsStore.persist.onFinishHydration(schedulePush);
+  useSettingsStore.persist.onFinishHydration(schedulePush);
   useSessionsStore.subscribe((state, prev) => {
     if (state.conversations !== prev.conversations || state.order !== prev.order) schedulePush();
   });
@@ -156,7 +170,8 @@ export function bindPairCatalogSync(): void {
       state.theme !== prev.theme ||
       state.terminalTheme !== prev.terminalTheme ||
       state.terminalFontFamily !== prev.terminalFontFamily ||
-      state.compactReadOnlyTools !== prev.compactReadOnlyTools
+      state.compactReadOnlyTools !== prev.compactReadOnlyTools ||
+      state.expandLiveEdits !== prev.expandLiveEdits
     ) {
       schedulePush();
     }

@@ -113,9 +113,16 @@ export interface ConfigSyncState {
   loadHarnessAssets?: boolean;
   exploreFoldEnabled?: boolean;
   bashInterceptEnabled?: boolean;
+  hashlineEditEnabled?: boolean;
   openChangesOnFileEdit?: boolean;
   compactReadOnlyTools?: boolean;
+  expandLiveEdits?: boolean;
+  chatWide?: boolean;
+  notifyMainAgentOnly?: boolean;
   generationStallTimeoutMin?: number;
+  autoArchiveIdleDays?: number;
+  autoArchiveMergedWorktrees?: boolean;
+  autoDeleteArchivedDays?: number;
   backgroundRandomInterval?: number;
   backgroundOpacity?: number;
   backgroundBlur?: number;

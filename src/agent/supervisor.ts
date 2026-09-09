@@ -79,8 +79,8 @@ import { CheckpointManager, withCheckpoint } from './checkpoint/manager';
 import { createRemoteCheckpointHost } from './checkpoint/remoteHost';
 import {
   type ChildThinkingLevel,
+  pickChildReasoningOverride,
   resolveChildReasoning,
-  thinkingToOverride,
 } from './childReasoning';
 import {
   collectContextOccupancy,
@@ -102,6 +102,12 @@ import { createExploreFoldState, createExploreFoldTools } from './exploreFold';
 import { OperationGate } from './gate';
 import { createGoalTools } from './goal';
 import { readHarnessRuleFiles, resolveHarnessSkillRoots } from './harnessAssets';
+import { createHashlineIo } from './hashline/io';
+import { applyHashlineSessionTools } from './hashline/sessionTools';
+import { InMemorySnapshotStore } from './hashline/snapshots';
+import { wrapHashlineEditDefinition } from './hashline/tools';
+import { withHashlineWrite } from './hashline/withWrite';
+import { type ContextMessage, pruneHistoricalImages } from './imageContext';
 import { McpManager } from './mcp';
 import { createMessageCoworkerTool } from './messageCoworker';
 import { createMessageMainTool } from './messageMain';
@@ -133,12 +139,15 @@ import {
 } from './structuredYield';
 import { createSubagentTool, lastAssistantText } from './subagent';
 import {
+  buildInitialTitleUserText,
   buildRollingTitleUserText,
-  buildTitleUserText,
   buildTurnDigest,
+  describeTitleModel,
   extractTitle,
   ROLLING_TITLE_SYSTEM_PROMPT,
   TITLE_SYSTEM_PROMPT,
+  titleRejectReason,
+  titleSummaryTimeoutMs,
 } from './titleSummary';
 import { createTodoTool } from './todo';
 import { BrowserInvoker, createBrowserTools, withNavigateApproval } from './tools/browser';
@@ -295,9 +304,21 @@ function createSessionResourceLoader(options: {
     noSkills: options.noSkills,
     ...(options.noExtensions ? { noExtensions: true } : {}),
     ...(skillPaths.length > 0 ? { additionalSkillPaths: skillPaths } : {}),
-    ...(!options.noExtensions && (options.exploreFold || options.smartCompactEnabled)
-      ? {
-          extensionFactories: [
+    // noExtensions 只挡磁盘上的项目/全局扩展；inline factory 不受影响，图片修剪对所有会话生效
+    extensionFactories: [
+      {
+        name: 'image-context',
+        hidden: true,
+        factory: (pi) => {
+          pi.on('context', (event) => ({
+            messages: pruneHistoricalImages(
+              event.messages as unknown as ContextMessage[]
+            ) as unknown as typeof event.messages,
+          }));
+        },
+      } satisfies InlineExtension,
+      ...(!options.noExtensions && (options.exploreFold || options.smartCompactEnabled)
+        ? [
             ...(options.exploreFold
               ? [
                   {
@@ -321,9 +342,9 @@ function createSessionResourceLoader(options: {
                   }),
                 ]
               : []),
-          ],
-        }
-      : {}),
+          ]
+        : []),
+    ],
     agentsFilesOverride: options.remoteAgentsFiles
       ? () => ({
           agentsFiles: [
@@ -591,6 +612,24 @@ export class SessionSupervisor {
   }
 
   handleCommand(command: AgentCommand): void {
+    if (command.type === 'reload-session') {
+      // 只读旁路：不得进入执行门、更新活动时间或触发模型调用。
+      const managed = this.sessions.get(command.sessionId);
+      const snapshot = managed
+        ? this.snapshotSessions().find(
+            (session) => session.identity.sessionId === command.sessionId
+          )
+        : undefined;
+      this.options.emit({
+        type: 'session-reloaded',
+        requestId: command.requestId,
+        result:
+          managed && snapshot
+            ? { ok: true, snapshot, seq: managed.seq }
+            : { ok: false, error: 'Session is no longer active.' },
+      });
+      return;
+    }
     if (command.type === 'snapshot') {
       const sessions = command.sessionId
         ? this.snapshotSessions().filter(
@@ -600,7 +639,7 @@ export class SessionSupervisor {
       this.options.emit({
         type: 'snapshot',
         sessions,
-        ...(command.sessionId ? { partial: true } : {}),
+        ...(command.sessionId ? { partial: true, sessionId: command.sessionId } : {}),
       });
       return;
     }
@@ -686,7 +725,9 @@ export class SessionSupervisor {
       });
   }
 
-  private async execute(command: Exclude<AgentCommand, { type: 'snapshot' }>): Promise<void> {
+  private async execute(
+    command: Exclude<AgentCommand, { type: 'snapshot' | 'reload-session' }>
+  ): Promise<void> {
     switch (command.type) {
       case 'spawn-parent':
         await this.spawn(
@@ -710,6 +751,7 @@ export class SessionSupervisor {
           command.windowsLocalShell,
           command.exploreFoldEnabled,
           command.bashInterceptEnabled,
+          command.hashlineEditEnabled,
           command.smartCompactEnabled,
           command.smartCompactSummaryModel,
           command.smartCompactMode
@@ -1091,6 +1133,7 @@ export class SessionSupervisor {
     windowsLocalShell?: WindowsLocalShell,
     exploreFoldEnabled = false,
     bashInterceptEnabled = false,
+    hashlineEditEnabled = false,
     smartCompactEnabled = false,
     smartCompactSummaryModel?: SpawnModelConfig,
     smartCompactMode?: SmartCompactMode
@@ -1216,23 +1259,50 @@ export class SessionSupervisor {
     // 只读探索四件套(read/grep/find/ls,免审):readonly 子代理的全部工具,也是 base 的底座。
     // 远程会话经 operations 注入落到 ssh(grep 无注入点,换整个定义)
     const structuredById = new Map<string, unknown>();
+    const hashlineStore = new InMemorySnapshotStore();
+    const hashlineIo = createHashlineIo({
+      cwd,
+      remote: remoteOps
+        ? { readFile: remoteOps.read.readFile, writeFile: remoteOps.edit.writeFile }
+        : undefined,
+    });
     const wrapRead = (definition: Def): Def => withAgentRead(definition, () => structuredById);
-    const readOnlyTools = (): Def[] =>
-      remoteOps && sshExecutor
+    const applyHashline = <T extends Def>(tools: { read: T; grep: T; edit?: T }) =>
+      applyHashlineSessionTools({
+        enabled: hashlineEditEnabled,
+        store: hashlineStore,
+        io: hashlineIo,
+        wrapOuterRead: wrapRead,
+        ...tools,
+      });
+    const readOnlyTools = (): Def[] => {
+      const stock =
+        remoteOps && sshExecutor
+          ? {
+              read: createReadToolDefinition(cwd, {
+                operations: remoteOps.read,
+              }) as unknown as Def,
+              grep: createRemoteGrepToolDefinition(cwd, sshExecutor) as unknown as Def,
+            }
+          : {
+              read: createReadToolDefinition(cwd) as unknown as Def,
+              grep: createGrepToolDefinition(cwd) as unknown as Def,
+            };
+      const { read, grep } = applyHashline(stock);
+      return remoteOps && sshExecutor
         ? [
-            wrapRead(
-              createReadToolDefinition(cwd, { operations: remoteOps.read }) as unknown as Def
-            ),
-            createRemoteGrepToolDefinition(cwd, sshExecutor) as unknown as Def,
+            read,
+            grep,
             createFindToolDefinition(cwd, { operations: remoteOps.find }) as unknown as Def,
             createLsToolDefinition(cwd, { operations: remoteOps.ls }) as unknown as Def,
           ]
         : [
-            wrapRead(createReadToolDefinition(cwd) as unknown as Def),
-            createGrepToolDefinition(cwd) as unknown as Def,
+            read,
+            grep,
             createFindToolDefinition(cwd) as unknown as Def,
             createLsToolDefinition(cwd) as unknown as Def,
           ];
+    };
     // 后台任务 manager 本体始终本地 spawn:远程会话把命令变换成本地 ssh 命令
     const backgroundTransform = remote
       ? (command: string, taskCwd: string) => {
@@ -1269,6 +1339,14 @@ export class SessionSupervisor {
       // 写范围在审批之外:越界直接拒绝,不占用审批也不落盘
       const scoped = (kind: 'file-edit' | 'file-write', definition: Def): Def =>
         withWriteScope(withApproval(toolGate, kind, guarded(definition)), cwd, writeScope);
+      const stockEdit = createNormalizedEditTool(
+        cwd,
+        remoteOps ? { operations: remoteOps.edit } : undefined
+      ) as unknown as Def;
+      const stockWrite = createWriteToolDefinition(
+        cwd,
+        remoteOps ? { operations: remoteOps.write } : undefined
+      ) as unknown as Def;
       return [
         ...readOnlyTools(),
         withApproval(
@@ -1293,14 +1371,17 @@ export class SessionSupervisor {
         ),
         scoped(
           'file-edit',
-          createNormalizedEditTool(cwd, remoteOps ? { operations: remoteOps.edit } : undefined)
+          hashlineEditEnabled
+            ? wrapHashlineEditDefinition(stockEdit, {
+                store: hashlineStore,
+                readText: hashlineIo.readText,
+                writeText: hashlineIo.writeText,
+              })
+            : stockEdit
         ),
         scoped(
           'file-write',
-          createWriteToolDefinition(
-            cwd,
-            remoteOps ? { operations: remoteOps.write } : undefined
-          ) as unknown as Def
+          hashlineEditEnabled ? withHashlineWrite(stockWrite, hashlineStore) : stockWrite
         ),
       ];
     };
@@ -1331,9 +1412,9 @@ export class SessionSupervisor {
       }) => {
         const selectedModel = modelOverride ?? resolved?.model ?? agentType?.model ?? model;
         const base = await resolveBaseModelOrRefresh(runtime, selectedModel);
-        // 派发 thinking 赢过条目预设，再赢过父会话；缺省跟随父
+        // 派发 thinking > 类型预设 > 模型条目预设 > 父会话
         const childReasoning = resolveChildReasoning(
-          thinkingOverride ? thinkingToOverride(thinkingOverride) : selectedModel,
+          pickChildReasoningOverride(thinkingOverride, agentType, selectedModel),
           reasoningEnabled,
           thinkingLevel
         );
@@ -2280,15 +2361,6 @@ export class SessionSupervisor {
             timing.thinkingEndMs = Date.now();
           }
         }
-        // 工具耗时起点 = toolCall part 首次流式出现（含模型生成参数的时间），
-        // 与渲染层运行中计时器（工具行出现即起表）口径一致，避免完成后骤降为 0s
-        if (projected?.role === 'assistant') {
-          for (const part of projected.content) {
-            if (part.type === 'toolCall' && !managed.toolStartAt.has(part.id)) {
-              managed.toolStartAt.set(part.id, Date.now());
-            }
-          }
-        }
         this.replaceLastMessage(managed, projected);
         return;
       }
@@ -2331,12 +2403,22 @@ export class SessionSupervisor {
         this.failTurn(managed, managed.lastRetryError ?? event.finalError ?? 'Auto-retry failed.');
         return;
       }
-      case 'tool_execution_start':
-        // message_update 已在生成阶段记过起点；这里兜底（如工具调用未经流式直接执行）
+      case 'tool_execution_start': {
+        // 耗时只从真正开始执行算：同轮后发工具不能把前面 bash 的排队算进去
         if (!managed.toolStartAt.has(event.toolCallId)) {
-          managed.toolStartAt.set(event.toolCallId, Date.now());
+          const startedAt = Date.now();
+          managed.toolStartAt.set(event.toolCallId, startedAt);
+          this.options.emit({
+            type: 'tool-output',
+            identity: managed.identity,
+            seq: ++managed.seq,
+            toolCallId: event.toolCallId,
+            output: '',
+            startedAt,
+          });
         }
         return;
+      }
       case 'tool_execution_update': {
         // pi 已按 BASH_UPDATE_THROTTLE_MS 节流下发全量快照，这里只做投影，不再二次节流
         const parts: unknown = event.partialResult?.content;
@@ -2853,20 +2935,28 @@ export class SessionSupervisor {
   }
 
   private snapshotSessions(): SessionSnapshot[] {
-    return Array.from(this.sessions.values()).map((managed) => ({
-      identity: managed.identity,
-      status: managed.status,
-      messages: managed.messages,
-      commands: managed.commands,
-      ...(managed.gate.snapshot().length > 0 ? { pendingApprovals: managed.gate.snapshot() } : {}),
-      ...(managed.asks.snapshot().length > 0 ? { pendingAsks: managed.asks.snapshot() } : {}),
-      ...(managed.childMetadata ? { child: managed.childMetadata } : {}),
-      ...(managed.customEntries.length > 0 ? { customEntries: managed.customEntries } : {}),
-      ...(managed.compaction ? { compaction: managed.compaction } : {}),
-      ...(managed.compactionNoticeAt !== undefined
-        ? { compactionNoticeAt: managed.compactionNoticeAt }
-        : {}),
-    }));
+    return Array.from(this.sessions.values()).map((managed) => {
+      const backgroundTasks = this.bgTasks.snapshot(managed.identity.sessionId);
+      return {
+        identity: managed.identity,
+        status: managed.status,
+        messages: managed.messages,
+        commands: managed.commands,
+        ...(managed.gate.snapshot().length > 0
+          ? { pendingApprovals: managed.gate.snapshot() }
+          : {}),
+        ...(managed.asks.snapshot().length > 0 ? { pendingAsks: managed.asks.snapshot() } : {}),
+        // 切会话/重连靠快照整段重建 TaskBar；不带这两项会把还在跑的子代理/后台任务条清空，等下一次 update 才回来
+        ...(backgroundTasks.length > 0 ? { backgroundTasks } : {}),
+        ...(managed.subagents.size > 0 ? { subagents: [...managed.subagents.values()] } : {}),
+        ...(managed.childMetadata ? { child: managed.childMetadata } : {}),
+        ...(managed.customEntries.length > 0 ? { customEntries: managed.customEntries } : {}),
+        ...(managed.compaction ? { compaction: managed.compaction } : {}),
+        ...(managed.compactionNoticeAt !== undefined
+          ? { compactionNoticeAt: managed.compactionNoticeAt }
+          : {}),
+      };
+    });
   }
 
   private must(identity: SessionIdentity): ManagedSession {
@@ -2981,49 +3071,73 @@ export class SessionSupervisor {
     }
   }
 
-  /** 会话标题总结：一次性补全，不建 AgentSession、不落盘；成功才回事件，失败静默 */
+  /**
+   * 会话标题总结：一次性补全，不建 AgentSession、不落盘。按 candidates 依次尝试（超时 60/120/180s 递增），
+   * 任一候选产出合法标题即回 title-generated 并停止；全部失败回 title-failed，error 为最后一次失败原因。
+   * 同一模型不重试：真机实测“模型不听 prompt”重试三次结果一样，换模型才有效。
+   */
   private async summarizeTitle(
     command: Extract<AgentCommand, { type: 'summarize-title' }>
   ): Promise<void> {
     const runtime = await this.getRuntime();
-    const model = await resolveBaseModelOrRefresh(runtime, command.model);
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TITLE_SUMMARY_TIMEOUT_MS);
-    try {
-      const rolling = command.input.kind === 'rolling';
-      const message = await runtime.completeSimple(
-        model,
+    const rolling = command.input.kind === 'rolling';
+    const context = {
+      systemPrompt: rolling ? ROLLING_TITLE_SYSTEM_PROMPT : TITLE_SYSTEM_PROMPT,
+      messages: [
         {
-          systemPrompt: rolling ? ROLLING_TITLE_SYSTEM_PROMPT : TITLE_SYSTEM_PROMPT,
-          messages: [
-            {
-              role: 'user',
-              content:
-                command.input.kind === 'rolling'
-                  ? buildRollingTitleUserText(command.input)
-                  : buildTitleUserText(command.input.text),
-              timestamp: Date.now(),
-            },
-          ],
+          role: 'user' as const,
+          content:
+            command.input.kind === 'rolling'
+              ? buildRollingTitleUserText(command.input)
+              : buildInitialTitleUserText(command.input.text),
+          timestamp: Date.now(),
         },
-        { signal: controller.signal }
-      );
-      const title = extractTitle(message);
-      if (title) {
+      ],
+    };
+    let lastError = 'no candidates';
+    for (const [index, candidate] of command.candidates.entries()) {
+      const label = describeTitleModel(candidate);
+      const timeoutMs = titleSummaryTimeoutMs(index);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const model = await resolveBaseModelOrRefresh(runtime, candidate);
+        const message = await runtime.completeSimple(model, context, {
+          signal: controller.signal,
+        });
+        if (message.stopReason === 'aborted') {
+          lastError = `${label}: timed out after ${Math.round(timeoutMs / 1000)}s`;
+          continue;
+        }
+        if (message.stopReason === 'error') {
+          lastError = `${label}: ${message.errorMessage?.trim() || 'model error'}`;
+          continue;
+        }
+        const title = extractTitle(message);
+        const reject = titleRejectReason(title);
+        if (reject) {
+          lastError = `${label}: ${reject}`;
+          continue;
+        }
         this.options.emit({
           type: 'title-generated',
           conversationId: command.conversationId,
           title,
         });
+        return;
+      } catch (error) {
+        lastError = `${label}: ${toErrorMessage(error)}`;
+      } finally {
+        clearTimeout(timer);
       }
-    } finally {
-      clearTimeout(timer);
     }
+    this.options.emit({
+      type: 'title-failed',
+      conversationId: command.conversationId,
+      error: lastError,
+    });
   }
 }
-
-/** 标题总结超时：超过就保留截断标题，不重试 */
-const TITLE_SUMMARY_TIMEOUT_MS = 15_000;
 
 /** 同一父会话的在编 coworker 上限,防主 agent 循环疯狂雇人 */
 const MAX_ACTIVE_COWORKERS = 5;

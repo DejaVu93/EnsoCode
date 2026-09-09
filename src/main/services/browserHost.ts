@@ -79,6 +79,32 @@ export function isBrowserPartition(name: string): boolean {
   return name.startsWith('persist:') && name.endsWith(PARTITION_SUFFIX);
 }
 
+export type PageScreenshotClip = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+};
+
+/** CDP `Page.captureScreenshot` 入参。冻帧必须拍当前合成视口，否则 fixed 顶栏会丢。 */
+export function pageScreenshotCdpParams(
+  clip?: PageScreenshotClip,
+  opts?: { captureBeyondViewport?: boolean }
+): {
+  format: 'png';
+  captureBeyondViewport: boolean;
+  fromSurface?: true;
+  clip?: PageScreenshotClip;
+} {
+  if (opts?.captureBeyondViewport === false) {
+    return clip
+      ? { format: 'png', captureBeyondViewport: false, fromSurface: true, clip }
+      : { format: 'png', captureBeyondViewport: false, fromSurface: true };
+  }
+  return { format: 'png', captureBeyondViewport: true, clip };
+}
+
 interface Tab {
   id: string;
   view: WebContentsView;
@@ -262,6 +288,19 @@ export class BrowserHost {
   setOverlayActive(active: boolean): void {
     if (this.overlayActive === active) return;
     this.overlayActive = active;
+    this.layout();
+  }
+
+  /**
+   * 上报方（renderer）崩溃 / 重载 / 不再上报：覆盖状态是「最后一次上报」而不是持久事实，
+   * 沉下去的闩锁会把 guest 永久变成不可交互。没有活着的上报方就回落到「没被盖住」。
+   */
+  resetOverlayReports(): void {
+    this.overlayActive = false;
+    if (this.shown?.covered) this.shown = { ...this.shown, covered: false };
+    if (this.shownDevtools?.covered) {
+      this.shownDevtools = { ...this.shownDevtools, covered: false };
+    }
     this.layout();
   }
 
@@ -482,12 +521,22 @@ export class BrowserHost {
     for (const listener of this.closeListeners) listener(tab.ownerSessionId, tabId);
   }
 
+  /** 加锁只作用于当前 tab；释放要覆盖会话下全部 tab，否则切过 tab 会留下永远锁死的孤儿。 */
   async setLocked(sessionId: string, locked: boolean): Promise<void> {
-    const tab = this.mustTab(sessionId);
-    if (locked && tab.designMode) await this.setDesignMode(tab.id, false);
-    tab.locked = locked;
-    await this.syncLockOverlay(tab);
-    this.emitState(sessionId, tab.id);
+    const current = this.mustTab(sessionId);
+    if (locked) {
+      if (current.designMode) await this.setDesignMode(current.id, false);
+      current.locked = true;
+      await this.syncLockOverlay(current);
+      this.emitState(sessionId, current.id);
+      return;
+    }
+    for (const tab of this.tabs.values()) {
+      if (tab.ownerSessionId !== sessionId) continue;
+      // 遮罩没真删掉就不谎报 unlocked，用户可以再按一次
+      if (await this.removeLockOverlay(tab)) tab.locked = false;
+      this.emitState(tab.ownerSessionId, tab.id);
+    }
   }
 
   async setDesignMode(tabId: string, enabled: boolean): Promise<BrowserTabState> {
@@ -559,7 +608,7 @@ export class BrowserHost {
     if (msg.type === 'freeze-request') {
       await this.runGuest(tab, PAGE_DESIGN_MODE_HIDE_SCRIPT);
       try {
-        const shot = await this.screenshot(tab);
+        const shot = await this.screenshotClip(tab, undefined, { captureBeyondViewport: false });
         await this.runGuest(tab, pageDesignModeShowFrozenScript(shot.data));
       } catch {
         await this.runGuest(tab, pageDesignModeShowFrozenScript(''));
@@ -624,11 +673,23 @@ export class BrowserHost {
     return this.screenshot(tab);
   }
 
-  private async syncLockOverlay(tab: Tab): Promise<void> {
+  /** 返回 guest 页是否已对齐到目标状态。 */
+  private async syncLockOverlay(tab: Tab, locked = tab.locked): Promise<boolean> {
     const contents = tab.view.webContents;
-    if (contents.isDestroyed() || !tab.ready) return;
-    const script = tab.locked ? PAGE_LOCK_OVERLAY_SCRIPT : PAGE_UNLOCK_OVERLAY_SCRIPT;
-    await contents.executeJavaScript(script, true).catch(() => {});
+    // 页面已销毁 / 还没 ready：没有文档就没有遮罩，解锁视为已达成
+    if (contents.isDestroyed() || !tab.ready) return !locked;
+    const script = locked ? PAGE_LOCK_OVERLAY_SCRIPT : PAGE_UNLOCK_OVERLAY_SCRIPT;
+    const result = await contents.executeJavaScript(script, true).catch(() => undefined);
+    return result === 'ok';
+  }
+
+  /** 导航竞态会让一次 executeJavaScript 直接拒绝，重试几次再判定失败。 */
+  private async removeLockOverlay(tab: Tab): Promise<boolean> {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await this.syncLockOverlay(tab, false)) return true;
+      await sleep(50);
+    }
+    return false;
   }
 
   getSession(): Session {
@@ -761,7 +822,8 @@ export class BrowserHost {
       case 'lock': {
         const locked = !(isRecord(params) && params.release === true);
         await this.setLocked(sessionId, locked);
-        return { locked };
+        // 解锁可能失败（遮罩没删掉），如实回报真实状态
+        return { locked: this.mustTab(sessionId).locked };
       }
     }
   }
@@ -928,7 +990,7 @@ export class BrowserHost {
    */
   private async screenshot(tab: Tab, ref?: string): Promise<{ data: string; mimeType: string }> {
     assertDevtoolsIdle(tab.devtoolsOpen);
-    let clip: { x: number; y: number; width: number; height: number; scale: number };
+    let clip: PageScreenshotClip;
     if (ref) {
       this.assertRef(tab, ref);
       const box = (await tab.view.webContents.executeJavaScript(
@@ -955,14 +1017,15 @@ export class BrowserHost {
 
   private async screenshotClip(
     tab: Tab,
-    clip: { x: number; y: number; width: number; height: number; scale: number }
+    clip?: PageScreenshotClip,
+    opts?: { captureBeyondViewport?: boolean }
   ): Promise<{ data: string; mimeType: string }> {
     assertDevtoolsIdle(tab.devtoolsOpen);
-    const shot = (await this.cdp(tab, 'Page.captureScreenshot', {
-      format: 'png',
-      captureBeyondViewport: true,
-      clip,
-    })) as { data?: unknown } | undefined;
+    const shot = (await this.cdp(
+      tab,
+      'Page.captureScreenshot',
+      pageScreenshotCdpParams(clip, opts)
+    )) as { data?: unknown } | undefined;
     if (typeof shot?.data !== 'string' || !shot.data) {
       throw new Error('Screenshot is empty; the page has not painted yet.');
     }
@@ -1047,12 +1110,14 @@ export class BrowserHost {
       push();
     });
     contents.on('did-finish-load', () => {
-      if (tab.locked) void this.syncLockOverlay(tab);
+      // 始终对齐：history / BFCache 带回来的残留遮罩也要清掉
+      void this.syncLockOverlay(tab);
       if (tab.designMode) void this.runGuest(tab, PAGE_DESIGN_MODE_ENABLE_SCRIPT);
     });
     contents.once('dom-ready', () => {
       tab.ready = true;
       this.layout();
+      if (tab.locked) void this.syncLockOverlay(tab);
       if (tab.designMode) void this.runGuest(tab, PAGE_DESIGN_MODE_ENABLE_SCRIPT);
     });
     // window.open / target=_blank：本 tab 内导航，不弹系统浏览器

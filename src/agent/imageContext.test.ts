@@ -1,0 +1,107 @@
+import { describe, expect, it } from 'vitest';
+import { type ContextMessage, pruneHistoricalImages } from './imageContext';
+
+const img = (data = 'AAAA', mimeType = 'image/png') => ({ type: 'image', data, mimeType });
+const text = (t: string) => ({ type: 'text', text: t });
+const user = (...content: unknown[]): ContextMessage => ({ role: 'user', content });
+const assistant = (calls: Array<{ id: string; name: string; args?: unknown }>): ContextMessage => ({
+  role: 'assistant',
+  content: calls.map((c) => ({ type: 'toolCall', id: c.id, name: c.name, arguments: c.args })),
+});
+const toolResult = (
+  toolCallId: string,
+  toolName: string,
+  ...content: unknown[]
+): ContextMessage => ({
+  role: 'toolResult',
+  toolCallId,
+  toolName,
+  content,
+});
+const images = (m: ContextMessage) =>
+  Array.isArray(m.content) ? m.content.filter((b) => (b as { type: string }).type === 'image') : [];
+const texts = (m: ContextMessage) =>
+  Array.isArray(m.content)
+    ? m.content
+        .filter((b) => (b as { type: string }).type === 'text')
+        .map((b) => (b as { text: string }).text)
+    : [];
+
+describe('pruneHistoricalImages', () => {
+  // 真实场景：cursor2api 代理把 image block 按 base64 字符计 token，一张 1.7MB 的 read 结果
+  // 直接 Input token limit exceeded；pi 的 findCutPoint 又只按 1200 tokens 估图片，
+  // 每次 compaction 都把它留在保留段里，压多少次都爆。
+  it('历史轮工具结果里的图片换成带路径的文本占位，当前轮原样保留', () => {
+    const messages: ContextMessage[] = [
+      user(text('看看这张图')),
+      assistant([{ id: 'c1', name: 'read', args: { path: 'C:\\tmp\\old.png' } }]),
+      toolResult('c1', 'read', text('Read image file [image/png]'), img('OLD')),
+      user(text('继续')),
+      assistant([{ id: 'c2', name: 'read', args: { path: 'C:\\tmp\\new.png' } }]),
+      toolResult('c2', 'read', text('Read image file [image/png]'), img('NEW')),
+    ];
+    const out = pruneHistoricalImages(messages);
+    expect(images(out[2])).toHaveLength(0);
+    expect(texts(out[2])[0]).toBe('Read image file [image/png]');
+    expect(texts(out[2])[1]).toMatch(/image omitted from context/);
+    expect(texts(out[2])[1]).toContain('image/png');
+    expect(texts(out[2])[1]).toContain('C:\\tmp\\old.png');
+    expect(images(out[5])).toHaveLength(1);
+  });
+
+  it('没有历史图片时返回原数组引用（不破坏缓存前缀）', () => {
+    const messages: ContextMessage[] = [
+      user(text('a')),
+      assistant([{ id: 'c1', name: 'read', args: { path: 'x.ts' } }]),
+      toolResult('c1', 'read', text('code')),
+      user(text('b')),
+    ];
+    expect(pruneHistoricalImages(messages)).toBe(messages);
+  });
+
+  it('用户贴的图片保留最近两条 user 消息里的，更早的换占位', () => {
+    const messages: ContextMessage[] = [
+      user(text('第一张'), img('U1')),
+      { role: 'assistant', content: [text('ok')] },
+      user(text('第二张'), img('U2')),
+      { role: 'assistant', content: [text('ok')] },
+      user(text('第三张'), img('U3')),
+    ];
+    const out = pruneHistoricalImages(messages);
+    expect(images(out[0])).toHaveLength(0);
+    expect(texts(out[0])[1]).toMatch(/image omitted from context/);
+    expect(images(out[2])).toHaveLength(1);
+    expect(images(out[4])).toHaveLength(1);
+  });
+
+  it('找不到 user 消息（无法判定当前轮）时不动任何东西', () => {
+    const messages: ContextMessage[] = [
+      assistant([{ id: 'c1', name: 'read', args: { path: 'a.png' } }]),
+      toolResult('c1', 'read', img('X')),
+    ];
+    expect(pruneHistoricalImages(messages)).toBe(messages);
+  });
+
+  it('非 read 工具（截图/MCP）没有路径时占位只写工具名', () => {
+    const messages: ContextMessage[] = [
+      user(text('截图')),
+      assistant([{ id: 'c1', name: 'browser_screenshot', args: {} }]),
+      toolResult('c1', 'browser_screenshot', img('SHOT', 'image/jpeg')),
+      user(text('继续')),
+    ];
+    const out = pruneHistoricalImages(messages);
+    expect(images(out[2])).toHaveLength(0);
+    expect(texts(out[2])[0]).toContain('browser_screenshot');
+    expect(texts(out[2])[0]).toContain('image/jpeg');
+  });
+
+  it('脏输入不崩：content 是字符串或缺失的消息原样通过', () => {
+    const messages: ContextMessage[] = [
+      { role: 'user', content: 'plain' },
+      { role: 'toolResult', toolCallId: 'x', toolName: 'read' } as ContextMessage,
+      { role: 'assistant', content: [text('a')] },
+      user(text('now')),
+    ];
+    expect(pruneHistoricalImages(messages)).toBe(messages);
+  });
+});

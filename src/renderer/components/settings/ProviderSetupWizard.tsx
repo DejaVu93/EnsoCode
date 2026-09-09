@@ -1,6 +1,6 @@
 import { mergeProviderDefinitions } from '@shared/providerCatalog';
 import type { OauthAccount, OauthProviderInfo } from '@shared/types';
-import { ArrowLeft, BadgeCheck, KeyRound, Server } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, KeyRound, Puzzle } from 'lucide-react';
 import * as React from 'react';
 import { refreshOauthCredentialState } from '@/components/oauth/OauthCredentialBootstrap';
 import { OauthLoginStep } from '@/components/oauth/OauthLoginStep';
@@ -20,6 +20,7 @@ import { useI18n } from '@/i18n';
 import { useSettingsStore } from '@/stores/settings';
 import { autoProviderName, OauthProviderAccounts } from './OauthProvidersDialog';
 import { ProviderApiForm } from './ProviderApiForm';
+import { resolveProviderLogo } from './providerLogos';
 import { availableProviderSetupMethods, initialProviderApiValue } from './providerSetup';
 
 interface ProviderSetupWizardProps {
@@ -167,8 +168,8 @@ export function ProviderSetupWizard({ open, onOpenChange }: ProviderSetupWizardP
                       setStep('method');
                     }}
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
-                      <Server className="h-4 w-4" />
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
+                      <ProviderCatalogMark id={definition.id} label={definition.label} />
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium">
@@ -287,5 +288,18 @@ export function ProviderSetupWizard({ open, onOpenChange }: ProviderSetupWizardP
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProviderCatalogMark({ id, label }: { id: string; label: string }) {
+  const logo = resolveProviderLogo(id, label);
+  if (!logo) return <Puzzle className="h-4 w-4 text-muted-foreground" />;
+  if (logo.kind === 'letter') {
+    return <span className="text-xs font-semibold text-muted-foreground">{logo.letter}</span>;
+  }
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 fill-current" aria-hidden>
+      <path d={logo.path} />
+    </svg>
   );
 }

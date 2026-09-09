@@ -1,0 +1,69 @@
+# Workspace Index - J3n5en
+
+> Journal tracking for AI development sessions.
+
+---
+
+## Current Status
+
+<!-- @@@auto:current-status -->
+- **Active File**: `journal-1.md`
+- **Total Sessions**: 30
+- **Last Active**: 2026-09-08
+<!-- @@@/auto:current-status -->
+
+---
+
+## Active Documents
+
+<!-- @@@auto:active-documents -->
+| File | Lines | Status |
+|------|-------|--------|
+| `journal-1.md` | ~914 | Active |
+<!-- @@@/auto:active-documents -->
+
+---
+
+## Session History
+
+<!-- @@@auto:session-history -->
+| # | Date | Title | Commits | Branch |
+|---|------|-------|---------|--------|
+| 30 | 2026-09-08 | 侧栏增量展开与自动归档 | `0894a446`, `1c3d0b14`, `fbe5c9df`, `f4f4298b`, `9b1a4bf8`, `ed72cf8d`, `4d9d1be5`, `90061245` | `dev` |
+| 29 | 2026-09-08 | Changes 面板：diff 高亮移到 worker | `2e62b33e` | `dev` |
+| 28 | 2026-09-08 | Changes 面板卡顿：快照移出 localStorage | `3992bf19` | `dev` |
+| 27 | 2026-09-08 | 滚动标题总结锚定会话主旨 + 标题守卫/prompt 补漏 | `d745308`, `ed62b3c`, `6595a6d`, `abac9d3`, `86a078d`, `67385c4`, `373fc80` | `dev` |
+| 26 | 2026-09-08 | ask_user 问号等待态 | `70ac0dd` | `dev` |
+| 25 | 2026-09-08 | 标题总结：回退链多候选、递增超时、失败红叹号与手动重试 | `89892db`, `99c1bd7`, `e8ca4c4`, `c57ddc4`, `0713e0e`, `574d7a2`, `5888f82` | `dev` |
+| 24 | 2026-09-08 | Force read/find promptGuidelines + Hashline read 高亮/edit diff/offset 修复 | `19bf6963`, `4408183a`, `2d7c5ea5`, `d2998bbb` | `dev` |
+| 23 | 2026-09-08 | 升级 pi-cursor 到 1.4.32 | `0c767cf9`, `2da9fd9b` | `dev` |
+| 22 | 2026-09-08 | 对齐 origin/dev 并收口未更新工作区 | `ac1ddadf`, `0c932262`, `9456e896` | `dev` |
+| 21 | 2026-09-08 | 切回半截回复时强制对齐 snapshot | `d516d52e`, `efbaf658` | `dev` |
+| 20 | 2026-09-07 | 上滑历史 loading 与到头提示 | `6dc34d3b`, `3deb31ce` | `dev` |
+| 19 | 2026-09-07 | Files tree refresh after Agent writes | `41296583`, `197b4884` | `enso/9090acd8` |
+| 18 | 2026-09-07 | Fix persist rehydrate Object.keys crash | `19cc44fe`, `60f8c76e` | `dev` |
+| 17 | 2026-09-04 | 会话标题滚动总结 + 修首条总结被 sessionFile 守卫误杀 | `b829adc`, `72bff65`, `71ebc56`, `fee4dca`, `432a6c6`, `8942bbe`, `0f51813`, `2d3b056` | `dev` |
+| 16 | 2026-09-06 | Bash intercept switch (default off) | `c09ff4dc` | `enso/4e6016e3` |
+| 15 | 2026-09-04 | Cmd session switch and v0.1.19 | `159713a`, `a87e9ce`, `d505874`, `99db782`, `75f0ed5` | `dev` |
+| 14 | 2026-09-04 | Coworker protocol: wait/report, parent-waiting message_main_agent, tester agent type + writeScope | `b2054a5`, `db0beaa`, `871296d`, `e16c96d`, `90b5ccb`, `60cdd83`, `ebd3594`, `5b11c3f`, `25b59f7` | `enso/3085e88f` |
+| 13 | 2026-09-04 | Usage statistics dashboard (Settings → Usage) | `9766e4f` | `enso/3085e88f` |
+| 12 | 2026-09-03 | 对话分支副本分叉与 B/C 归档 | `32dec92`, `e128a5f`, `503b342` | `dev` |
+| 11 | 2026-09-03 | 归档已落地的侧栏全屏与系统代理 | `fdf809f`, `8dfd539`, `ee00e8b`, `b837b84` | `dev` |
+| 10 | 2026-09-02 | AI 会话标题总结：设置开关+独立模型+回退链 | `f908812`, `dfb30b8` | `dev` |
+| 9 | 2026-09-02 | 归档已落地的侧栏与 SSH 任务 | `e89b767`, `575ba9c`, `aa75b9d`, `8e8f135`, `cb68a58`, `8e5bdce` | `dev` |
+| 8 | 2026-09-02 | Browser Design Mode 圈选与涂鸦落地 | `e89b767`, `575ba9c`, `aa75b9d`, `8e8f135`, `cb68a58`, `8e5bdce` | `dev` |
+| 7 | 2026-09-02 | 桌面端连接远程 EnsoCode 节点（guest 角色） | `62c8ec8`, `69ab297`, `4bed2e7`, `021b2b3`, `267e899`, `a0872ec`, `6d158cd`, `32122d0`, `f4416ae`, `b6154d8`, `39f14c2`, `3703464`, `d30ff91`, `cbc1884` | `dev` |
+| 6 | 2026-08-30 | dnd-kit 拖拽:项目排序 / 拖拽转 mention / 拖会话置顶 / Pinned 组内手动排序 | `0df3fb6`, `2a106f3`, `1c59c9d`, `5f26e5e`, `9318826`, `2392450`, `12e11ff` | `feat/dnd-kit-drag` |
+| 4 | 2026-08-30 | 重启后 coworker 级联恢复与死 tab 修复 | `ca96deb`, `241fd72`, `5cd4575`, `46fe22d`, `68d09a1`, `0e8fc11`, `ad0f7b5` | `dev` |
+| 3 | 2026-08-30 | 子代理指定模型 + ask 通知修复 + 侧栏置顶/归档 | `01dc99c`, `0bad2f9`, `ef9c928`, `07e9a04`, `58c99f5`, `e898e80`, `2d67e8c`, `c854b38`, `4f0a1d3`, `9bece08` | `dev` |
+| 2 | 2026-08-29 | child-history-replay：重启后已结束 child 的只读历史回放 | `9ff8c48`, `43812e2` | `feature/model-center-default-agent` |
+| 1 | 2026-08-29 | model-center-default-agent 真机验证：7 个 bug 修复与 spec 沉淀 | `ec971b1`, `5bf52ae`, `743e172`, `598a362`, `a800f3a`, `0d8f9dd`, `64d27c5`, `a0e78cb`, `efddd2a` | `feature/model-center-default-agent` |
+<!-- @@@/auto:session-history -->
+
+---
+
+## Notes
+
+- Sessions are appended to journal files
+- New journal file created when current exceeds 2000 lines
+- Use `add_session.py` to record sessions

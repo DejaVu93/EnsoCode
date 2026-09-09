@@ -1,6 +1,8 @@
 import { isValidProxyUrl, type ProxyMode } from '@shared/proxy';
+import { type TerminalShell, terminalShellsForPlatform } from '@shared/terminalShell';
 import type { UpdateStatus } from '@shared/types/updater';
 import type { WindowsLocalShell } from '@shared/windowsLocalShell';
+import { isAbsolutePathLike } from '@shared/worktreeRoot';
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -15,8 +17,22 @@ import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
 import { GENERATION_STALL_TIMEOUT_MINUTES } from '@/stores/sessions/stallTimeout';
 import { useSettingsStore } from '@/stores/settings';
+import {
+  AUTO_ARCHIVE_IDLE_DAYS,
+  AUTO_DELETE_ARCHIVED_DAYS,
+} from '@/stores/settings/autoArchiveIdleDays';
 import { ConfigSyncSettings } from './ConfigSyncSettings';
 import { SmartCompactPicker } from './SmartCompactPicker';
+
+const TERMINAL_SHELL_LABELS: Record<Exclude<TerminalShell, 'auto'>, string> = {
+  cmd: 'Command Prompt',
+  powershell: 'Windows PowerShell',
+  pwsh: 'PowerShell 7 (pwsh)',
+  'git-bash': 'Git Bash',
+  zsh: 'zsh',
+  bash: 'bash',
+  fish: 'fish',
+};
 
 export function GeneralSettings() {
   const { language, setLanguage } = useSettingsStore();
@@ -46,13 +62,34 @@ export function GeneralSettings() {
         </Select>
       </div>
 
+      <NotificationSection />
+      <AutoArchiveSection />
       <SidePanelSection />
       <SmartCompactPicker />
       <WindowsLocalShellSection />
+      <TerminalShellSection />
+      <WorktreeRootSection />
       <ProxySection />
       <ConfigSyncSettings />
       <UpdateSection />
     </div>
+  );
+}
+
+function NotificationSection() {
+  const { t } = useI18n();
+  const notifyMainAgentOnly = useSettingsStore((s) => s.notifyMainAgentOnly);
+  const setNotifyMainAgentOnly = useSettingsStore((s) => s.setNotifyMainAgentOnly);
+  return (
+    <SwitchRow
+      rowId="general.notifyMainAgentOnly"
+      title={t('Notify only for the main agent')}
+      description={t(
+        'Skip coworker completion and failure notifications on this computer and the paired phone. Questions and approvals still notify.'
+      )}
+      checked={notifyMainAgentOnly}
+      onChange={setNotifyMainAgentOnly}
+    />
   );
 }
 
@@ -62,6 +99,8 @@ function SidePanelSection() {
   const setOpenChangesOnFileEdit = useSettingsStore((s) => s.setOpenChangesOnFileEdit);
   const compactReadOnlyTools = useSettingsStore((s) => s.compactReadOnlyTools);
   const setCompactReadOnlyTools = useSettingsStore((s) => s.setCompactReadOnlyTools);
+  const expandLiveEdits = useSettingsStore((s) => s.expandLiveEdits);
+  const setExpandLiveEdits = useSettingsStore((s) => s.setExpandLiveEdits);
   const generationStallTimeoutMin = useSettingsStore((s) => s.generationStallTimeoutMin);
   const setGenerationStallTimeoutMin = useSettingsStore((s) => s.setGenerationStallTimeoutMin);
   return (
@@ -83,6 +122,15 @@ function SidePanelSection() {
         )}
         checked={compactReadOnlyTools}
         onChange={setCompactReadOnlyTools}
+      />
+      <SwitchRow
+        rowId="general.expandLiveEdits"
+        title={t('Expand file edits while running')}
+        description={t(
+          'Automatically unfold the diff or written content of edit/write calls while the agent is still running'
+        )}
+        checked={expandLiveEdits}
+        onChange={setExpandLiveEdits}
       />
       <div
         className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
@@ -117,6 +165,205 @@ function SidePanelSection() {
             ))}
           </SelectPopup>
         </Select>
+      </div>
+    </div>
+  );
+}
+
+function dayLabel(
+  t: (key: string, params?: Record<string, string | number>) => string,
+  value: number
+): string {
+  if (value === 0) return t('Never');
+  if (value === 1) return t('{{count}} day', { count: value });
+  return t('{{count}} days', { count: value });
+}
+
+function AutoArchiveSection() {
+  const { t } = useI18n();
+  const autoArchiveIdleDays = useSettingsStore((s) => s.autoArchiveIdleDays);
+  const setAutoArchiveIdleDays = useSettingsStore((s) => s.setAutoArchiveIdleDays);
+  const autoArchiveMergedWorktrees = useSettingsStore((s) => s.autoArchiveMergedWorktrees);
+  const setAutoArchiveMergedWorktrees = useSettingsStore((s) => s.setAutoArchiveMergedWorktrees);
+  const autoDeleteArchivedDays = useSettingsStore((s) => s.autoDeleteArchivedDays);
+  const setAutoDeleteArchivedDays = useSettingsStore((s) => s.setAutoDeleteArchivedDays);
+  return (
+    <div className="space-y-2">
+      <div
+        className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+        data-settings-row="general.autoArchiveIdleDays"
+      >
+        <div className="min-w-0">
+          <p className="text-sm">{t('Archive idle conversations')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Move conversations that have been idle this long into Archived. Does not delete them.'
+            )}
+          </p>
+        </div>
+        <Select
+          items={Object.fromEntries(
+            AUTO_ARCHIVE_IDLE_DAYS.map((value) => [String(value), dayLabel(t, value)])
+          )}
+          value={String(autoArchiveIdleDays)}
+          onValueChange={(value) => setAutoArchiveIdleDays(Number(value))}
+        >
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            {AUTO_ARCHIVE_IDLE_DAYS.map((value) => (
+              <SelectItem key={value} value={String(value)}>
+                {dayLabel(t, value)}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </div>
+      <SwitchRow
+        rowId="general.autoArchiveMergedWorktrees"
+        title={t('Clean up merged worktrees')}
+        description={t(
+          'When archiving idle conversations, also remove isolated worktrees that are merged and clean.'
+        )}
+        checked={autoArchiveMergedWorktrees}
+        onChange={setAutoArchiveMergedWorktrees}
+      />
+      <div
+        className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+        data-settings-row="general.autoDeleteArchivedDays"
+      >
+        <div className="min-w-0">
+          <p className="text-sm">{t('Delete archived conversations after')}</p>
+          <p className="text-xs text-muted-foreground">
+            {t(
+              'Permanently delete conversations that have been archived longer than this. This cannot be undone. Choosing a positive value deletes already-overdue archived conversations immediately.'
+            )}
+          </p>
+        </div>
+        <Select
+          items={Object.fromEntries(
+            AUTO_DELETE_ARCHIVED_DAYS.map((value) => [String(value), dayLabel(t, value)])
+          )}
+          value={String(autoDeleteArchivedDays)}
+          onValueChange={(value) => setAutoDeleteArchivedDays(Number(value))}
+        >
+          <SelectTrigger className="w-28">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup>
+            {AUTO_DELETE_ARCHIVED_DAYS.map((value) => (
+              <SelectItem key={value} value={String(value)}>
+                {dayLabel(t, value)}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+function TerminalShellSection() {
+  const { t } = useI18n();
+  const terminalShell = useSettingsStore((s) => s.terminalShell);
+  const setTerminalShell = useSettingsStore((s) => s.setTerminalShell);
+  const options = terminalShellsForPlatform(window.electronAPI.env.platform);
+  const labels = Object.fromEntries(
+    options.map((value) => [
+      value,
+      value === 'auto' ? t('System default') : TERMINAL_SHELL_LABELS[value],
+    ])
+  ) as Record<TerminalShell, string>;
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+      data-settings-row="general.terminalShell"
+    >
+      <div className="min-w-0">
+        <p className="text-sm">{t('Terminal shell')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t('Applies to new side panel terminals. SSH projects keep the remote login shell.')}
+        </p>
+      </div>
+      <Select
+        items={labels}
+        value={terminalShell}
+        onValueChange={(value) => setTerminalShell(value as TerminalShell)}
+      >
+        <SelectTrigger className="w-56">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectPopup>
+          {options.map((value) => (
+            <SelectItem key={value} value={value}>
+              {labels[value]}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
+    </div>
+  );
+}
+
+function WorktreeRootSection() {
+  const { t } = useI18n();
+  const worktreeRoot = useSettingsStore((s) => s.worktreeRoot);
+  const setWorktreeRoot = useSettingsStore((s) => s.setWorktreeRoot);
+  const [draft, setDraft] = React.useState(worktreeRoot);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setDraft(worktreeRoot);
+  }, [worktreeRoot]);
+
+  const commit = (value: string) => {
+    const next = value.trim();
+    if (next && !isAbsolutePathLike(next)) {
+      setError(t('Enter an absolute path'));
+      return;
+    }
+    setError(null);
+    setWorktreeRoot(next);
+  };
+
+  const browse = async () => {
+    const dir = await window.electronAPI.dialog.selectDirectory();
+    if (dir) {
+      setDraft(dir);
+      commit(dir);
+    }
+  };
+
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+      data-settings-row="general.worktreeRoot"
+    >
+      <div className="min-w-0">
+        <p className="text-sm">{t('Worktree root directory')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'Where isolated session worktrees are created. Leave empty to use the app data directory. Existing worktrees stay where they are.'
+          )}
+        </p>
+      </div>
+      <div className="w-72 shrink-0 space-y-1">
+        <div className="flex items-center gap-2">
+          <Input
+            value={draft}
+            placeholder={t('Default location')}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={() => commit(draft)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') commit(draft);
+            }}
+          />
+          <Button variant="outline" size="sm" className="shrink-0" onClick={() => void browse()}>
+            {t('Browse')}
+          </Button>
+        </div>
+        {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
     </div>
   );

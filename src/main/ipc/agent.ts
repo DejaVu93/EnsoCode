@@ -11,9 +11,11 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   ChildHistoryResult,
+  ConversationReloadResult,
   McpStatusPush,
   ParentHistoryTailResult,
   RendererAgentEvent,
+  SpawnModelConfig,
   ThinkingLevel,
 } from '@shared/types/agent';
 import {
@@ -45,6 +47,7 @@ import {
   promptChildSession,
   promptSession,
   releaseParentSession,
+  reloadSession,
   requestSnapshot,
   resolveAgentTypeSpawnConfig,
   resolveModelSelection,
@@ -68,6 +71,7 @@ import {
 } from '../services/agentHost';
 import { pickBrowserFileRoot, setBrowserFileRootResolver } from '../services/browserFileRoot';
 import { browserHost } from '../services/browserHost';
+import { reloadConversation } from '../services/conversationReload';
 import { searchFiles } from '../services/fileSearch';
 import { toStoredTokens } from '../services/mcpOAuth';
 import { getMcpOAuthStore } from '../services/mcpOAuthStore';
@@ -76,7 +80,11 @@ import { maybeNotify, setViewedSession } from '../services/notifications';
 import { readStoredOauthCredentialKeys } from '../services/oauthProviders';
 import { forwardAgentEvent, setPairAgentBridge } from '../services/pairHost';
 import { removeConversationSessionFiles } from '../services/sessionFileCleanup';
-import { projectParentHistoryTail, resolveParentHistoryFile } from '../services/sessionHistoryTail';
+import {
+  projectParentHistoryPage,
+  projectParentHistoryTail,
+  resolveParentHistoryFile,
+} from '../services/sessionHistoryTail';
 import {
   importExternalSession,
   listExternalSessions,
@@ -257,7 +265,10 @@ async function readChildHistory(conversationId: string): Promise<ChildHistoryRes
   return { ok: true, projection: await EnsoSafeJournal.restore(resolved) };
 }
 
-async function readParentHistoryTail(conversationId: string): Promise<ParentHistoryTailResult> {
+async function readParentHistoryTail(
+  conversationId: string,
+  beforeIndex?: number
+): Promise<ParentHistoryTailResult> {
   const persisted = agentSessionIndex.persistedConversation(conversationId);
   const sessionFile =
     typeof persisted?.sessionFile === 'string' ? persisted.sessionFile : undefined;
@@ -276,7 +287,13 @@ async function readParentHistoryTail(conversationId: string): Promise<ParentHist
   try {
     const { SessionManager } = await import('@earendil-works/pi-coding-agent');
     const manager = SessionManager.open(resolved, sessionDir);
-    return { ok: true, ...projectParentHistoryTail(manager.getBranch()) };
+    const branch = manager.getBranch();
+    return {
+      ok: true,
+      ...(beforeIndex === undefined
+        ? projectParentHistoryTail(branch)
+        : projectParentHistoryPage(branch, beforeIndex)),
+    };
   } catch (error) {
     return {
       ok: false,
@@ -421,6 +438,9 @@ export function registerAgentHandlers(): void {
       getMcpOAuthStore().saveTokens(workerEvent.serverId, toStoredTokens(workerEvent.tokens));
       return;
     }
+    // 手动重读结果按 requestId 在 agentHost 结算给 invoke 等待者；无主的迟到结果直接丢弃，
+    // 绝不进普通事件流（renderer 的 snapshot 分支有 started / 审批副作用）
+    if (workerEvent.type === 'session-reloaded') return;
     dispatchService?.observe(workerEvent);
     if (workerEvent.type === 'turn-completed' || workerEvent.type === 'turn-failed') {
       const file = agentSessionIndex.sessionFile(workerEvent.identity);
@@ -566,16 +586,48 @@ export function registerAgentHandlers(): void {
     return await readChildHistory(conversationId);
   });
 
+  // 手动重新读取会话：来源由 Main 按会话索引决定（worker 内存活着 → 带 seq 的快照，否则 safe journal）。
+  // 只读：不 spawn / resume，不动生命周期；失败回原因，渲染层自己决定保留旧内容。
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_CONVERSATION_RELOAD,
+    async (_event, request: unknown): Promise<ConversationReloadResult> => {
+      const conversationId = asRecord(request)?.conversationId;
+      if (!isNonEmptyString(conversationId)) {
+        return { ok: false, error: 'conversationId is required' };
+      }
+      return await reloadConversation(conversationId, {
+        isLive: (id) => {
+          const identity = agentSessionIndex.currentIdentity(id);
+          return Boolean(identity && agentSessionIndex.isReady(identity));
+        },
+        reloadLive: reloadSession,
+        // 离线正文的位置由会话种类决定：child 的在 safe journal，根会话的在 pi jsonl。
+        // 种类从 Main 自读的持久化元数据判断，不采信渲染层。
+        isChild: (id) => {
+          const persisted = agentSessionIndex.persistedConversation(id);
+          return isNonEmptyString(persisted?.parentId) || asRecord(persisted?.child) !== null;
+        },
+        readHistory: readChildHistory,
+        readParentTail: (id) => readParentHistoryTail(id),
+      });
+    }
+  );
+
   ipcMain.handle(IPC_CHANNELS.AGENT_PARENT_HISTORY_TAIL, async (_event, request: unknown) => {
-    const conversationId = asRecord(request)?.conversationId;
+    const record = asRecord(request);
+    const conversationId = record?.conversationId;
     if (!isNonEmptyString(conversationId)) {
       return { ok: false, code: 'not-found', error: 'conversationId is required' };
     }
-    return await readParentHistoryTail(conversationId);
+    const rawBefore = record?.beforeIndex;
+    const beforeIndex =
+      typeof rawBefore === 'number' && Number.isFinite(rawBefore) ? rawBefore : undefined;
+    return await readParentHistoryTail(conversationId, beforeIndex);
   });
 
-  // 标题总结：渲染层只传 conversationId + 输入（首条即时 / 每轮滚动）；模型与凭证由 Main 从设置自读（回退链：
-  // 独立标题模型 → 全局默认）。失败路径全部静默：保留截断标题即兑底，不影响发消息。
+  // 标题总结：渲染层只传 conversationId + 输入（首条即时 / 每轮滚动）；模型与凭证由 Main 从设置自读。
+  // 回退链（独立标题模型 → 全局默认 → 会话模型）上全部可解析的候选一次性下发，worker 依次尝试。
+  // 解析阶段失败同步返 error（渲染层当 title-failed 处理），不影响发消息。
   ipcMain.handle(
     IPC_CHANNELS.AGENT_SUMMARIZE_TITLE,
     async (_event, request: unknown): Promise<AgentActionResult> => {
@@ -608,16 +660,17 @@ export function registerAgentHandlers(): void {
       } catch {
         return { ok: false, error: 'model credentials unavailable' };
       }
+      const candidates: SpawnModelConfig[] = [];
       for (const candidate of titleModelCandidates(state, sessionModel)) {
         const resolved = resolveModelSelection(
           candidate.providerId,
           candidate.modelId,
           credentialKeys
         );
-        if (!resolved.ok || !resolved.selection) continue;
-        return summarizeConversationTitle(conversationId, input, resolved.selection.config);
+        if (resolved.ok && resolved.selection) candidates.push(resolved.selection.config);
       }
-      return { ok: false, error: 'no usable title model' };
+      if (candidates.length === 0) return { ok: false, error: 'no usable title model' };
+      return summarizeConversationTitle(conversationId, input, candidates);
     }
   );
 

@@ -22,6 +22,14 @@ export function setOverlayGuardSink(next: Sink = defaultSink): void {
   sink = next;
 }
 
+/**
+ * 全量重推当前值（不看边沿）。主进程持有的是上一代 renderer 的值，
+ * 新 renderer 从 active=false 起步永远不会补发 false，不重推就会永久闩死。
+ */
+export function syncOverlayGuard(): void {
+  sink(active);
+}
+
 export function resetOverlayGuard(): void {
   count = 0;
   active = false;

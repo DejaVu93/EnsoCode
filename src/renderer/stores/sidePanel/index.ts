@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import type { ScreenRect } from '@/lib/guestViewOcclusion';
 import { useSessionsStore } from '@/stores/sessions';
+import { SIDE_PANEL_VERSION, splitLegacySnapshots } from './migrate';
 
 export type ChangesMode = 'all' | 'git';
 
@@ -21,6 +22,10 @@ interface SidePanelState {
   /** conversationId -> dockview 序列化布局(分屏结构 + tab 集合) */
   layouts: Record<string, SerializedDockview | undefined>;
   changesModeByConversation: Record<string, ChangesMode>;
+  /**
+   * Changes「Session」模式的编辑前全文，按会话惰性从主进程回读（运行态，不 persist）。
+   * 会话键不存在 = 尚未加载；已加载但无快照为 `{}`。
+   */
   snapshotsByConversation: Record<string, Record<string, string>>;
   toggleOpen: () => void;
   ensureOpen: (conversationId?: string) => void;
@@ -30,6 +35,7 @@ interface SidePanelState {
   saveLayout: (conversationId: string, layout: SerializedDockview) => void;
   setChangesMode: (conversationId: string, mode: ChangesMode) => void;
   saveSnapshots: (conversationId: string, snapshots: Record<string, string>) => void;
+  loadSnapshots: (conversationId: string) => void;
   setBrowserHole: (key: string, rect: ScreenRect | null) => void;
 }
 
@@ -130,30 +136,45 @@ export const useSidePanelStore = create<SidePanelState>()(
             [conversationId]: snapshots,
           },
         });
+        void window.electronAPI.changes.writeSnapshots({ conversationId, snapshots });
+      },
+
+      loadSnapshots: (conversationId) => {
+        if (conversationId in get().snapshotsByConversation) return;
+        // 读失败也要标记已加载（空），否则 ChangesView 永不聚合；回包前已有 save 则不覆盖
+        const apply = (snapshots: Record<string, string>) => {
+          if (conversationId in get().snapshotsByConversation) return;
+          set({
+            snapshotsByConversation: {
+              ...get().snapshotsByConversation,
+              [conversationId]: snapshots,
+            },
+          });
+        };
+        void window.electronAPI.changes
+          .readSnapshots({ conversationId })
+          .then(apply, () => apply({}));
       },
     }),
     {
       name: 'enso-side-panel',
-      version: 3,
+      version: SIDE_PANEL_VERSION,
       storage: createJSONStorage(() => localStorage),
       partialize: (state) => ({
         uiByConversation: state.uiByConversation,
         layouts: state.layouts,
         changesModeByConversation: state.changesModeByConversation,
-        snapshotsByConversation: state.snapshotsByConversation,
       }),
       migrate: (persisted, version) => {
-        const old = persisted as Partial<SidePanelState> & { open?: boolean };
-        if (version < 2) return { uiByConversation: {}, layouts: {} };
-        if (version < 3) {
-          return {
-            uiByConversation: {},
-            layouts: old?.layouts ?? {},
-            changesModeByConversation: old?.changesModeByConversation ?? {},
-            snapshotsByConversation: old?.snapshotsByConversation ?? {},
-          };
+        const { state, snapshots } = splitLegacySnapshots(persisted, version);
+        // 旧版快照一次性迁到磁盘；失败只是丢 old，Session 模式退回 reconstruct
+        const changes = window.electronAPI?.changes;
+        if (changes) {
+          for (const [conversationId, files] of Object.entries(snapshots)) {
+            void changes.writeSnapshots({ conversationId, snapshots: files });
+          }
         }
-        return old as SidePanelState;
+        return state as unknown as SidePanelState;
       },
     }
   )

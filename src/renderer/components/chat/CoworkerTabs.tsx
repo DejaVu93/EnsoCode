@@ -1,7 +1,10 @@
+import { coworkerTabTone } from '@shared/conversationDotTone';
 import { BUILTIN_AGENT_TYPES } from '@shared/types/assets';
-import { Bot, Pencil, Plus, X } from 'lucide-react';
+import { Bot, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import * as React from 'react';
+import { ConversationStatusIndicator } from '@/components/chat/ConversationStatusIndicator';
 import { ConversationTitleEdit } from '@/components/chat/ConversationTitleEdit';
+import { reloadConversationFromMenu } from '@/components/chat/reloadConversationAction';
 import { Button } from '@/components/ui/button';
 import {
   ContextMenu,
@@ -60,13 +63,18 @@ export function CoworkerTabs({
           id={parent.id}
           label={parent.title || t('New conversation')}
           className={tabClass(displayedId === parent.id)}
+          reloadDisabled={parent.reloading === true || parent.spawning}
+          reloading={parent.reloading === true}
           onSelect={() => useSessionsStore.getState().selectTab(parent.id, undefined)}
         />
         {coworkers.map((coworker) => {
-          const needsAttention =
-            (coworker.pendingApprovals ?? []).length > 0 ||
-            (coworker.pendingAsks ?? []).length > 0 ||
-            (coworker.pendingCapabilityAsks ?? []).length > 0;
+          const tone = coworkerTabTone({
+            status: coworker.status,
+            spawning: coworker.spawning,
+            pendingApprovalCount: (coworker.pendingApprovals ?? []).length,
+            pendingAskCount: (coworker.pendingAsks ?? []).length,
+            pendingCapabilityAskCount: (coworker.pendingCapabilityAsks ?? []).length,
+          });
           return (
             <div key={coworker.id} className="group/tab relative shrink-0">
               <RenameableTab
@@ -79,31 +87,23 @@ export function CoworkerTabs({
                 }
                 className={cn(
                   tabClass(displayedId === coworker.id),
-                  'group-hover/tab:pr-6',
                   displayedId !== coworker.id && 'group-hover/tab:bg-muted/50'
                 )}
                 leading={<Bot className="h-3 w-3 shrink-0" />}
                 trailing={
-                  <span
-                    className={cn(
-                      'h-1.5 w-1.5 shrink-0 rounded-full',
-                      needsAttention
-                        ? 'bg-destructive animate-pulse'
-                        : coworker.status === 'running' || coworker.spawning
-                          ? 'animate-pulse bg-blue-500'
-                          : coworker.status === 'failed'
-                            ? 'bg-destructive'
-                            : 'bg-muted-foreground/30'
-                    )}
-                  />
+                  <span className="inline-flex h-3 w-3 shrink-0 items-center justify-center group-hover/tab:invisible">
+                    <ConversationStatusIndicator tone={tone} size="sm" />
+                  </span>
                 }
+                reloadDisabled={coworker.reloading === true || coworker.spawning}
+                reloading={coworker.reloading === true}
                 onSelect={() => useSessionsStore.getState().selectTab(parent.id, coworker.id)}
               />
-              {/* 关闭钉在 tab 内右端(hover 现身,button 让出留白),避免游离在 tab 外 */}
+              {/* 关闭覆在状态灯槽上，hover 替换而不拉宽 tab */}
               <button
                 type="button"
                 title={t('Dismiss coworker')}
-                className="absolute top-1/2 right-1.5 hidden -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover/tab:block"
+                className="absolute top-1/2 right-2 hidden h-3 w-3 -translate-y-1/2 items-center justify-center text-muted-foreground hover:text-destructive group-hover/tab:flex"
                 onClick={() => {
                   if (window.confirm(t('Dismiss this coworker? Its session will be closed.'))) {
                     void useSessionsStore.getState().dismissCoworkerFromUI(parent.id, coworker.id);
@@ -137,6 +137,8 @@ function RenameableTab({
   className,
   leading,
   trailing,
+  reloadDisabled,
+  reloading,
   onSelect,
 }: {
   id: string;
@@ -144,6 +146,9 @@ function RenameableTab({
   className: string;
   leading?: React.ReactNode;
   trailing?: React.ReactNode;
+  /** 重读在途 / spawn 中禁用菜单项，避免与在途读取叠加 */
+  reloadDisabled: boolean;
+  reloading: boolean;
   onSelect: () => void;
 }) {
   const { t } = useI18n();
@@ -185,6 +190,13 @@ function RenameableTab({
         <ContextMenuItem onClick={() => setRenaming(true)}>
           <Pencil />
           {t('Rename')}
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={reloadDisabled}
+          onClick={() => void reloadConversationFromMenu(id, t)}
+        >
+          <RefreshCw className={reloading ? 'animate-spin' : undefined} />
+          {t('Reload conversation')}
         </ContextMenuItem>
       </ContextMenuPopup>
     </ContextMenu>

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   applyAgentEvent,
   applyDispatchEvent,
+  applyHistoryPage,
   emptyProjection,
   type SessionProjection,
   upsertOutOfRange,
@@ -37,6 +38,38 @@ const status = (
   identity: identity(generation),
   seq,
   status: value,
+});
+
+describe('applyHistoryPage', () => {
+  it('空页不改变投影对象', () => {
+    const state = tail([assistant('m40')]);
+    expect(applyHistoryPage(state, { baseIndex: 40, messages: [] })).toBe(state);
+  });
+  it('未与当前历史起点相接时不改变投影对象', () => {
+    const state = tail([assistant('m40')]);
+    expect(applyHistoryPage(state, { baseIndex: 20, messages: [assistant('m20')] })).toBe(state);
+  });
+  it('相接页前置到权威区且保留状态、审批和乐观尾巴', () => {
+    const approval = {
+      requestId: 'a1',
+      tool: 'write',
+      kind: 'file-write' as const,
+      summary: '/tmp/x',
+      toolCallId: 't1',
+      phase: 'reviewing' as const,
+    };
+    const optimistic = { ...assistant('pending'), optimistic: true as const };
+    const state = {
+      ...tail([assistant('m40'), optimistic]),
+      status: 'running' as const,
+      pendingApprovals: [approval],
+    };
+    const next = applyHistoryPage(state, { baseIndex: 39, messages: [assistant('m39')] });
+    expect(next.messages).toEqual([assistant('m39'), assistant('m40'), optimistic]);
+    expect(next.historyBaseIndex).toBe(39);
+    expect(next.status).toBe('running');
+    expect(next.pendingApprovals).toBe(state.pendingApprovals);
+  });
 });
 
 describe('applyAgentEvent', () => {
@@ -384,11 +417,26 @@ describe('applyAgentEvent', () => {
     expect(next.historyBaseIndex).toBe(40);
   });
 
+  it('尾窗 snapshot 保留已加载的更早前缀并从自身起点替换', () => {
+    const history = Array.from({ length: 40 }, (_, i) => assistant(`m${i + 20}`));
+    const next = applyAgentEvent({ ...tail(history), historyBaseIndex: 20 }, 's1', {
+      type: 'snapshot',
+      sessions: [{ ...snapshot(40), messages: [assistant('new40'), assistant('new41')] }],
+    });
+    expect(next.messages.slice(0, 20)).toEqual(history.slice(0, 20));
+    expect(next.messages.slice(20)).toEqual([assistant('new40'), assistant('new41')]);
+    expect(next.historyBaseIndex).toBe(20);
+  });
+
   it('full snapshot clears an earlier tail base when baseIndex is missing or zero', () => {
     const tailed = applyAgentEvent(base, 's1', { type: 'snapshot', sessions: [snapshot(40)] });
     expect((tailed as TailProjection).historyBaseIndex).toBe(40);
-    const missing = applyAgentEvent(tailed, 's1', { type: 'snapshot', sessions: [snapshot()] });
+    const missing = applyAgentEvent(tailed, 's1', {
+      type: 'snapshot',
+      sessions: [{ ...snapshot(), messages: [assistant('full')] }],
+    });
     const zero = applyAgentEvent(tailed, 's1', { type: 'snapshot', sessions: [snapshot(0)] });
+    expect(missing.messages).toEqual([assistant('full')]);
     expect((missing as TailProjection).historyBaseIndex).toBeUndefined();
     expect((zero as TailProjection).historyBaseIndex).toBeUndefined();
     // patch 是浅合并：缺 key 会把尾巴 base 留下，全量 800 条后 upsert 写到本地 60。
@@ -763,12 +811,13 @@ describe('applyAgentEvent approval-request reviewing', () => {
 });
 
 describe('applyAgentEvent tool-output', () => {
-  const toolOutput = (seq: number, output: string): RendererAgentEvent => ({
+  const toolOutput = (seq: number, output: string, startedAt?: number): RendererAgentEvent => ({
     type: 'tool-output',
     identity: identity(),
     seq,
     toolCallId: 't1',
     output,
+    ...(startedAt === undefined ? {} : { startedAt }),
   });
 
   it('累积工具增量输出快照（后到覆盖先到）', () => {
@@ -776,6 +825,14 @@ describe('applyAgentEvent tool-output', () => {
     const second = applyAgentEvent(first, 's1', toolOutput(2, 'line 1\nline 2'));
     expect(second.toolOutputs).toEqual({ t1: 'line 1\nline 2' });
     expect(second.lastOutputAt).toBeDefined();
+  });
+
+  it('startedAt 只在首次出现时记下，后续增量覆盖不改起点', () => {
+    const first = applyAgentEvent(base, 's1', toolOutput(1, '', 1_000));
+    expect(first.toolStartedAt).toEqual({ t1: 1_000 });
+    const second = applyAgentEvent(first, 's1', toolOutput(2, 'line'));
+    expect(second.toolOutputs).toEqual({ t1: 'line' });
+    expect(second.toolStartedAt).toEqual({ t1: 1_000 });
   });
 
   it('轮次收口后清空增量快照，避免残留与无限增长', () => {
@@ -787,6 +844,7 @@ describe('applyAgentEvent tool-output', () => {
       turnId: 'turn-1',
     });
     expect(done.toolOutputs).toEqual({});
+    expect(done.toolStartedAt).toEqual({});
 
     const failed = applyAgentEvent(withOutput, 's1', {
       type: 'turn-failed',
@@ -796,6 +854,28 @@ describe('applyAgentEvent tool-output', () => {
       error: 'boom',
     });
     expect(failed.toolOutputs).toEqual({});
+  });
+
+  it('toolResult 落地即清掉该工具的流式输出与起点，不让 hasToolOutput 豁免拖到轮末', () => {
+    const withOutput = applyAgentEvent(
+      applyAgentEvent(base, 's1', toolOutput(1, 'partial', 1_000)),
+      's1',
+      { ...toolOutput(2, 'other'), toolCallId: 't2' } as RendererAgentEvent
+    );
+    const done = applyAgentEvent(withOutput, 's1', {
+      type: 'message-upsert',
+      identity: identity(),
+      seq: 3,
+      index: 0,
+      message: {
+        role: 'toolResult',
+        toolCallId: 't1',
+        toolName: 'bash',
+        content: [{ type: 'text', text: 'done' }],
+      },
+    });
+    expect(done.toolOutputs).toEqual({ t2: 'other' });
+    expect(done.toolStartedAt).toEqual({});
   });
 });
 

@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import * as sessionSwitchSlots from './sessionSwitchSlots';
 import {
   COLLAPSED_SESSION_LIMIT,
   SESSION_SWITCH_SLOT_LIMIT,
   sessionSwitchSlotIds,
 } from './sessionSwitchSlots';
+
+type IncrementalExpandHelpers = {
+  SESSION_EXPAND_STEP: number;
+  shownConversationCount: (total: number, revealedExtra: number) => number;
+  nextRevealedExtra: (total: number, revealedExtra: number) => number;
+  prevRevealedExtra: (revealedExtra: number) => number;
+};
+
+const expandHelpers = sessionSwitchSlots as typeof sessionSwitchSlots &
+  Partial<IncrementalExpandHelpers>;
 
 type Minimal = {
   projectId: string;
@@ -23,6 +34,45 @@ const conv = (
   createdAt,
   messages: lastActive === undefined ? [] : [{ timestamp: lastActive }],
   ...extra,
+});
+
+describe('增量展开辅助函数', () => {
+  it('每次固定多展示 15 条', () => {
+    expect(expandHelpers.SESSION_EXPAND_STEP).toBe(15);
+  });
+
+  it('未展开时最多展示默认的 5 条', () => {
+    expect(expandHelpers.shownConversationCount).toBeTypeOf('function');
+    expect(expandHelpers.shownConversationCount?.(20, 0)).toBe(COLLAPSED_SESSION_LIMIT);
+    expect(expandHelpers.shownConversationCount?.(3, 0)).toBe(3);
+  });
+
+  it('按已揭示数量展示且永不超过总数', () => {
+    expect(expandHelpers.shownConversationCount).toBeTypeOf('function');
+    expect(expandHelpers.shownConversationCount?.(91, 15)).toBe(20);
+    expect(expandHelpers.shownConversationCount?.(7, 15)).toBe(7);
+  });
+
+  it('已展示全部时下一次操作收起', () => {
+    expect(expandHelpers.nextRevealedExtra).toBeTypeOf('function');
+    expect(expandHelpers.nextRevealedExtra?.(20, 15)).toBe(0);
+    expect(expandHelpers.nextRevealedExtra?.(3, 0)).toBe(0);
+  });
+
+  it('未展示完时每次增加 15 条并在总数处封顶', () => {
+    expect(expandHelpers.nextRevealedExtra).toBeTypeOf('function');
+    expect(expandHelpers.nextRevealedExtra?.(91, 0)).toBe(15);
+    expect(expandHelpers.nextRevealedExtra?.(91, 15)).toBe(30);
+    expect(expandHelpers.nextRevealedExtra?.(27, 15)).toBe(22);
+  });
+
+  it('收起与展开对称：每次回收 15 条，到折叠上限为止', () => {
+    expect(expandHelpers.prevRevealedExtra).toBeTypeOf('function');
+    expect(expandHelpers.prevRevealedExtra?.(30)).toBe(15);
+    expect(expandHelpers.prevRevealedExtra?.(15)).toBe(0);
+    expect(expandHelpers.prevRevealedExtra?.(7)).toBe(0);
+    expect(expandHelpers.prevRevealedExtra?.(0)).toBe(0);
+  });
 });
 
 describe('sessionSwitchSlotIds', () => {
@@ -158,7 +208,7 @@ describe('sessionSwitchSlotIds', () => {
         order,
         conversations,
         projectIds: ['p1'],
-        expandedProjects: { p1: true },
+        revealedExtras: { p1: 15 },
       })
     ).toEqual(order);
   });
@@ -225,7 +275,7 @@ describe('sessionSwitchSlotIds', () => {
         order,
         conversations,
         projectIds: ['p1'],
-        expandedProjects: { p1: true },
+        revealedExtras: { p1: 100 },
       })
     ).toHaveLength(SESSION_SWITCH_SLOT_LIMIT);
   });

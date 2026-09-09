@@ -129,11 +129,13 @@ export function createExploreFoldTools(state: ExploreFoldState): ToolDefinition[
       async execute(_id, params) {
         const report = String((params as { report?: string }).report ?? '');
         state.fold(report);
+        // 正文带上 report：这段结果已被折叠跨度替换，不进后续 LLM 上下文，
+        // 但时间线展开后能直接看到存下来的是什么。
         return {
           content: [
             {
               type: 'text' as const,
-              text: 'Explore folded. Subsequent turns see only this report.',
+              text: `Explore folded. Subsequent turns see only this report.\n\n${report.trim()}`,
             },
           ],
           details: { report: report.trim() },

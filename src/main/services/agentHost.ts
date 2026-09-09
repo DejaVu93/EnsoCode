@@ -34,6 +34,7 @@ import type {
   McpServerSpawnConfig,
   ModelRef,
   ResolvedAgentTypeSpawnConfig,
+  SessionReloadResult,
   SpawnModelConfig,
   SubagentModelOption,
   ThinkingLevel,
@@ -49,7 +50,14 @@ import {
   type Preset,
   type SkillEntry,
 } from '@shared/types/assets';
-import type { ModelEntry, ModelProvider } from '@shared/types/llm';
+import {
+  MODEL_REASONING_OVERRIDES,
+  MODEL_THINKING_LEVEL_OVERRIDES,
+  type ModelEntry,
+  type ModelProvider,
+  type ModelReasoningOverride,
+  type ModelThinkingLevelOverride,
+} from '@shared/types/llm';
 import type { AgentDispatchTask } from '@shared/types/mentions';
 import { parseWindowsLocalShell } from '@shared/windowsLocalShell';
 import { app, type UtilityProcess, utilityProcess } from 'electron';
@@ -59,6 +67,7 @@ import { readSettings } from '../ipc/settings';
 import { agentCommandDispatch } from './agentCommandDispatch';
 import { resolveGlobalInstruction } from './instructionStore';
 import { getMcpOAuthStore } from './mcpOAuthStore';
+import { PendingReloadRegistry } from './pendingReloads';
 import { pickSubagentModelRefs } from './subagentModels';
 
 export interface ResolvedModelSelection {
@@ -155,6 +164,9 @@ export function startAgentWorker(): void {
     const event = parseAgentWorkerEvent(raw);
     if (event) {
       resolveReleaseWaiters(event);
+      // 手动重读结果只回给发起 invoke 的等待者，不进普通事件流（renderer 的通用
+      // snapshot 分支会顺手改 started / 清 asks，手动刷新不能有这些副作用）
+      if (pendingReloads.settle(event)) return;
       onEvent?.(event);
     }
   });
@@ -164,6 +176,7 @@ export function startAgentWorker(): void {
       workerReady = false;
       workerExited = true;
     }
+    pendingReloads.failAll('agent worker exited');
     onEvent?.({ type: 'worker-exited' });
   });
 }
@@ -387,6 +400,7 @@ export function spawnSession(
   const windowsLocalShell = parseWindowsLocalShell(state?.windowsLocalShell);
   const exploreFoldEnabled = state?.exploreFoldEnabled === true;
   const bashInterceptEnabled = state?.bashInterceptEnabled === true;
+  const hashlineEditEnabled = state?.hashlineEditEnabled === true;
   const smartCompactEnabled = state?.smartCompactEnabled === true;
   const smartCompactRef = asModelRef(state?.smartCompactModel);
   const smartCompactSummary =
@@ -416,6 +430,7 @@ export function spawnSession(
     ...(windowsLocalShell !== 'auto' ? { windowsLocalShell } : {}),
     ...(exploreFoldEnabled ? { exploreFoldEnabled: true } : {}),
     ...(bashInterceptEnabled ? { bashInterceptEnabled: true } : {}),
+    ...(hashlineEditEnabled ? { hashlineEditEnabled: true } : {}),
     ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
     ...(smartCompactSummaryModel ? { smartCompactSummaryModel } : {}),
     ...(smartCompactMode ? { smartCompactMode } : {}),
@@ -594,17 +609,35 @@ export function steerSession(
   });
 }
 
-/** 标题总结：一次性补全命令，不绑会话身份；结果经 title-generated 事件回流 */
+/** 标题总结：一次性补全命令，不绑会话身份；worker 按序尝试 candidates，结果经 title-generated / title-failed 回流 */
 export function summarizeConversationTitle(
   conversationId: string,
   input: TitleSummaryInput,
-  model: SpawnModelConfig
+  candidates: SpawnModelConfig[]
 ): { ok: boolean; error?: string } {
-  return sendAgentCommand({ type: 'summarize-title', conversationId, input, model });
+  return sendAgentCommand({ type: 'summarize-title', conversationId, input, candidates });
 }
 
 export function abortSession(identity: SessionIdentity): { ok: boolean; error?: string } {
   return sendAgentCommand({ type: 'abort', identity });
+}
+
+const RELOAD_TIMEOUT_MS = 10_000;
+const pendingReloads = new PendingReloadRegistry({ timeoutMs: RELOAD_TIMEOUT_MS });
+
+/**
+ * 手动重读活会话：只在 worker 真正在线时下发，结果按 requestId 回流。
+ * worker 未就绪 / 已退出时不入队等待——「已入队」不是「已读到」，直接返回失败让调用方
+ * 走离线 safe journal 路径或提示用户。
+ */
+export function reloadSession(sessionId: string): Promise<SessionReloadResult> {
+  if (!worker || !workerReady) {
+    return Promise.resolve({ ok: false, error: 'Agent worker is not running.' });
+  }
+  const requestId = randomUUID();
+  const pending = pendingReloads.wait(requestId);
+  worker.postMessage({ type: 'reload-session', requestId, sessionId } satisfies AgentCommand);
+  return pending;
 }
 
 /** release 等待者：sessionId → resolve。parent-ended/worker-exited 到达时唤醒 */
@@ -805,6 +838,13 @@ function configuredAgentTypes(
         ? { mcpServers: [...resources.mcpServers] }
         : {}),
       ...(bound?.ok ? { model: bound.selection.config } : {}),
+      // 非法值不透传（与 pickSubagentModelRefs 同口径）
+      ...(MODEL_REASONING_OVERRIDES.includes(entry.reasoning as ModelReasoningOverride)
+        ? { reasoning: entry.reasoning }
+        : {}),
+      ...(MODEL_THINKING_LEVEL_OVERRIDES.includes(entry.thinkingLevel as ModelThinkingLevelOverride)
+        ? { thinkingLevel: entry.thinkingLevel }
+        : {}),
     };
   });
   return [...builtins, ...customs];

@@ -9,7 +9,6 @@ import { toChatMentionCandidates } from '@/hooks/useMentionSearch';
 import { useOpenChangesOnEdit } from '@/hooks/useOpenChangesOnEdit';
 import { useI18n } from '@/i18n';
 import { eventToBinding } from '@/lib/keybindings';
-import { cn } from '@/lib/utils';
 import {
   oauthCredentialContext,
   usableProvidersForOauthSnapshot,
@@ -26,6 +25,7 @@ import { ApprovalModePicker } from './ApprovalModePicker';
 import { AskBar } from './AskBar';
 import { ChatFindBar, consumePendingFindQuery, OPEN_CHAT_FIND_EVENT } from './ChatFindBar';
 import { Composer } from './Composer';
+import { ConversationStatusIndicator } from './ConversationStatusIndicator';
 import { CoworkerTabs } from './CoworkerTabs';
 import { timelineSearchHits } from './chatSearch';
 import { routeComposerPayload } from './composerRouting';
@@ -210,14 +210,18 @@ export function ChatView() {
         {
           compaction: conversation?.compaction,
           compactionNoticeAt: conversation?.compactionNoticeAt,
+          historyBaseIndex: conversation?.historyBaseIndex,
           toolOutputs: conversation?.toolOutputs,
+          toolStartedAt: conversation?.toolStartedAt,
           pendingApprovals: conversation?.pendingApprovals,
         }
       ),
     [
       conversation?.compaction,
       conversation?.compactionNoticeAt,
+      conversation?.historyBaseIndex,
       conversation?.toolOutputs,
+      conversation?.toolStartedAt,
       conversation?.pendingApprovals,
       conversation?.customEntries,
       conversation?.messages,
@@ -392,6 +396,14 @@ export function ChatView() {
         onRetryResume={
           !conversation.started && conversation.sessionFile && conversation.status === 'failed'
             ? () => void useSessionsStore.getState().resumeConversation(conversation.id)
+            : undefined
+        }
+        firstItemIndex={conversation.historyBaseIndex ?? 0}
+        historyLoading={Boolean(conversation.historyLoading)}
+        hasOlder={(conversation.historyBaseIndex ?? 0) > 0}
+        onStartReached={
+          (conversation.historyBaseIndex ?? 0) > 0
+            ? () => void useSessionsStore.getState().loadOlderHistory(conversation.id)
             : undefined
         }
         searchQuery={findOpen ? findQuery : ''}
@@ -579,16 +591,5 @@ const ENSO_PREFILL_CANDIDATE: AgentTypeMentionCandidate = {
 
 function StatusDot({ status, pendingAskCount = 0 }: { status: string; pendingAskCount?: number }) {
   const tone = conversationDotTone({ status, pendingAskCount });
-  return (
-    <span
-      className={cn(
-        'h-2 w-2 rounded-full',
-        tone === 'running' && 'animate-pulse bg-blue-500',
-        tone === 'failed' && 'bg-destructive',
-        tone === 'waiting' && 'animate-pulse bg-green-500',
-        tone === 'idle' && 'bg-muted-foreground/30'
-      )}
-      title={tone === 'waiting' ? 'waiting' : status}
-    />
-  );
+  return <ConversationStatusIndicator tone={tone} size="md" title={status} />;
 }

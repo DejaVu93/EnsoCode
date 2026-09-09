@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildTimeline,
   foldTimeline,
+  historyPageChrome,
   isReadOnlyCommand,
   type TimelineItem,
   terminalErrorText,
@@ -13,7 +14,31 @@ const user = (text: string): ProjectedMessage => ({
   content: [{ type: 'text', text }],
 });
 
+describe('historyPageChrome', () => {
+  it('空时间线不占 Header，避免盖住 Preparing / 空态', () => {
+    expect(historyPageChrome(false, true, false)).toBe('none');
+    expect(historyPageChrome(false, false, false)).toBe('none');
+  });
+
+  it('有消息时：在途 loading、翻到顶才 start、短会话不提示开头', () => {
+    expect(historyPageChrome(true, true, true)).toBe('loading');
+    expect(historyPageChrome(true, true, false, true)).toBe('loading');
+    expect(historyPageChrome(true, false, false)).toBe('none');
+    expect(historyPageChrome(true, false, false, false)).toBe('none');
+    expect(historyPageChrome(true, false, false, true)).toBe('start');
+    expect(historyPageChrome(true, false, true)).toBe('none');
+    expect(historyPageChrome(true, false, undefined)).toBe('none');
+  });
+});
+
 describe('buildTimeline', () => {
+  it('historyBaseIndex 让行 key 用绝对下标，prepend 后已有行 key 不变', () => {
+    const timeline = buildTimeline([user('tail')], false, [], undefined, {
+      historyBaseIndex: 40,
+    });
+    expect(timeline[0]).toMatchObject({ kind: 'user', key: '40', text: 'tail' });
+  });
+
   it('toolResult 折进对应 toolCall 条目，不单独成行', () => {
     const timeline = buildTimeline(
       [
@@ -40,6 +65,211 @@ describe('buildTimeline', () => {
       output: 'file body',
       state: 'ok',
     });
+  });
+
+  it('Hashline edit 从头部提取路径并从 toolResult 生成 edits', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'hashline-1',
+              name: 'edit',
+              arguments: { input: '[src/a.ts#ABCD]\nPUT 1.=1:\n+hello' },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'hashline-1',
+          toolName: 'edit',
+          editDiff: { oldText: 'world\n', newText: 'hello\n' },
+          content: [{ type: 'text', text: 'ok' }],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({
+      kind: 'tool',
+      name: 'edit',
+      summary: 'src/a.ts',
+      edits: [{ oldText: 'world\n', newText: 'hello\n' }],
+      state: 'ok',
+    });
+  });
+
+  it('legacy 单块 {path,oldText,newText} edit 也生成 edits', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'e1',
+              name: 'edit',
+              arguments: { path: 'src/a.ts', oldText: 'world', newText: 'hello' },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'e1',
+          toolName: 'edit',
+          content: [{ type: 'text', text: 'Successfully replaced 1 block(s)' }],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({
+      name: 'edit',
+      summary: 'src/a.ts',
+      edits: [{ oldText: 'world', newText: 'hello' }],
+    });
+  });
+
+  it('edit 执行失败时不合成 diff：文件没改，不能显示成已应用', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'e-err',
+              name: 'edit',
+              arguments: {
+                path: 'src/a.ts',
+                input: '[src/a.ts#ABCD]\nPUT 1.=1:\n+x',
+                oldText: 'world',
+                newText: 'hello',
+              },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'e-err',
+          toolName: 'edit',
+          isError: true,
+          content: [
+            { type: 'text', text: 'edit accepts either hashline input or replace edits, not both' },
+          ],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({ name: 'edit', state: 'error', edits: null });
+  });
+
+  it('replace edit 没有 editDiff 时继续使用参数中的路径与 edits', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'replace-1',
+              name: 'edit',
+              arguments: { path: 'b.ts', edits: [{ oldText: 'a', newText: 'b' }] },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'replace-1',
+          toolName: 'edit',
+          content: [{ type: 'text', text: 'ok' }],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({
+      kind: 'tool',
+      summary: 'b.ts',
+      edits: [{ oldText: 'a', newText: 'b' }],
+      state: 'ok',
+    });
+  });
+
+  it('参数 edits 优先于 toolResult editDiff', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'both-1',
+              name: 'edit',
+              arguments: { path: 'b.ts', edits: [{ oldText: 'a', newText: 'b' }] },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'both-1',
+          toolName: 'edit',
+          editDiff: { oldText: 'wrong-old', newText: 'wrong-new' },
+          content: [{ type: 'text', text: 'ok' }],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({
+      summary: 'b.ts',
+      edits: [{ oldText: 'a', newText: 'b' }],
+    });
+  });
+
+  it('仍在运行的 Hashline edit 显示头部路径且 edits 为 null', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolCall',
+              id: 'running-1',
+              name: 'edit',
+              arguments: { input: '[src/a.ts#ABCD]\nPUT 1.=1:\n+hello' },
+            },
+          ],
+        },
+      ],
+      true
+    );
+    expect(timeline[1]).toMatchObject({ summary: 'src/a.ts', edits: null, state: 'running' });
+  });
+
+  it('不完整 editDiff 不生成 edits 且不抛错', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [{ type: 'toolCall', id: 'dirty-1', name: 'edit', arguments: {} }],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'dirty-1',
+          toolName: 'edit',
+          editDiff: { oldText: 'before\n' } as unknown as { oldText: string; newText: string },
+          content: [{ type: 'text', text: 'ok' }],
+        },
+      ],
+      false
+    );
+    expect(timeline[1]).toMatchObject({ kind: 'tool', edits: null, state: 'ok' });
   });
 
   it('无结果的 toolCall 在会话 running 且 pending reviewing 时标 reviewing', () => {
@@ -1037,6 +1267,37 @@ describe('buildTimeline 运行中工具的增量输出', () => {
       toolOutputs: { t1: 'PASS a\nPASS b' },
     });
     expect(timeline[1]).toMatchObject({ kind: 'tool', state: 'running', output: 'PASS a\nPASS b' });
+  });
+
+  it('未开始执行的同轮工具不跳表：无 startedAt，仍标 running', () => {
+    const timeline = buildTimeline(
+      [
+        user('改代码'),
+        {
+          role: 'assistant',
+          content: [
+            { type: 'toolCall', id: 'bash-1', name: 'bash', arguments: { command: 'sleep 5' } },
+            { type: 'toolCall', id: 'write-1', name: 'write', arguments: { path: 'a.ts' } },
+          ],
+        },
+      ],
+      true,
+      [],
+      undefined,
+      { toolStartedAt: { 'bash-1': 1_000 } }
+    );
+    expect(timeline[1]).toMatchObject({
+      kind: 'tool',
+      name: 'bash',
+      state: 'running',
+      startedAt: 1_000,
+    });
+    expect(timeline[2]).toMatchObject({
+      kind: 'tool',
+      name: 'write',
+      state: 'running',
+      startedAt: null,
+    });
   });
 
   it('无增量时 running 工具 output 仍为 null（行不可展开）', () => {

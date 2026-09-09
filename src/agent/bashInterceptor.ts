@@ -109,6 +109,18 @@ function splitSegments(command: string): Array<{ text: string; pipedStdin: boole
   let pipedStdin = false;
   let inSingle = false;
   let inDouble = false;
+  const cut = (end: number, next: number) => {
+    const text = command.slice(start, end);
+    // `|` followed only by whitespace / line continuation before a newline:
+    // the pipe still feeds the next segment, so keep pipedStdin.
+    if (/^[\s\\]*$/.test(text)) {
+      start = next;
+      return;
+    }
+    segments.push({ text, pipedStdin });
+    start = next;
+    pipedStdin = false;
+  };
   for (let i = 0; i < command.length; i++) {
     const ch = command[i];
     if (inSingle) {
@@ -132,48 +144,30 @@ function splitSegments(command: string): Array<{ text: string; pipedStdin: boole
       continue;
     }
     if (ch === '\n' || ch === ';') {
-      push(command.slice(start, i), pipedStdin, segments);
-      start = i + 1;
-      pipedStdin = false;
+      cut(i, i + 1);
       continue;
     }
-    if (ch === '&' && command[i + 1] === '&') {
-      push(command.slice(start, i), pipedStdin, segments);
-      start = i + 2;
+    if ((ch === '&' || ch === '|') && command[i + 1] === ch) {
+      cut(i, i + 2);
       i += 1;
-      pipedStdin = false;
-      continue;
-    }
-    if (ch === '|' && command[i + 1] === '|') {
-      push(command.slice(start, i), pipedStdin, segments);
-      start = i + 2;
-      i += 1;
-      pipedStdin = false;
       continue;
     }
     if (ch === '|') {
-      push(command.slice(start, i), pipedStdin, segments);
-      start = i + 1;
+      cut(i, i + 1);
       pipedStdin = true;
     }
   }
-  push(command.slice(start), pipedStdin, segments);
+  cut(command.length, command.length);
   return segments;
-}
-
-function push(
-  text: string,
-  pipedStdin: boolean,
-  segments: Array<{ text: string; pipedStdin: boolean }>
-): void {
-  if (text.trim()) segments.push({ text, pipedStdin });
 }
 
 export function withBashInterception(definition: ToolDefinition): ToolDefinition {
   const description = [definition.description, BASH_INTERCEPT_HINT].filter(Boolean).join('\n');
+  const stock = Array.isArray(definition.promptGuidelines) ? definition.promptGuidelines : [];
   return {
     ...definition,
     description,
+    promptGuidelines: [...stock, BASH_INTERCEPT_HINT],
     async execute(toolCallId, params, signal, onUpdate, ctx) {
       const command = (params as { command?: string }).command;
       if (typeof command === 'string') {

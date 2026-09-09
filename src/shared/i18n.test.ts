@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { CAPABILITY_CATALOG } from './capabilities/catalog';
-import { getTranslation, normalizeLocale, translate, zhTranslations } from './i18n';
+import {
+  getTranslation,
+  normalizeLocale,
+  SUBAGENT_MODELS_CONFIGURE_PROMPT,
+  translate,
+  zhTranslations,
+} from './i18n';
 import { BUILTIN_TOOLS } from './types/builtinTools';
 
 /** 间接映射表里的 t() key。删孤儿时漏看这些会把正在用的词条删掉。 */
@@ -161,6 +167,20 @@ describe('mapped i18n keys', () => {
       expect(zhTranslations[key], `missing mapped key: ${key}`).toBeTypeOf('string');
       expect(getTranslation('zh', key)).not.toBe(key);
     }
+  });
+});
+
+describe('SUBAGENT_MODELS_CONFIGURE_PROMPT', () => {
+  it('中英文都是可直接下发给 Enso 的完整提示词，且都说明了描述的用途', () => {
+    for (const locale of ['en', 'zh'] as const) {
+      const prompt = getTranslation(locale, SUBAGENT_MODELS_CONFIGURE_PROMPT);
+      expect(prompt.length).toBeGreaterThan(200);
+      expect(prompt).toContain('scout');
+      expect(prompt).toContain('model');
+    }
+    expect(getTranslation('zh', SUBAGENT_MODELS_CONFIGURE_PROMPT)).not.toBe(
+      SUBAGENT_MODELS_CONFIGURE_PROMPT
+    );
   });
 });
 

@@ -4,6 +4,7 @@ import {
   releaseOverlayGuard,
   resetOverlayGuard,
   setOverlayGuardSink,
+  syncOverlayGuard,
 } from './overlayGuard';
 
 let events: boolean[] = [];
@@ -45,6 +46,14 @@ describe('overlayGuard', () => {
     } finally {
       if (!had) delete g.window;
     }
+  });
+
+  it('resyncs the full state on mount so Main cannot hold a stale latch', () => {
+    syncOverlayGuard();
+    expect(events).toEqual([false]);
+    acquireOverlayGuard();
+    syncOverlayGuard();
+    expect(events).toEqual([false, true, true]);
   });
 
   it('ignores unbalanced releases', () => {

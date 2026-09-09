@@ -5,6 +5,7 @@ import {
   MAX_STALL_RETRIES,
   nextStallWatchAction,
   shouldAbortStalledGeneration,
+  stallLiveWorkFlags,
 } from './stallTimeout';
 
 describe('shouldAbortStalledGeneration', () => {
@@ -144,6 +145,47 @@ describe('hasLiveGenerationWork', () => {
 
   it('主会话还在等 bash / coworker 工具返回时算有输出', () => {
     expect(hasLiveGenerationWork({ ...idle, inFlightTools: true })).toBe(true);
+  });
+});
+
+describe('stallLiveWorkFlags', () => {
+  it('缺字段或 null 集合视为无 live work，且不抛', () => {
+    expect(() => stallLiveWorkFlags({})).not.toThrow();
+    expect(() =>
+      stallLiveWorkFlags({
+        toolOutputs: null,
+        pendingApprovals: null,
+        pendingAsks: null,
+        backgroundTasks: null,
+        subagents: null,
+      })
+    ).not.toThrow();
+    expect(stallLiveWorkFlags({})).toEqual({
+      pendingApprovals: 0,
+      pendingAsks: 0,
+      runningBackgroundTasks: false,
+      runningSubagents: false,
+      hasToolOutput: false,
+    });
+    expect(hasLiveGenerationWork({ ...stallLiveWorkFlags({}), liveCoworker: false })).toBe(false);
+  });
+
+  it('已有集合按实际内容计数', () => {
+    expect(
+      stallLiveWorkFlags({
+        toolOutputs: { t1: 'x' },
+        pendingApprovals: [{}],
+        pendingAsks: [],
+        backgroundTasks: [{ status: 'running' }],
+        subagents: [{ status: 'idle' }],
+      })
+    ).toEqual({
+      pendingApprovals: 1,
+      pendingAsks: 0,
+      runningBackgroundTasks: true,
+      runningSubagents: false,
+      hasToolOutput: true,
+    });
   });
 });
 

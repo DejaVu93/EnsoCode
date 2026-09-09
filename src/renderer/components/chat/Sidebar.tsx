@@ -15,6 +15,7 @@ import {
   sectionsForAllView,
   UNGROUPED_GROUP_ID,
 } from '@shared/projectGroups';
+import { projectDisplayName, projectNameFromPath } from '@shared/projectName';
 import type { Project } from '@shared/types';
 import type { WorktreeStatus } from '@shared/types/worktree';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -23,6 +24,7 @@ import {
   Archive,
   ArchiveRestore,
   ChevronRight,
+  CircleAlert,
   Eraser,
   FileText,
   FolderGit2,
@@ -33,11 +35,13 @@ import {
   Layers,
   Loader2,
   MessageSquarePlus,
+  MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
   Pencil,
   Pin,
   PinOff,
+  RefreshCw,
   Search,
   Settings,
   Sparkles,
@@ -48,6 +52,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AddProjectDialog } from '@/components/chat/AddProjectDialog';
 import { ConfirmDialog } from '@/components/chat/ConfirmDialog';
+import { ConversationStatusIndicator } from '@/components/chat/ConversationStatusIndicator';
 import { ConversationTitleEdit } from '@/components/chat/ConversationTitleEdit';
 import { matchesQuery } from '@/components/chat/chatSearch';
 import { insertComposerMention } from '@/components/chat/composerMentionBridge';
@@ -64,6 +69,7 @@ import {
 import { GroupEditorDialog } from '@/components/chat/GroupEditorDialog';
 import { GroupSelector } from '@/components/chat/GroupSelector';
 import { ImportSessionDialog } from '@/components/chat/ImportSessionDialog';
+import { reloadConversationFromMenu } from '@/components/chat/reloadConversationAction';
 import { NodeSwitcher } from '@/components/nodes/NodeSwitcher';
 import {
   ContextMenu,
@@ -75,6 +81,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from '@/components/ui/menu';
 import { addToast } from '@/components/ui/toast';
+import { Tooltip, TooltipPopup, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/i18n';
 import { effectiveKeybindings, formatBinding, IS_MAC } from '@/lib/keybindings';
 import { heightVariants, springStandard } from '@/lib/motion';
@@ -92,7 +99,10 @@ import {
 } from '@/stores/sessions/pinned';
 import {
   COLLAPSED_SESSION_LIMIT,
+  nextRevealedExtra,
+  prevRevealedExtra,
   sessionSwitchSlotIds,
+  shownConversationCount,
 } from '@/stores/sessions/sessionSwitchSlots';
 import { selectSidebarConversations } from '@/stores/sessions/sidebarDirectory';
 import { DIRTY_MAIN_TREE, worktreeHasPendingWork } from '@/stores/sessions/worktree';
@@ -321,7 +331,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     const knownIds = new Set(projects.map((project) => project.id));
     if (request.sshConnectionId) {
       setPendingProject({
-        name: request.path.split('/').filter(Boolean).pop() ?? request.path,
+        name: projectNameFromPath(request.path),
         path: request.path,
         sshHost: request.sshHost,
       });
@@ -368,6 +378,8 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   };
 
   const [importProject, setImportProject] = useState<Project | null>(null);
+  // 项目行展开了次级操作(导入/归档/删除)的项目 id
+  const [expandedActions, setExpandedActions] = useState<string | null>(null);
   // 待确认的删除动作(项目连带其对话 / 单个对话)
   const [pendingRemove, setPendingRemove] = useState<
     | { kind: 'project'; project: Project; conversationIds: string[] }
@@ -385,8 +397,8 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     }
     setPendingRemove({ kind: 'conversation', id, worktreeWarning });
   };
-  // 展开显示全部会话的项目(会话级状态,重启回到折叠)
-  const [expandedProjects, setExpandedProjects] = useState<Record<string, boolean>>({});
+  // 项目已额外露出的条数(会话级状态,重启回到折叠上限)
+  const [revealedExtras, setRevealedExtras] = useState<Record<string, number>>({});
   const [listQuery, setListQuery] = useState('');
   const [modHeld, setModHeld] = useState(false);
 
@@ -416,7 +428,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
     projectIds: activeProjectIds,
     archivedProjectIds,
     collapsedProjects,
-    expandedProjects,
+    revealedExtras,
     searching,
     matches: convMatches,
     projectMatches: (projectId) => {
@@ -883,6 +895,11 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                     : projectConversations.filter(convMatches);
                 if (searching && visibleConversations.length === 0) return null;
                 const folded = searching ? false : collapsedProjects[project.id] === true;
+                const revealedExtra = revealedExtras[project.id] ?? 0;
+                const shownCount = searching
+                  ? visibleConversations.length
+                  : shownConversationCount(visibleConversations.length, revealedExtra);
+                const hiddenIds = visibleConversations.slice(shownCount);
                 return (
                   <SortableProject key={project.id} project={project}>
                     {(drag) => (
@@ -919,7 +936,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                           : project.path
                                       }
                                     >
-                                      {project.name}
+                                      {projectDisplayName(project)}
                                       {project.kind === 'ssh' && (
                                         <span className="ml-1.5 rounded bg-muted px-1 py-0.5 text-[10px] font-normal text-muted-foreground">
                                           {project.sshConnectionName ?? project.sshHost}
@@ -935,36 +952,68 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                   >
                                     <MessageSquarePlus className="h-3.5 w-3.5" />
                                   </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setImportProject(project)}
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    title={t('Import session')}
+                                  {/* 展开的次级操作随焦点离开自动收起 */}
+                                  <div
+                                    className="contents"
+                                    onBlur={(event) => {
+                                      if (
+                                        expandedActions === project.id &&
+                                        !event.currentTarget.contains(event.relatedTarget)
+                                      ) {
+                                        setExpandedActions(null);
+                                      }
+                                    }}
                                   >
-                                    <HardDriveDownload className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => toggleArchiveProject(project.id)}
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                                    title={t('Archive project')}
-                                  >
-                                    <Archive className="h-3.5 w-3.5" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      setPendingRemove({
-                                        kind: 'project',
-                                        project,
-                                        conversationIds: projectConversations,
-                                      })
-                                    }
-                                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
-                                    title={t('Remove project')}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </button>
+                                    {expandedActions === project.id && (
+                                      <>
+                                        <button
+                                          type="button"
+                                          onClick={() => setImportProject(project)}
+                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          title={t('Import session')}
+                                        >
+                                          <HardDriveDownload className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => toggleArchiveProject(project.id)}
+                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                                          title={t('Archive project')}
+                                        >
+                                          <Archive className="h-3.5 w-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() =>
+                                            setPendingRemove({
+                                              kind: 'project',
+                                              project,
+                                              conversationIds: projectConversations,
+                                            })
+                                          }
+                                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-destructive"
+                                          title={t('Remove project')}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                      </>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        setExpandedActions((current) =>
+                                          current === project.id ? null : project.id
+                                        )
+                                      }
+                                      className={cn(
+                                        'shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground',
+                                        expandedActions === project.id && 'bg-muted text-foreground'
+                                      )}
+                                      title={t('More actions')}
+                                    >
+                                      <MoreHorizontal className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
                                 </div>
                                 <AnimatePresence initial={false}>
                                   {!folded && (
@@ -977,10 +1026,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                       className="overflow-hidden"
                                     >
                                       <div className="mt-0.5 flex flex-col gap-y-0.5">
-                                        {(searching || expandedProjects[project.id]
-                                          ? visibleConversations
-                                          : visibleConversations.slice(0, COLLAPSED_SESSION_LIMIT)
-                                        ).map((id) => (
+                                        {visibleConversations.slice(0, shownCount).map((id) => (
                                           <motion.div
                                             key={id}
                                             layout="position"
@@ -1021,50 +1067,65 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                         ))}
                                         {!searching &&
                                           projectConversations.length > COLLAPSED_SESSION_LIMIT && (
-                                            <ContextMenu>
-                                              <ContextMenuTrigger
-                                                render={
-                                                  (
-                                                    <button
-                                                      type="button"
-                                                      onClick={() =>
-                                                        setExpandedProjects((prev) => ({
-                                                          ...prev,
-                                                          [project.id]: !prev[project.id],
-                                                        }))
-                                                      }
-                                                      className="rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                                                    >
-                                                      {expandedProjects[project.id]
-                                                        ? t('Collapse')
-                                                        : t('Show {{n}} more', {
-                                                            n:
-                                                              projectConversations.length -
-                                                              COLLAPSED_SESSION_LIMIT,
+                                            <div className="flex items-center gap-1">
+                                              {hiddenIds.length > 0 && (
+                                                <ContextMenu>
+                                                  <ContextMenuTrigger
+                                                    render={
+                                                      (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() =>
+                                                            setRevealedExtras((prev) => ({
+                                                              ...prev,
+                                                              [project.id]: nextRevealedExtra(
+                                                                visibleConversations.length,
+                                                                prev[project.id] ?? 0
+                                                              ),
+                                                            }))
+                                                          }
+                                                          className="flex-1 rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                                                        >
+                                                          {t('Show {{n}} more', {
+                                                            n: hiddenIds.length,
                                                           })}
-                                                    </button>
-                                                  ) as React.ReactElement<Record<string, unknown>>
-                                                }
-                                              />
-                                              <ContextMenuPopup className="min-w-36">
-                                                <ContextMenuItem
+                                                        </button>
+                                                      ) as React.ReactElement<
+                                                        Record<string, unknown>
+                                                      >
+                                                    }
+                                                  />
+                                                  <ContextMenuPopup className="min-w-36">
+                                                    <ContextMenuItem
+                                                      onClick={() =>
+                                                        void handleArchiveMany(hiddenIds)
+                                                      }
+                                                    >
+                                                      <Archive />
+                                                      {t('Archive {{n}} conversations', {
+                                                        n: hiddenIds.length,
+                                                      })}
+                                                    </ContextMenuItem>
+                                                  </ContextMenuPopup>
+                                                </ContextMenu>
+                                              )}
+                                              {revealedExtra > 0 && (
+                                                <button
+                                                  type="button"
                                                   onClick={() =>
-                                                    void handleArchiveMany(
-                                                      projectConversations.slice(
-                                                        COLLAPSED_SESSION_LIMIT
-                                                      )
-                                                    )
+                                                    setRevealedExtras((prev) => ({
+                                                      ...prev,
+                                                      [project.id]: prevRevealedExtra(
+                                                        prev[project.id] ?? 0
+                                                      ),
+                                                    }))
                                                   }
+                                                  className="flex-1 rounded-lg py-1 text-center text-xs text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                                                 >
-                                                  <Archive />
-                                                  {t('Archive {{n}} conversations', {
-                                                    n:
-                                                      projectConversations.length -
-                                                      COLLAPSED_SESSION_LIMIT,
-                                                  })}
-                                                </ContextMenuItem>
-                                              </ContextMenuPopup>
-                                            </ContextMenu>
+                                                  {t('Collapse')}
+                                                </button>
+                                              )}
+                                            </div>
                                           )}
                                         {visibleConversations.length === 0 && (
                                           <p className="py-1.5 pl-10 text-xs text-muted-foreground">
@@ -1168,9 +1229,12 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                 >
                   <div className="mb-0.5 flex max-h-72 flex-col gap-y-1.5 overflow-y-auto">
                     {slicedArchivedGroups.map((group) => {
-                      const projectName =
-                        projects.find((project) => project.id === group.projectId)?.name ??
-                        t('Other');
+                      const archivedProject = projects.find(
+                        (project) => project.id === group.projectId
+                      );
+                      const projectName = archivedProject
+                        ? projectDisplayName(archivedProject)
+                        : t('Other');
                       return (
                         <div key={group.projectId}>
                           <div className="group flex items-center gap-1 rounded-md pr-0.5">
@@ -1774,6 +1838,12 @@ interface ConversationRowProps {
     projectId: string;
     messages: { timestamp?: number }[];
     forkedFromConversationId?: string;
+    /** 标题总结在飞（标题后转圈） */
+    titleSummaryPending?: boolean;
+    /** 标题总结全部候选失败（标题后红叹号，点击重试） */
+    titleSummaryError?: string;
+    /** 手动重读在途（菜单项禁用 + 图标转圈） */
+    reloading?: boolean;
   };
   active: boolean;
   hasRunningChild: boolean;
@@ -1877,6 +1947,13 @@ function ConversationRow({
           {subtitle && <span className="ml-1.5 text-[10px] text-muted-foreground">{subtitle}</span>}
         </span>
       )}
+      {!renaming && (
+        <TitleSummaryBadge
+          pending={conversation.titleSummaryPending}
+          error={conversation.titleSummaryError}
+          onRetry={() => useSessionsStore.getState().retryTitleSummary(id)}
+        />
+      )}
       {!renaming &&
         (switchHint ? (
           <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
@@ -1950,6 +2027,13 @@ function ConversationRow({
           <Pencil />
           {t('Rename')}
         </ContextMenuItem>
+        <ContextMenuItem
+          disabled={conversation.reloading === true || conversation.spawning}
+          onClick={() => void reloadConversationFromMenu(id, t)}
+        >
+          <RefreshCw className={conversation.reloading ? 'animate-spin' : undefined} />
+          {t('Reload conversation')}
+        </ContextMenuItem>
         {!archived && (
           <ContextMenuItem onClick={() => onTogglePin(id)}>
             <PinIcon />
@@ -2008,6 +2092,67 @@ function WorktreeBadge({ status }: { status?: WorktreeStatus }) {
   );
 }
 
+/**
+ * 标题后的总结状态槽：在飞转圈 → 失败红叹号（点击重试） → 无。pending 优先：点重试后叹号立刻变转圈。
+ * 现行机制每个成功回合都会滚动总结，转圈频繁出现是预期行为。
+ */
+function TitleSummaryBadge({
+  pending,
+  error,
+  onRetry,
+}: {
+  pending?: boolean;
+  error?: string;
+  onRetry: () => void;
+}) {
+  const { t } = useI18n();
+  if (pending) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="status"
+              className="shrink-0 text-muted-foreground/60"
+              aria-label={t('Summarizing title')}
+            />
+          }
+        >
+          <Loader2 className="h-3 w-3 animate-spin" />
+        </TooltipTrigger>
+        <TooltipPopup side="right">{t('Summarizing title')}</TooltipPopup>
+      </Tooltip>
+    );
+  }
+  if (error) {
+    return (
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button
+              type="button"
+              aria-label={t('Title summary failed')}
+              className="shrink-0 rounded p-0.5 text-destructive hover:text-destructive/80"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetry();
+              }}
+            />
+          }
+        >
+          <CircleAlert className="h-3 w-3" />
+        </TooltipTrigger>
+        <TooltipPopup side="right" className="max-w-72">
+          <p className="font-medium">{t('Title summary failed')}</p>
+          <p className="mt-0.5 break-all text-muted-foreground">{error}</p>
+          <p className="mt-1 text-muted-foreground/70">{t('Click to retry')}</p>
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
+  return null;
+}
+
 function ConversationDot({
   conversation,
   hasRunningChild,
@@ -2027,16 +2172,5 @@ function ConversationDot({
     pendingAskCount: conversation.pendingAsks?.length ?? 0,
     hasRunningChild,
   });
-  return (
-    <span
-      className={cn(
-        'h-1.5 w-1.5 shrink-0 rounded-full',
-        tone === 'running' && 'animate-pulse bg-blue-500',
-        tone === 'failed' && 'bg-destructive',
-        tone === 'waiting' && 'animate-pulse bg-green-500',
-        tone === 'unread' && 'bg-green-500',
-        tone === 'idle' && 'bg-muted-foreground/30'
-      )}
-    />
-  );
+  return <ConversationStatusIndicator tone={tone} size="sm" />;
 }

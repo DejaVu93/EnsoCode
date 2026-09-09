@@ -23,6 +23,8 @@ interface SettingsSlice {
   loadLocalSkills: boolean;
   /** 桌面下发（appearance 帧）；缺省按开，与桌面默认一致 */
   compactReadOnlyTools: boolean;
+  /** 桌面下发（appearance 帧）；缺省按开 */
+  expandLiveEdits: boolean;
 }
 
 let state: SettingsSlice = {
@@ -39,6 +41,7 @@ let state: SettingsSlice = {
   agentTypes: [],
   loadLocalSkills: true,
   compactReadOnlyTools: true,
+  expandLiveEdits: true,
 };
 
 type Listener = (state: SettingsSlice, prev: SettingsSlice) => void;
@@ -63,6 +66,10 @@ export function setTerminalAppearance(palette?: TerminalPalette, fontFamily?: st
 
 export function setCompactReadOnlyTools(enabled: boolean): void {
   if (state.compactReadOnlyTools !== enabled) setState({ compactReadOnlyTools: enabled });
+}
+
+export function setExpandLiveEdits(enabled: boolean): void {
+  if (state.expandLiveEdits !== enabled) setState({ expandLiveEdits: enabled });
 }
 
 export function getTerminalPalette(): TerminalPalette | undefined {

@@ -2,6 +2,7 @@ import type { AgentTypeKey } from '@shared/builtinAgents';
 import type { CapabilityAskRequest } from '@shared/capabilities/types';
 import { parseCompactCommand } from '@shared/compactCommand';
 import { type DefaultModelRef, defaultApprovalMode, resolveChatModel } from '@shared/defaultModel';
+import { isContinuationTurn } from '@shared/titleContinuation';
 import type {
   ApprovalMode,
   AttachedImage,
@@ -11,7 +12,9 @@ import type {
   DispatchMainEvent,
   ProjectAuthorityProjection,
   ProjectedMessage,
+  RendererAgentEvent,
   ThinkingLevel,
+  TitleSummaryInput,
   TurnDigest,
 } from '@shared/types/agent';
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
@@ -58,25 +61,40 @@ import {
   isMessageCacheHot,
   MESSAGE_CACHE_TTL_MS,
   needsHistoryHydration,
+  needsWorkerSnapshot,
   pruneSessionClocks,
+  stampViewDeparture,
   viewedConversationId,
 } from './messageCache';
 import { migrateSessions, SESSIONS_VERSION } from './migrate';
 import { cachedPartializeSessions } from './persistSnapshot';
+import { staleArchivedConversationIdsToDelete, staleUnarchivedConversationIds } from './pinned';
 import { remapConversationProjectIds } from './projectAuthorityRemap';
 import {
   applyAgentEvent,
   applyDispatchEvent,
+  applyHistoryPage,
   emptyProjection,
   type SessionProjection,
   type TimelineMessage,
   upsertOutOfRange,
 } from './reducer';
+import { applyConversationReload } from './reload';
 import { isPairViewed, nextUnread } from './unread';
 import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
 
+/** 离开时盖章；正在看的会话由 viewedId 保热，TTL 从离开起算 */
 const lastViewedAt: Record<string, number> = {};
 const parentTailInFlight = new Set<string>();
+const olderHistoryInFlight = new Set<string>();
+/**
+ * 手动重读在途：同会话合并为一次 IPC；缓冲期间到达的实时事件，快照落地后按 seq 水位重放，
+ * 防止 IPC reply 晚于实时事件时旧快照把新消息抹掉。实时事件本身仍照常即时上屏。
+ */
+const reloadInFlight = new Map<
+  string,
+  { promise: Promise<string | null>; buffered: RendererAgentEvent[] }
+>();
 let evictTimer: ReturnType<typeof setTimeout> | null = null;
 /** 正文脱节时向 worker 补要 snapshot 的去抖：同一会话一轮重叠的 upsert 不重复要 */
 const snapshotResyncAt: Record<string, number> = {};
@@ -117,6 +135,12 @@ export interface Conversation extends SessionProjection {
   title: string;
   /** 用户手动改过名：此后一切自动标题总结（首条即时 / 每轮滚动）都跳过；随 partialize 持久化 */
   titleLocked?: boolean;
+  /** 标题总结在飞：pendingTitleBaselines 的 UI 镜像（Map 在 store 闭包里，组件读不到）；侧栏转圈。不持久化 */
+  titleSummaryPending?: boolean;
+  /** 最近一次标题总结失败原因（含模型标识）；侧栏红叹号 + tooltip。成功/改名/重试时清。不持久化 */
+  titleSummaryError?: string;
+  /** 最近一次成功回合的 digest，供手动重试走 rolling；无则退 initial。不持久化 */
+  lastTurnDigest?: TurnDigest;
   /** 是否已在 worker 侧 spawn（首条消息发出时才 spawn） */
   started: boolean;
   spawning: boolean;
@@ -170,6 +194,10 @@ export interface Conversation extends SessionProjection {
   historyOnly?: boolean;
   /** 已尝试过只读回放（含失败），避免反复打 IPC。不持久化。 */
   historyLoadAttempted?: boolean;
+  /** 上滑翻页在途；不持久化 */
+  historyLoading?: boolean;
+  /** 手动重读在途（菜单项禁用 / 反馈）；不持久化 */
+  reloading?: boolean;
   /** 当前 child TAB 的危险 capability ASK；不持久化。 */
   pendingCapabilityAsks?: CapabilityAskRequest[];
   /** allow ACK 后留在 child TAB 的 OAuth 宿主请求；不持久化。 */
@@ -244,8 +272,16 @@ interface SessionsState {
   togglePinConversation(id: string): void;
   /** 手动改会话标题（侧栏 / tab 双击或右键） */
   renameConversation(id: string, title: string): void;
+  /** 标题总结失败后手动重试（侧栏红叹号）：有最近回合 digest 走 rolling，否则退 initial */
+  retryTitleSummary(id: string): void;
+  /** 开关关闭时清掉全部在飞与失败残留（在飞 Map 在闭包里，只能由 store 自己清） */
+  clearTitleSummaryState(): void;
   /** 切换会话归档(归档时同时清置顶) */
   toggleArchiveConversation(id: string): void;
+  /** 闲置自动归档；清理已合并开时对候选隔离会话先 cleanup 再归档 */
+  autoArchiveStaleConversations(now?: number): Promise<void>;
+  /** 归档超期自动删除：days<=0 no-op，否则对候选走 removeConversation */
+  autoDeleteStaleArchived(now?: number): void;
   dispatchAgent(
     typeKey: AgentTypeKey,
     task: AgentDispatchTask,
@@ -261,6 +297,13 @@ interface SessionsState {
   send(text: string, target: SendTarget, images?: AttachedImage[]): Promise<string | null>;
   /** app 重启后从 jsonl 恢复会话并回放历史（未 started 且有 sessionFile 时有效） */
   resumeConversation(id: string): Promise<void>;
+  /** 上滑加载更早历史：只读 jsonl，不 spawn */
+  loadOlderHistory(id: string): Promise<void>;
+  /**
+   * 手动「重新读取会话」：绕过本地缓存向 Main 要权威正文（来源由 Main 选）。只读不 spawn，
+   * 不动草稿 / 排队 / started。同会话在途合并；失败保留旧正文并返回原因，成功返 null。
+   */
+  reloadConversation(id: string): Promise<string | null>;
   /** 登记一条手机端新建的会话（worker 侧已 spawn，这里只补桌面投影） */
   adoptPairSession(session: PairCreatedSession): void;
   /** 登记一条从外部应用导入的对话（选中后自动 resume 回放） */
@@ -372,6 +415,70 @@ export const useSessionsStore = create<SessionsState>()(
        */
       const pendingTitleBaselines = new Map<string, string>();
 
+      /**
+       * 标题总结在飞的开/关必须走这两个 helper：保证不变量
+       * `conversation.titleSummaryPending === pendingTitleBaselines.has(id)`，侧栏转圈才能跟实际在飞对齐。
+       */
+      function markTitlePending(conversationId: string, baseline: string): void {
+        pendingTitleBaselines.set(conversationId, baseline);
+        set((state) =>
+          state.conversations[conversationId]
+            ? patch(state, conversationId, {
+                titleSummaryPending: true,
+                titleSummaryError: undefined,
+              })
+            : state
+        );
+      }
+
+      /** 返回原本是否在飞（迟到的 title-generated / title-failed 靠它识别） */
+      function clearTitlePending(conversationId: string): boolean {
+        const wasPending = pendingTitleBaselines.delete(conversationId);
+        set((state) => {
+          const conversation = state.conversations[conversationId];
+          if (!conversation || conversation.titleSummaryPending === undefined) return state;
+          return patch(state, conversationId, { titleSummaryPending: undefined });
+        });
+        return wasPending;
+      }
+
+      /** 所有发起路径的收口：记在飞基准、清错误、发 IPC；Main 同步拒绝时按 title-failed 语义处理 */
+      function requestTitleSummary(
+        conversationId: string,
+        baseline: string,
+        input: TitleSummaryInput,
+        sessionModel?: { providerId?: string; modelId?: string }
+      ): void {
+        markTitlePending(conversationId, baseline);
+        void (async () => {
+          let result: { ok: boolean; error?: string };
+          try {
+            result = await window.electronAPI.agent.summarizeTitle(
+              conversationId,
+              input,
+              sessionModel?.providerId && sessionModel?.modelId
+                ? { providerId: sessionModel.providerId, modelId: sessionModel.modelId }
+                : undefined
+            );
+          } catch (error) {
+            result = { ok: false, error: error instanceof Error ? error.message : String(error) };
+          }
+          if (!result.ok) {
+            failTitleSummary(conversationId, result.error ?? 'title summary request rejected');
+          }
+        })();
+      }
+
+      /** title-failed 事件与 IPC 同步拒绝共用：只对仍在飞的会话生效，锁定的会话不写错误 */
+      function failTitleSummary(conversationId: string, error: string): void {
+        if (!clearTitlePending(conversationId)) return;
+        set((state) => {
+          const conversation = state.conversations[conversationId];
+          if (!conversation || conversation.titleLocked) return state;
+          return patch(state, conversationId, { titleSummaryError: error.slice(0, 500) });
+        });
+      }
+
       function trySummarizeTitle(
         conversationId: string,
         rawText: string,
@@ -393,19 +500,19 @@ export const useSessionsStore = create<SessionsState>()(
         const conversation = get().conversations[conversationId];
         if (!conversation || conversation.titleLocked) return;
 
-        pendingTitleBaselines.set(conversationId, baselineTitle);
-        void window.electronAPI.agent.summarizeTitle(
+        requestTitleSummary(
           conversationId,
+          baselineTitle,
           { kind: 'initial', text: cleanedText },
-          sessionModel?.providerId && sessionModel?.modelId
-            ? { providerId: sessionModel.providerId, modelId: sessionModel.modelId }
-            : undefined
+          sessionModel
         );
       }
 
       /**
-       * 回合成功结束后的滚动标题刷新：当前标题 + worker 切出的本轮摘要送模型，
+       * 回合成功结束后的滚动标题刷新：开场请求（主旨锚点）+ 当前标题 + worker 切出的本轮摘要送模型，
        * 模型可原样返回当前标题（不改）。每个成功回合都触发，不收敛；在飞未回流时跳过。
+       * 本轮 user 是推进类短句（“继续 / 开始实施 / go ahead”）时直接跳过：同一话题往前走不该重写标题，
+       * 真机已证不听话的模型会把“开始实施”总结成“开始实施：先读 PRD”这种脱离主旨的标题。
        * 冷会话/手机端会话没有正文也能触发——摘要来自 worker，不依赖 renderer 的 messages。
        */
       function tryRollingSummarizeTitle(
@@ -414,6 +521,7 @@ export const useSessionsStore = create<SessionsState>()(
       ): void {
         if (!digest || !useSettingsStore.getState().titleSummaryEnabled) return;
         if (!digest.userText.trim() && !digest.assistantText.trim()) return;
+        if (isContinuationTurn(digest.userText)) return;
         const conversation = get().conversations[conversationId];
         if (
           !conversation ||
@@ -425,18 +533,17 @@ export const useSessionsStore = create<SessionsState>()(
         ) {
           return;
         }
-        pendingTitleBaselines.set(conversationId, conversation.title);
-        void window.electronAPI.agent.summarizeTitle(
+        requestTitleSummary(
           conversationId,
+          conversation.title,
           {
             kind: 'rolling',
             currentTitle: conversation.title,
+            firstUserText: digest.firstUserText,
             userText: digest.userText,
             assistantText: digest.assistantText,
           },
-          conversation.lastProviderId && conversation.lastModelId
-            ? { providerId: conversation.lastProviderId, modelId: conversation.lastModelId }
-            : undefined
+          { providerId: conversation.lastProviderId, modelId: conversation.lastModelId }
         );
       }
 
@@ -659,8 +766,9 @@ export const useSessionsStore = create<SessionsState>()(
               const conversation = conversations[id];
               const snapshot = alive.get(id);
               if (snapshot) {
-                const keepBody =
-                  event.partial === true || isMessageCacheHot(id, viewed, lastViewedAt, now);
+                // 只看热度：手机 subscribe/history 触发的 targeted 快照也会广播到桌面，
+                // partial 就留正文会把当时的半截灌进冷会话，之后 upsert 又因冷被丢，半截常驻
+                const keepBody = isMessageCacheHot(id, viewed, lastViewedAt, now);
                 const next = applyAgentEvent(conversation, id, event);
                 const title = conversation.title || firstUserText(next) || '';
                 conversations[id] = {
@@ -669,7 +777,12 @@ export const useSessionsStore = create<SessionsState>()(
                   title,
                   ...(keepBody
                     ? {}
-                    : { messages: [], customEntries: [], historyBaseIndex: undefined }),
+                    : {
+                        messages: [],
+                        customEntries: [],
+                        historyBaseIndex: undefined,
+                        historyLoading: undefined,
+                      }),
                   ...(snapshot.child
                     ? {
                         parentId: snapshot.child.parentId,
@@ -686,7 +799,14 @@ export const useSessionsStore = create<SessionsState>()(
                 };
                 continue;
               }
-              if (partial || !conversation.started) continue;
+              // targeted 快照回空 = worker 已释放该会话（闲置回收 / 重启）：收回 started，
+              // 否则后续 prompt 绕过 spawn 直发空会话；正在看的话清掉旧正文让尾窗补
+              const absentTarget =
+                partial &&
+                event.sessionId === id &&
+                !conversation.spawning &&
+                (conversation.started || Boolean(conversation.sessionFile));
+              if (!absentTarget && (partial || !conversation.started)) continue;
               conversations[id] = conversation.sessionFile
                 ? {
                     ...conversation,
@@ -695,6 +815,19 @@ export const useSessionsStore = create<SessionsState>()(
                     error: undefined,
                     pendingCapabilityAsks: [],
                     activeOauthAsk: undefined,
+                    // 只有渲染层原以为 worker 还持有（started）时本地正文才可能掉队；
+                    // 浏览态（尾窗上屏、started=false）的正文是 jsonl 来的，不动
+                    ...(absentTarget &&
+                    conversation.started &&
+                    id === viewed &&
+                    hasAuthoritativeMessages(conversation.messages)
+                      ? {
+                          messages: [],
+                          customEntries: [],
+                          historyBaseIndex: undefined,
+                          historyLoading: undefined,
+                        }
+                      : {}),
                   }
                 : {
                     ...conversation,
@@ -708,6 +841,17 @@ export const useSessionsStore = create<SessionsState>()(
           });
           if (event.partial) {
             for (const session of event.sessions) continueGoal(session.identity.sessionId);
+            if (event.sessionId) {
+              const state = get();
+              const target = state.conversations[event.sessionId];
+              if (
+                target &&
+                viewedFromState(state) === event.sessionId &&
+                needsHistoryHydration(target)
+              ) {
+                void hydrateParentHistoryTail(event.sessionId);
+              }
+            }
           }
           return;
         }
@@ -763,7 +907,7 @@ export const useSessionsStore = create<SessionsState>()(
 
         if (event.type === 'title-generated') {
           const baseline = pendingTitleBaselines.get(event.conversationId);
-          pendingTitleBaselines.delete(event.conversationId);
+          clearTitlePending(event.conversationId);
           set((state) => {
             const conversation = state.conversations[event.conversationId];
             // 会话已删 / 用户已手动改名（标题离开基准）→ 丢弃结果
@@ -771,14 +915,26 @@ export const useSessionsStore = create<SessionsState>()(
               return state;
             }
             const title = event.title.trim().slice(0, 80);
-            if (!title || title === conversation.title) return state;
-            return patch(state, event.conversationId, { title });
+            if (!title) return state;
+            // 模型认为标题已准确（原样返回）也是成功：清错误，但不必改写标题
+            if (title === conversation.title) {
+              return conversation.titleSummaryError === undefined
+                ? state
+                : patch(state, event.conversationId, { titleSummaryError: undefined });
+            }
+            return patch(state, event.conversationId, { title, titleSummaryError: undefined });
           });
+          return;
+        }
+
+        if (event.type === 'title-failed') {
+          failTitleSummary(event.conversationId, event.error);
           return;
         }
 
         const identity = event.type === 'capability-invoke' ? event.child : event.identity;
         const id = identity.sessionId;
+        reloadInFlight.get(id)?.buffered.push(event);
 
         if (event.type === 'coworker-update') {
           set((state) => {
@@ -959,7 +1115,8 @@ export const useSessionsStore = create<SessionsState>()(
             if (next === conversation) return state;
             return patch(state, id, {
               ...next,
-              sessionFile: event.sessionFile,
+              // 与 Main 同款守卫：空值不覆写，否则 resume 路径丢失 → 重启后历史无法找回
+              ...(event.sessionFile ? { sessionFile: event.sessionFile } : {}),
               ...(event.contextWindow !== undefined ? { contextWindow: event.contextWindow } : {}),
               ...(event.occupancy ? { occupancy: event.occupancy } : {}),
             });
@@ -1064,6 +1221,18 @@ export const useSessionsStore = create<SessionsState>()(
             ...(event.type === 'parent-ended' || event.type === 'child-ended'
               ? { started: false, pendingCapabilityAsks: [], activeOauthAsk: undefined }
               : {}),
+            // worker 释放冷会话：冷缓存期间 upsert 已被丢，本地正文可能掉队，而回收定时器只在切会话时
+            // 武装、夜里不再切就永远不清。这里直接清掉，切回时走 jsonl 尾窗；热正文可信，保留
+            ...(event.type === 'parent-ended' &&
+            !isMessageCacheHot(id, viewedFromState(state), lastViewedAt, Date.now()) &&
+            (next.messages.length > 0 || next.customEntries.length > 0)
+              ? {
+                  messages: [],
+                  customEntries: [],
+                  historyBaseIndex: undefined,
+                  historyLoading: undefined,
+                }
+              : {}),
             // spawn IPC ack 时已乐观置 started:true；拒绝到达不清回 false 的话，
             // 重发会绕过 spawn 分支直接 prompt 到 worker 里不存在的会话，重试无声失败。
             ...(event.type === 'parent-rejected' || event.type === 'child-rejected'
@@ -1078,6 +1247,13 @@ export const useSessionsStore = create<SessionsState>()(
             return;
           }
           if (event.type !== 'turn-completed') return;
+          // 留下本轮摘要供侧栏红叹号的手动重试用；在发起滚动总结之前写，重试拿到的是最新一轮
+          if (event.digest) {
+            const digest = event.digest;
+            set((state) =>
+              state.conversations[id] ? patch(state, id, { lastTurnDigest: digest }) : state
+            );
+          }
           tryRollingSummarizeTitle(id, event.digest);
           flushQueue(id);
           continueGoal(id);
@@ -1583,13 +1759,76 @@ export const useSessionsStore = create<SessionsState>()(
         renameConversation(id, title) {
           const next = title.trim().slice(0, 80);
           if (!next) return;
-          // 手动改名即永久锁定：在飞的自动总结作废，之后的回合也不再刷
-          pendingTitleBaselines.delete(id);
+          // 手动改名即永久锁定：在飞的自动总结作废，之后的回合也不再刷；失败红叹号一并清掉
+          clearTitlePending(id);
           set((state) => {
             const conversation = state.conversations[id];
             if (!conversation) return state;
-            if (conversation.title === next && conversation.titleLocked) return state;
-            return patch(state, id, { title: next, titleLocked: true });
+            if (
+              conversation.title === next &&
+              conversation.titleLocked &&
+              conversation.titleSummaryError === undefined
+            ) {
+              return state;
+            }
+            return patch(state, id, {
+              title: next,
+              titleLocked: true,
+              titleSummaryError: undefined,
+            });
+          });
+        },
+
+        retryTitleSummary(id) {
+          const conversation = get().conversations[id];
+          if (
+            !conversation ||
+            conversation.titleLocked ||
+            !useSettingsStore.getState().titleSummaryEnabled ||
+            pendingTitleBaselines.has(id)
+          ) {
+            return;
+          }
+          const model = {
+            providerId: conversation.lastProviderId,
+            modelId: conversation.lastModelId,
+          };
+          const currentTitle = conversation.title.trim();
+          if (conversation.lastTurnDigest && currentTitle) {
+            requestTitleSummary(
+              id,
+              conversation.title,
+              { kind: 'rolling', currentTitle: conversation.title, ...conversation.lastTurnDigest },
+              model
+            );
+            return;
+          }
+          // 首条总结就失败且还没跑完一轮：退回 initial；正文被冷驱逐时用当前标题兑底
+          const text = cleanTitleSummarySource(firstUserRawText(conversation)) || currentTitle;
+          if (!text.trim()) return;
+          requestTitleSummary(id, conversation.title, { kind: 'initial', text }, model);
+        },
+
+        clearTitleSummaryState() {
+          pendingTitleBaselines.clear();
+          set((state) => {
+            let changed = false;
+            const conversations = Object.fromEntries(
+              Object.entries(state.conversations).map(([id, conversation]) => {
+                if (
+                  conversation.titleSummaryPending === undefined &&
+                  conversation.titleSummaryError === undefined
+                ) {
+                  return [id, conversation];
+                }
+                changed = true;
+                return [
+                  id,
+                  { ...conversation, titleSummaryPending: undefined, titleSummaryError: undefined },
+                ];
+              })
+            );
+            return changed ? { conversations } : state;
           });
         },
 
@@ -1601,6 +1840,82 @@ export const useSessionsStore = create<SessionsState>()(
               ? patch(state, id, { archived: undefined, archivedAt: undefined })
               : patch(state, id, { archived: true, pinned: undefined, archivedAt: Date.now() });
           });
+        },
+
+        async autoArchiveStaleConversations(now = Date.now()) {
+          const idleDays = useSettingsStore.getState().autoArchiveIdleDays;
+          if (!(idleDays > 0)) return;
+          const cleanupMerged = useSettingsStore.getState().autoArchiveMergedWorktrees;
+          const { order, conversations, activeId, worktreeStatuses } = get();
+          const ids = staleUnarchivedConversationIds({
+            order,
+            conversations,
+            now,
+            idleDays,
+            activeId,
+            cleanupMergedWorktrees: cleanupMerged,
+            worktreeStatuses,
+          });
+          if (ids.length === 0) return;
+          const archive = (id: string) => {
+            set((state) => {
+              const conversation = state.conversations[id];
+              if (!conversation || conversation.archived === true) return state;
+              return patch(state, id, {
+                archived: true,
+                archivedAt: now,
+                pinned: undefined,
+              });
+            });
+          };
+          const plain: string[] = [];
+          const isolated: string[] = [];
+          for (const id of ids) {
+            if (conversations[id]?.worktree) isolated.push(id);
+            else plain.push(id);
+          }
+          if (plain.length > 0) {
+            set((state) => {
+              let changed = false;
+              const next = { ...state.conversations };
+              for (const id of plain) {
+                const conversation = next[id];
+                if (!conversation || conversation.archived === true) continue;
+                next[id] = {
+                  ...conversation,
+                  archived: true,
+                  archivedAt: now,
+                  pinned: undefined,
+                };
+                changed = true;
+              }
+              return changed ? { conversations: next } : state;
+            });
+          }
+          for (const id of isolated) {
+            const conversation = get().conversations[id];
+            if (!conversation?.worktree || conversation.archived === true) continue;
+            const status = worktreeStatuses[id];
+            if (status?.exists !== false) {
+              const error = await get().cleanupWorktree(id);
+              if (error) continue;
+            }
+            archive(id);
+          }
+        },
+
+        autoDeleteStaleArchived(now = Date.now()) {
+          const days = useSettingsStore.getState().autoDeleteArchivedDays;
+          if (!(days > 0)) return;
+          const { order, conversations, activeId } = get();
+          const ids = staleArchivedConversationIdsToDelete(
+            order,
+            conversations,
+            days,
+            now,
+            activeId
+          );
+          for (const id of ids) get().removeConversation(id);
         },
 
         removeConversation(id) {
@@ -2059,6 +2374,76 @@ export const useSessionsStore = create<SessionsState>()(
           // 未 ended 的 child（渲染层不传路径、不指定身份），tab 由事件回流重建。
         },
 
+        async loadOlderHistory(id) {
+          if (olderHistoryInFlight.has(id)) return;
+          const conversation = get().conversations[id];
+          const beforeIndex = conversation?.historyBaseIndex;
+          if (!conversation || conversation.parentId || !beforeIndex || beforeIndex <= 0) return;
+          const read = window.electronAPI.agent.readParentHistoryTail;
+          if (!read) return;
+          olderHistoryInFlight.add(id);
+          set((state) => patch(state, id, { historyLoading: true }));
+          try {
+            const result = await read(id, beforeIndex);
+            if (!result.ok || result.messages.length === 0) return;
+            const latest = get().conversations[id];
+            if (!latest || latest.historyBaseIndex !== beforeIndex) return;
+            set((state) => {
+              const current = state.conversations[id];
+              if (!current) return state;
+              const next = applyHistoryPage(current, {
+                baseIndex: result.baseIndex,
+                messages: result.messages,
+              });
+              return next === current ? state : patch(state, id, next);
+            });
+          } catch {
+            // 翻页失败保持已有尾窗，下次到顶再试
+          } finally {
+            olderHistoryInFlight.delete(id);
+            if (get().conversations[id]) {
+              set((state) => patch(state, id, { historyLoading: undefined }));
+            }
+          }
+        },
+
+        reloadConversation(id) {
+          const inFlight = reloadInFlight.get(id);
+          if (inFlight) return inFlight.promise;
+          const before = get().conversations[id];
+          if (!before) return Promise.resolve('Conversation not found.');
+          const entry: { buffered: RendererAgentEvent[]; promise: Promise<string | null> } = {
+            buffered: [],
+            promise: Promise.resolve(null),
+          };
+          entry.promise = (async (): Promise<string | null> => {
+            set((state) => patch(state, id, { reloading: true }));
+            try {
+              const result = await window.electronAPI.agent.reloadConversation(id);
+              if (!result.ok) return result.error;
+              const latest = get().conversations[id];
+              // 在途中被删除：丢弃，不复活。代际已变（重新 spawn）：旧代 live 快照不得覆盖新代
+              if (!latest || latest.generation !== before.generation) return null;
+              set((state) => {
+                const current = state.conversations[id];
+                if (!current) return state;
+                const next = applyConversationReload(current, id, result, entry.buffered);
+                return next === current ? state : patch(state, id, next as Conversation);
+              });
+              return null;
+            } catch (error) {
+              return error instanceof Error ? error.message : String(error);
+            } finally {
+              reloadInFlight.delete(id);
+              if (get().conversations[id]) {
+                set((state) => patch(state, id, { reloading: undefined }));
+              }
+            }
+          })();
+          reloadInFlight.set(id, entry);
+          return entry.promise;
+        },
+
         async addImportedConversation(projectId, imported) {
           const id = await get().newConversation(projectId);
           if (!id) return null;
@@ -2489,6 +2874,12 @@ window.electronAPI.sourceAuthority.onChanged((projection) => {
   if (next !== conversations) useSessionsStore.setState({ conversations: next });
 });
 
+// 标题总结开关关闭：在飞与失败残留一起清掉，否则转圈/红叹号会在关闭后继续挂在侧栏
+useSettingsStore.subscribe((state, previous) => {
+  if (state.titleSummaryEnabled || !previous.titleSummaryEnabled) return;
+  useSessionsStore.getState().clearTitleSummaryState();
+});
+
 // 上报「当前正在查看的会话」给 main：窗口聚焦时,只有正被查看的会话才抑制系统通知。
 // tab 生效时以 tab（coworker/子会话）为准,与 sendActive 等处的解析口径一致。
 let lastReportedViewedId: string | null = null;
@@ -2502,7 +2893,10 @@ async function hydrateParentHistoryTail(conversationId: string): Promise<void> {
   parentTailInFlight.add(conversationId);
   try {
     const result = await read(conversationId);
-    if (!result.ok || result.messages.length === 0) return;
+    if (!result.ok || result.messages.length === 0) {
+      markParentHistoryAttempted(conversationId);
+      return;
+    }
     const latest = useSessionsStore.getState().conversations[conversationId];
     if (!latest || latest.parentId || hasAuthoritativeMessages(latest.messages)) return;
     const optimistic = latest.messages.filter((message) => message.optimistic);
@@ -2517,22 +2911,35 @@ async function hydrateParentHistoryTail(conversationId: string): Promise<void> {
       },
     });
   } catch {
-    // 尾巴失败不挡 resume；下次点开再试
+    // 尾巴失败不挡 resume；worker 快照仍能补回正文
+    markParentHistoryAttempted(conversationId);
   } finally {
     parentTailInFlight.delete(conversationId);
   }
 }
 
+/** 尾窗读不到就收口：否则 failed 会话会卡在 Preparing 永久转圈 */
+function markParentHistoryAttempted(conversationId: string): void {
+  useSessionsStore.setState((state) => {
+    const conversation = state.conversations[conversationId];
+    if (!conversation || conversation.historyLoadAttempted) return state;
+    return patch(state, conversationId, { historyLoadAttempted: true });
+  });
+}
+
 useSessionsStore.subscribe((state) => {
   const viewed = viewedFromState(state);
   if (viewed === lastReportedViewedId) return;
+  const previousViewedId = lastReportedViewedId;
   lastReportedViewedId = viewed;
   window.electronAPI.agent.setViewedSession?.(viewed);
-  if (viewed) lastViewedAt[viewed] = Date.now();
+  stampViewDeparture(lastViewedAt, previousViewedId, viewed, Date.now());
   const conversation = viewed ? state.conversations[viewed] : undefined;
-  if (viewed && conversation && needsHistoryHydration(conversation)) {
-    void hydrateParentHistoryTail(viewed);
-    void window.electronAPI.agent.requestSnapshot(viewed);
+  if (viewed && conversation) {
+    // 历史补水不受 failed 门控：红字与历史同屏，而不是只剩红字
+    if (needsHistoryHydration(conversation)) void hydrateParentHistoryTail(viewed);
+    // worker 若还持有，快照比尾窗完整（审批 / 进行中轮次）；回空则由 sessionId 路由收回 started
+    if (needsWorkerSnapshot(conversation)) void window.electronAPI.agent.requestSnapshot(viewed);
   }
   if (evictTimer) clearTimeout(evictTimer);
   evictTimer = setTimeout(() => {

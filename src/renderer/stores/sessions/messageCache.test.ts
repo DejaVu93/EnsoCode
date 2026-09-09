@@ -32,12 +32,17 @@ describe('messageCache', () => {
   it('evicts stale message bodies, leaves hot and empty conversations', () => {
     const conversations = {
       hot: { messages: [1], customEntries: [2] },
-      stale: { messages: [3], customEntries: [4] },
+      stale: { messages: [3], customEntries: [4], historyLoading: true },
       empty: { messages: [], customEntries: [] },
     };
     const next = evictColdMessages(conversations, 'hot', { stale: 0 }, MESSAGE_CACHE_TTL_MS);
     expect(next.hot).toBe(conversations.hot);
-    expect(next.stale).toEqual({ messages: [], customEntries: [], historyBaseIndex: undefined });
+    expect(next.stale).toEqual({
+      messages: [],
+      customEntries: [],
+      historyBaseIndex: undefined,
+      historyLoading: undefined,
+    });
     expect(next.empty).toBe(conversations.empty);
   });
 
@@ -103,6 +108,9 @@ describe('needsHistoryHydration', () => {
     expect(
       needsHistoryHydration({ started: true, sessionFile: undefined, messages: [], spawning: true })
     ).toBe(false);
+  });
+
+  it('failed 不挡 jsonl 历史：运行态失败与历史可读是两回事，否则一次瞬时失败就永久空白', () => {
     expect(
       needsHistoryHydration({
         started: false,
@@ -111,7 +119,67 @@ describe('needsHistoryHydration', () => {
         spawning: false,
         status: 'failed',
       })
+    ).toBe(true);
+  });
+
+  it('已尝试过读历史（含失败）就不再补，避免 Preparing 永久转圈', () => {
+    expect(
+      needsHistoryHydration({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        messages: [],
+        spawning: false,
+        status: 'failed',
+        historyLoadAttempted: true,
+      })
     ).toBe(false);
+  });
+});
+
+describe('needsWorkerSnapshot', () => {
+  it('已启动或可 resume 且未 failed 就要对齐 worker，半截权威正文也不例外', async () => {
+    const { needsWorkerSnapshot } = await import('./messageCache');
+    expect(
+      needsWorkerSnapshot({
+        started: true,
+        sessionFile: '/tmp/s.jsonl',
+        status: 'idle',
+      })
+    ).toBe(true);
+    expect(
+      needsWorkerSnapshot({
+        started: false,
+        sessionFile: '/tmp/s.jsonl',
+        status: 'idle',
+      })
+    ).toBe(true);
+    expect(
+      needsWorkerSnapshot({
+        started: false,
+        sessionFile: undefined,
+        status: 'idle',
+      })
+    ).toBe(false);
+    expect(
+      needsWorkerSnapshot({
+        started: true,
+        sessionFile: '/tmp/s.jsonl',
+        status: 'failed',
+      })
+    ).toBe(false);
+  });
+});
+
+describe('stampViewDeparture', () => {
+  it('离开时盖章，当前会话不写自己', async () => {
+    const { stampViewDeparture } = await import('./messageCache');
+    const last: Record<string, number> = { stay: 1 };
+    stampViewDeparture(last, 'left', 'next', 9);
+    expect(last).toEqual({ stay: 1, left: 9 });
+    stampViewDeparture(last, null, 'next', 10);
+    expect(last.left).toBe(9);
+    stampViewDeparture(last, 'same', 'same', 11);
+    expect(last.same).toBeUndefined();
   });
 });
 

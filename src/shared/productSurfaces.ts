@@ -40,6 +40,16 @@ export const PRODUCT_SURFACE_INVENTORY = {
     kind: 'setting',
     label: 'Windows local command shell',
   },
+  'general.terminal-shell': {
+    domain: 'general',
+    kind: 'setting',
+    label: 'Terminal shell',
+  },
+  'general.worktree-root': {
+    domain: 'general',
+    kind: 'setting',
+    label: 'Worktree root directory',
+  },
   'general.automatic-updates': {
     domain: 'general',
     kind: 'setting',

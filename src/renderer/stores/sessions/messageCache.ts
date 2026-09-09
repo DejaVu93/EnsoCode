@@ -31,20 +31,46 @@ export function hasAuthoritativeMessages(messages: readonly { optimistic?: boole
   return messages.some((message) => !message.optimistic);
 }
 
-/** 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 snapshot */
+/**
+ * 已启动或可 resume 的会话缺权威正文：应显示 Preparing，并补 jsonl 尾窗。
+ * 不看 status：运行态 failed 与 jsonl 可读是两回事，failed 挡补水会把一次瞬时失败
+ * 固化成「只剩红字、历史空白」。已尝试过（含失败）由 historyLoadAttempted 收口，避免永久转圈。
+ */
 export function needsHistoryHydration(conversation: {
   started: boolean;
   sessionFile?: string;
   messages: readonly { optimistic?: boolean }[];
   spawning: boolean;
   status?: string;
+  historyLoadAttempted?: boolean;
 }): boolean {
   return (
-    conversation.status !== 'failed' &&
+    !conversation.historyLoadAttempted &&
     (conversation.started || Boolean(conversation.sessionFile)) &&
     !hasAuthoritativeMessages(conversation.messages) &&
     !conversation.spawning
   );
+}
+
+/** 已启动或可 resume 且未 failed：切回应对齐 worker 全文，半截权威正文也要 */
+export function needsWorkerSnapshot(conversation: {
+  started: boolean;
+  sessionFile?: string;
+  status?: string;
+}): boolean {
+  return (
+    conversation.status !== 'failed' && (conversation.started || Boolean(conversation.sessionFile))
+  );
+}
+
+/** 离开会话时盖章；正在看的会话不写自己，由 isMessageCacheHot 的 viewedId 保热 */
+export function stampViewDeparture(
+  lastViewedAt: Record<string, number>,
+  previousId: string | null,
+  nextId: string | null,
+  now: number
+): void {
+  if (previousId && previousId !== nextId) lastViewedAt[previousId] = now;
 }
 
 /** 输入框 busy：有权威正文后不再因 spawn/读历史锁输入 */
@@ -54,6 +80,7 @@ export function chatSurfaceBusy(conversation: {
   messages: readonly { optimistic?: boolean }[];
   spawning: boolean;
   status?: string;
+  historyLoadAttempted?: boolean;
 }): boolean {
   if (conversation.status === 'running') return true;
   if (hasAuthoritativeMessages(conversation.messages)) return false;
@@ -67,6 +94,7 @@ export function chatTimelineBusy(conversation: {
   messages: readonly { optimistic?: boolean }[];
   spawning: boolean;
   status?: string;
+  historyLoadAttempted?: boolean;
 }): boolean {
   return (
     conversation.status === 'running' ||
@@ -77,7 +105,7 @@ export function chatTimelineBusy(conversation: {
       sessionFile: conversation.sessionFile,
       messages: conversation.messages,
       spawning: conversation.spawning,
-      status: conversation.status,
+      historyLoadAttempted: conversation.historyLoadAttempted,
     })
   );
 }
@@ -98,7 +126,13 @@ export function evictColdMessages<T extends { messages: unknown[]; customEntries
   for (const [id, conversation] of Object.entries(conversations)) {
     if (isMessageCacheHot(id, viewedId, lastViewedAt, now, ttl)) continue;
     if (conversation.messages.length === 0 && conversation.customEntries.length === 0) continue;
-    next[id] = { ...conversation, messages: [], customEntries: [], historyBaseIndex: undefined };
+    next[id] = {
+      ...conversation,
+      messages: [],
+      customEntries: [],
+      historyBaseIndex: undefined,
+      historyLoading: undefined,
+    };
     changed = true;
   }
   return changed ? next : conversations;

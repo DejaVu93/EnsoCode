@@ -56,6 +56,8 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   terminalFontFamily: { mode: 'portable' },
   terminalFontWeight: { mode: 'portable' },
   terminalFontWeightBold: { mode: 'portable' },
+  terminalShell: { mode: 'excluded', reason: 'platform-specific shell selection' },
+  worktreeRoot: { mode: 'excluded', reason: 'device-local worktree storage path' },
   favoriteTerminalThemes: { mode: 'portable' },
   statusLineSegments: { mode: 'portable' },
   loadLocalSkills: { mode: 'portable' },
@@ -63,6 +65,7 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   windowsLocalShell: { mode: 'excluded', reason: 'platform-specific shell selection' },
   exploreFoldEnabled: { mode: 'portable' },
   bashInterceptEnabled: { mode: 'portable' },
+  hashlineEditEnabled: { mode: 'portable' },
   smartCompactEnabled: { mode: 'portable' },
   smartCompactModel: { mode: 'portable' },
   smartCompactMode: { mode: 'portable' },
@@ -71,7 +74,13 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   customProxyUrl: { mode: 'excluded', reason: 'device network configuration may contain secrets' },
   openChangesOnFileEdit: { mode: 'portable' },
   compactReadOnlyTools: { mode: 'portable' },
+  expandLiveEdits: { mode: 'portable' },
+  chatWide: { mode: 'portable' },
+  notifyMainAgentOnly: { mode: 'portable' },
   generationStallTimeoutMin: { mode: 'portable' },
+  autoArchiveIdleDays: { mode: 'portable' },
+  autoArchiveMergedWorktrees: { mode: 'portable' },
+  autoDeleteArchivedDays: { mode: 'portable' },
   backgroundImageEnabled: {
     mode: 'excluded',
     reason: 'background appearance activation could enable unavailable or private resources',
@@ -325,7 +334,8 @@ export async function exportConfigToPath(
       rmSync(tempPath, { force: true });
     }
     return { ok: true, filePath };
-  } catch {
+  } catch (error) {
+    console.error('[configSync] export failed', error);
     return resultError('Unable to export configuration.');
   }
 }

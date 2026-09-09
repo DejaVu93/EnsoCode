@@ -1,10 +1,16 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.10/schema.json",
-  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "correctness": {
         "noUnusedImports": "warn",
         "noUnusedVariables": "warn"
@@ -58,12 +64,6 @@
       "!**/*.css",
       "!!.claude/worktrees",
       "!!.zvec-grep",
-      "!.trellis",
-      "!.agents",
-      "!.codex",
-      "!.cursor",
-      "!.omp",
-      "!.pi",
       "!.hce",
       "!temp"
     ]

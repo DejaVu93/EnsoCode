@@ -1,4 +1,5 @@
 import { File } from '@pierre/diffs/react';
+import { stripHashlineRead } from '@shared/hashlineRead';
 import { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '@/i18n';
 import { CODE_THEME, ensureHighlighter } from './codeHighlighter';
@@ -11,7 +12,7 @@ const FILE_OPTIONS = {
   preferredHighlighter: 'shiki-js',
 } as const;
 
-/** read 工具输出：按文件名推断语言做语法高亮 + 行号渲染 */
+/** read 工具输出：按文件名推断语言做语法高亮 + 行号渲染；Hashline 头/gutter 只在展开时剥，不进 buildTimeline 热路径 */
 export function ReadFileView({ path, contents }: { path: string; contents: string }) {
   const { t } = useI18n();
   const [ready, setReady] = useState(false);
@@ -26,7 +27,7 @@ export function ReadFileView({ path, contents }: { path: string; contents: strin
   }, []);
 
   const file = useMemo(
-    () => ({ name: path.split('/').pop() || 'file', contents }),
+    () => ({ name: path.split('/').pop() || 'file', contents: stripHashlineRead(contents) }),
     [path, contents]
   );
 

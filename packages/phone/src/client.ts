@@ -2,9 +2,14 @@ import {
   attachHeartbeat,
   backoffDelay,
   type CatalogEntry,
+  createBrowserDirectPeerFactory,
+  DirectLink,
+  type DirectPeerFactory,
+  type DirectTransport,
   fromBase64Url,
   type Heartbeat,
   type HostToPhone,
+  type NudgeReason,
   openFrame,
   type PairedDevice,
   type PhoneToHost,
@@ -12,6 +17,7 @@ import {
   type ProjectGroupEntry,
   type ProviderEntry,
   sealFrame,
+  shouldReplaceOnNudge,
   toWebSocketUrl,
 } from '@enso/pair';
 import {
@@ -31,7 +37,11 @@ import {
   type SyncTracking,
 } from '@shared/pair/syncProjection';
 import { loadCursors, saveCursor } from './storage';
-import { setCompactReadOnlyTools, setTerminalAppearance } from './stubs/settings-store';
+import {
+  setCompactReadOnlyTools,
+  setExpandLiveEdits,
+  setTerminalAppearance,
+} from './stubs/settings-store';
 import { setHostTheme } from './theme';
 
 /**
@@ -56,6 +66,10 @@ export interface ClientEvents {
   onSync?(state: SyncState): void;
   /** 订阅的会话已被桌面删除（曾在目录、现在消失）：上层应跳离该会话 */
   onGhostSession?(sessionId: string): void;
+  /** 上滑翻页在途变化 */
+  onHistoryPending?(sessionId: string, pending: boolean): void;
+  /** 业务帧出口切换：直连（WebRTC）↔ 中继 */
+  onTransport?(transport: DirectTransport): void;
 }
 
 export class PairClient {
@@ -72,12 +86,37 @@ export class PairClient {
   /** 分页请求在途标记（每会话一次一发，响应或换订阅时清） */
   private historyPending = new Set<string>();
   private sync: SyncTracking = initialSync;
+  private direct: DirectLink;
 
   constructor(
     private device: PairedDevice,
-    private events: ClientEvents
+    private events: ClientEvents,
+    directFactory: DirectPeerFactory | null = createBrowserDirectPeerFactory()
   ) {
     this.contentKey = fromBase64Url(device.contentKey);
+    this.direct = new DirectLink({
+      role: 'guest',
+      factory: directFactory,
+      // 信令只走中继；直连未建/已坏时信令就是为了修它
+      sendSignal: (signal) => this.sendViaRelay(signal as PhoneToHost),
+      onFrame: (frame) => void this.handleFrame(frame),
+      onTransportChange: (t) => {
+        if (t === 'relay' && this.ws?.readyState !== 1 && !this.revoked && !this.closed) {
+          this.events.onState('offline');
+        }
+        this.events.onTransport?.(t);
+      },
+      // 切通道瞬间旧通道在途帧可能丢：按重连同一套语义补（目录 + 游标增量）
+      onResync: () => {
+        this.send({ type: 'snapshot' });
+        if (this.subscribedId) this.subscribe(this.subscribedId);
+      },
+      onDiagnostic: (line) => console.info(`[pair] ${line}`),
+    });
+  }
+
+  transport(): DirectTransport {
+    return this.direct.transport();
   }
 
   connect(): void {
@@ -106,10 +145,12 @@ export class PairClient {
       // 1008 = 中继明确告知凭据已失效（解绑时下发，或带失效凭据重连时下发）
       if (code === 1008 || this.revoked) {
         this.revoked = true;
+        this.direct.close();
         this.events.onState('unauthorized');
         return;
       }
-      this.events.onState('offline');
+      // 直连还活着就不算掉线：中继默默重连，直连再掉时由 onTransportChange 补置 offline
+      if (this.direct.transport() !== 'direct') this.events.onState('offline');
       this.scheduleReconnect();
     };
     this.heartbeat = attachHeartbeat(ws, () => {
@@ -132,13 +173,16 @@ export class PairClient {
           const control = JSON.parse(event.data) as { type?: string };
           if (control.type === 'host-online') {
             this.events.onState('online');
+            this.direct.peerOnline(true);
             this.send({ type: 'snapshot' });
             if (this.subscribedId) this.subscribe(this.subscribedId);
           } else if (control.type === 'host-offline') {
             this.events.onState('host-offline');
+            this.direct.peerOnline(false);
           } else if (control.type === 'revoked') {
             // 桌面端解除了配对：立即停手，别再重连
             this.revoked = true;
+            this.direct.peerGone();
             this.events.onState('unauthorized');
           }
         } catch {}
@@ -156,22 +200,31 @@ export class PairClient {
     };
   }
 
-  /** 回前台/网络恢复时调用：死链立即重连（跳过退避），活链立即探测 */
-  nudge(): void {
+  /** 回前台只探活；网络恢复拆半开链，死链立即重连 */
+  nudge(reason: NudgeReason = 'visibility'): void {
     if (this.closed || this.revoked) return;
-    if (this.ws) {
-      this.heartbeat?.probe();
+    // 网络换了：直连的候选地址已失效，拆掉立即重协商（先落回中继）
+    if (reason === 'online' || reason === 'network-change') this.direct.networkChange();
+    if (shouldReplaceOnNudge(reason, this.ws !== null)) {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      this.attempt = 0;
+      if (this.ws) {
+        try {
+          this.ws.close();
+        } catch {}
+      } else {
+        this.connect();
+      }
       return;
     }
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
-    this.attempt = 0;
-    this.connect();
+    this.heartbeat?.probe();
   }
 
   close(): void {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
+    this.direct.close();
     this.heartbeat?.stop();
     this.heartbeat = null;
     try {
@@ -217,6 +270,7 @@ export class PairClient {
         setTerminalAppearance(payload.terminal, payload.terminalFontFamily);
         setHostTheme(payload.theme);
         setCompactReadOnlyTools(payload.compactReadOnlyTools !== false);
+        setExpandLiveEdits(payload.expandLiveEdits !== false);
         break;
       case 'agent-event':
         this.applyAgentEvent(payload.event as Record<string, unknown>);
@@ -224,9 +278,17 @@ export class PairClient {
       case 'push-config':
         this.events.onPushConfig?.(payload.vapidPublicKey);
         break;
+      case 'host-info':
+        this.direct.hostInfo(payload);
+        break;
+      case 'direct-answer':
+      case 'direct-ice':
+        this.direct.handleSignal(payload);
+        break;
       case 'history': {
         // 上滑分页应答：只并入消息，不动 status/审批（那些以尾窗快照为准）
         this.historyPending.delete(payload.sessionId);
+        this.events.onHistoryPending?.(payload.sessionId, false);
         const view = this.sessions.get(payload.sessionId);
         if (!view) break;
         const next = applyGuestHistory(view, payload);
@@ -283,10 +345,21 @@ export class PairClient {
   }
 
   send(command: PhoneToHost): void {
-    if (this.ws?.readyState !== 1) return;
+    if (this.direct.transport() !== 'direct' && this.ws?.readyState !== 1) return;
     void sealFrame(this.contentKey, command).then((frame) => {
-      this.ws?.send(frame.slice().buffer as ArrayBuffer);
+      // 直连优先；背压/刚好断掉时无缝退回中继
+      if (this.direct.send(frame)) return;
+      this.sendFrameViaRelay(frame);
     });
+  }
+
+  private sendFrameViaRelay(frame: Uint8Array): void {
+    if (this.ws?.readyState !== 1) return;
+    this.ws.send(frame.slice().buffer as ArrayBuffer);
+  }
+
+  private sendViaRelay(command: PhoneToHost): void {
+    void sealFrame(this.contentKey, command).then((frame) => this.sendFrameViaRelay(frame));
   }
 
   private setSync(next: SyncTracking): void {
@@ -298,7 +371,11 @@ export class PairClient {
   /** 订阅会话：带上本地游标，只补断线期间的增量。fresh = 手机刚 spawn 的全新会话，不进 syncing */
   subscribe(sessionId: string | null, opts?: { fresh?: boolean }): void {
     this.subscribedId = sessionId;
-    this.historyPending.clear();
+    if (this.historyPending.size > 0) {
+      const pending = [...this.historyPending];
+      this.historyPending.clear();
+      for (const id of pending) this.events.onHistoryPending?.(id, false);
+    }
     this.setSync(applySubscribe(this.sync, sessionId, opts));
     if (!sessionId) {
       this.send({ type: 'subscribe', sessionId: null });
@@ -325,6 +402,7 @@ export class PairClient {
     const view = this.sessions.get(sessionId);
     if (!view) return;
     this.historyPending.add(sessionId);
+    this.events.onHistoryPending?.(sessionId, true);
     this.send({ type: 'history', sessionId, beforeIndex: Math.min(...view.messages.keys()) });
   }
 }

@@ -146,14 +146,18 @@
     overflow: hidden;
   }
 
+  /*
+   * 描边必须离开客户区最外 1px。Windows DWM + 分数 DPI 会把贴边 1px
+   * 的右/下裁掉（上/左仍在）；overlay 内缩后再画内侧描边。
+   */
   html.enso-main-shell.enso-win:not(.enso-win-pending):not(.enso-win-flush) #root::after {
     content: '';
     position: fixed;
-    inset: 0;
+    inset: 1px;
     z-index: 2147483647;
-    border: 1px solid color-mix(in oklch, var(--foreground) 22%, transparent);
-    border-radius: 8px;
+    border-radius: 7px;
     pointer-events: none;
+    box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent);
   }
 
   /*
@@ -163,7 +167,7 @@
    */
   html.enso-main-shell.enso-win:not(.enso-win-pending):not(.enso-win-flush)
     [data-slot='browser-native-stack'] {
-    padding-right: 1px;
+    padding-right: 2px;
     padding-bottom: 8px;
   }
 
@@ -296,6 +300,11 @@ html.bg-image-enabled .shiki {
 
 html.bg-image-enabled .shiki span {
   background-color: transparent !important;
+}
+
+/* 聊天列铺满：覆盖 CHAT_COL 的阶梯 max-w，两侧只留 padding */
+html.enso-chat-wide .enso-chat-col {
+  max-width: none;
 }
 
 /**

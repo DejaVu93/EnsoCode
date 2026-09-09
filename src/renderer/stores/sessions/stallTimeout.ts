@@ -17,6 +17,36 @@ export function shouldAbortStalledGeneration(input: {
   return input.now - since >= input.timeoutMs;
 }
 
+type StallConversation = {
+  toolOutputs?: Record<string, string> | null;
+  pendingApprovals?: readonly unknown[] | null;
+  pendingAsks?: readonly unknown[] | null;
+  backgroundTasks?: ReadonlyArray<{ status?: string }> | null;
+  subagents?: ReadonlyArray<{ status?: string }> | null;
+};
+
+/** persist 回灌可能缺运行态集合；缺省 / null 一律当空，避免 Object.keys 抛错。 */
+export function stallLiveWorkFlags(conversation: StallConversation): {
+  pendingApprovals: number;
+  pendingAsks: number;
+  runningBackgroundTasks: boolean;
+  runningSubagents: boolean;
+  hasToolOutput: boolean;
+} {
+  const toolOutputs = conversation.toolOutputs ?? {};
+  const pendingApprovals = conversation.pendingApprovals ?? [];
+  const pendingAsks = conversation.pendingAsks ?? [];
+  const backgroundTasks = conversation.backgroundTasks ?? [];
+  const subagents = conversation.subagents ?? [];
+  return {
+    pendingApprovals: pendingApprovals.length,
+    pendingAsks: pendingAsks.length,
+    runningBackgroundTasks: backgroundTasks.some((task) => task.status === 'running'),
+    runningSubagents: subagents.some((agent) => agent.status === 'running'),
+    hasToolOutput: Object.keys(toolOutputs).length > 0,
+  };
+}
+
 export function hasLiveGenerationWork(input: {
   pendingApprovals: number;
   pendingAsks: number;

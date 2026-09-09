@@ -72,6 +72,27 @@ function authoritativeLength(messages: readonly TimelineMessage[]): number {
 }
 
 /**
+ * 整段权威正文被替换时还要保留的乐观尾巴：新正文里已有同文 user 消息的视为已送达消费掉，
+ * 其余（仍在途的 steer/prompt）继续浮在权威消息之后。snapshot 与手动重读共用同一句律。
+ */
+export function retainedOptimisticTail(
+  local: readonly TimelineMessage[],
+  authoritative: readonly ProjectedMessage[]
+): TimelineMessage[] {
+  const leftover = leftoverSnapshotUserTexts(local, authoritative);
+  return local.filter((message) => {
+    if (!message.optimistic || message.role !== 'user') return false;
+    const text = textOf(message);
+    const matched = leftover.findIndex(
+      (delivered) => sameUserText(text, delivered) || sameUserText(delivered, text)
+    );
+    if (matched === -1) return true;
+    leftover.splice(matched, 1);
+    return false;
+  });
+}
+
+/**
  * message-upsert 的 index 是否落在本地权威区之外（会被 reducer 丢正文只推 seq）。
  * store 层据此判断正文已与 worker 脱节，需重新要 snapshot。
  */
@@ -82,6 +103,28 @@ export function upsertOutOfRange(
 ): boolean {
   const localIndex = index - historyBaseIndex;
   return localIndex < 0 || localIndex > authoritativeLength(messages);
+}
+
+/** 上滑分页：只在新页右端正好接到当前权威起点时前置，其它情况原对象返回。 */
+export function applyHistoryPage(
+  state: SessionProjection,
+  page: { baseIndex: number; messages: readonly TimelineMessage[] }
+): SessionProjection {
+  if (page.messages.length === 0) return state;
+  const localBase = state.historyBaseIndex ?? 0;
+  if (page.baseIndex + page.messages.length !== localBase) return state;
+  return {
+    ...state,
+    messages: [...page.messages, ...state.messages],
+    historyBaseIndex: page.baseIndex,
+  };
+}
+
+function omitKeys<T>(
+  record: Record<string, T>,
+  keys: ReadonlySet<string | undefined>
+): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.has(key)));
 }
 
 /** upsert 是全量快照：只有可见正文变化才算进展，不能拿旧思考给后续工具参数续命。 */
@@ -156,8 +199,12 @@ export interface SessionProjection {
   retry?: { attempt: number; maxAttempts: number; delayMs: number; error: string; at: number };
   /** 运行中工具的输出快照（toolCallId → 全量文本）；轮次收口即清空，不持久化 */
   toolOutputs: Record<string, string>;
+  /** 工具真正开始执行的 wall clock；轮次收口即清空，不持久化 */
+  toolStartedAt?: Record<string, number>;
   /** 当前权威消息对应的 worker 绝对起点；全量快照缺省 */
   historyBaseIndex?: number;
+  /** 上滑翻页在途；不持久化 */
+  historyLoading?: boolean;
 }
 
 export const emptyProjection: SessionProjection = {
@@ -178,7 +225,7 @@ export const emptyProjection: SessionProjection = {
 const eventIdentity = (event: RendererAgentEvent): SessionIdentity | null => {
   if (event.type === 'worker-exited' || event.type === 'snapshot') return null;
   // 标题总结不属于任何 worker 会话（无 identity/seq），在 store 层处理，不进投影
-  if (event.type === 'title-generated') return null;
+  if (event.type === 'title-generated' || event.type === 'title-failed') return null;
   if (event.type === 'capability-invoke') return event.child;
   return event.identity;
 };
@@ -206,6 +253,7 @@ export function applyAgentEvent(
       : {
           ...rawState,
           toolOutputs: rawState.toolOutputs ?? {},
+          toolStartedAt: rawState.toolStartedAt ?? {},
           customEntries: rawState.customEntries ?? [],
           dispatchMainEvents: rawState.dispatchMainEvents ?? {},
           pendingApprovals: rawState.pendingApprovals ?? [],
@@ -245,21 +293,17 @@ export function applyAgentEvent(
     );
     // 乐观回显是 worker 尚未确认的本地尾巴：快照里已有同文本 user 消息的视为已送达消费掉，
     // 其余（仍在途的 steer/prompt）保留浮在权威消息之后，不能被整段快照抹掉。
-    const leftover = leftoverSnapshotUserTexts(state.messages, snapshot.messages);
-    const tail = state.messages.filter((message) => {
-      if (!message.optimistic || message.role !== 'user') return false;
-      const text = textOf(message);
-      const matched = leftover.findIndex(
-        (delivered) => sameUserText(text, delivered) || sameUserText(delivered, text)
-      );
-      if (matched === -1) return true;
-      leftover.splice(matched, 1);
-      return false;
-    });
+    const tail = retainedOptimisticTail(state.messages, snapshot.messages);
+    const snapBase = snapshot.baseIndex ?? 0;
+    const localBase = state.historyBaseIndex ?? 0;
+    const authLen = authoritativeLength(state.messages);
+    const keepPrefix = snapBase > localBase && authLen >= snapBase - localBase;
+    const prefix = keepPrefix ? state.messages.slice(0, snapBase - localBase) : [];
+    const authoritative = prefix.length > 0 ? [...prefix, ...snapshot.messages] : snapshot.messages;
     return {
       generation: snapshot.identity.generation,
       status: snapshot.status,
-      messages: tail.length > 0 ? [...snapshot.messages, ...tail] : snapshot.messages,
+      messages: tail.length > 0 ? [...authoritative, ...tail] : authoritative,
       customEntries: snapshot.customEntries ?? [],
       commands: snapshot.commands,
       dispatchMainEvents: {},
@@ -273,18 +317,14 @@ export function applyAgentEvent(
       backgroundTasks: snapshot.backgroundTasks ?? [],
       subagents: snapshot.subagents ?? [],
       // 同轮补快照不能抹掉正在显示的工具输出与去重基准；已经收口的工具不保留旧尾巴。
-      toolOutputs: continuingRun
-        ? Object.fromEntries(
-            Object.entries(state.toolOutputs).filter(([id]) => !completedTools.has(id))
-          )
-        : {},
-      historyBaseIndex:
-        snapshot.baseIndex && snapshot.baseIndex > 0 ? snapshot.baseIndex : undefined,
+      toolOutputs: continuingRun ? omitKeys(state.toolOutputs, completedTools) : {},
+      toolStartedAt: continuingRun ? omitKeys(state.toolStartedAt ?? {}, completedTools) : {},
+      historyBaseIndex: keepPrefix ? localBase : snapBase > 0 ? snapBase : undefined,
     };
   }
 
   const identity = eventIdentity(event);
-  if (event.type === 'title-generated') return state;
+  if (event.type === 'title-generated' || event.type === 'title-failed') return state;
   // spawn 拒绝恒以 seq:0 发出（worker 侧此时尚未建会话，没有 seq 计数器），
   // 过不了下面的 (generation, seq) 单调守卫。一并丢弃的后果是 spawn 失败在
   // UI 上完全无声：spawning 被别处清掉、status 停在 idle、error 为空，用户
@@ -393,9 +433,19 @@ export function applyAgentEvent(
         );
         if (matched !== -1) tail = tail.toSpliced(matched, 1);
       }
+      // 工具收口即清掉流式尾巴：toolOutputs 非空是 watchdog 的活跃豁免，不能拖到轮末
+      const settledId = event.message.role === 'toolResult' ? event.message.toolCallId : undefined;
+      const settledTool =
+        settledId && settledId in current.toolOutputs ? new Set([settledId]) : undefined;
       return {
         ...current,
         messages: [...authoritative, ...tail],
+        ...(settledTool
+          ? {
+              toolOutputs: omitKeys(current.toolOutputs, settledTool),
+              toolStartedAt: omitKeys(current.toolStartedAt ?? {}, settledTool),
+            }
+          : {}),
         lastOutputAt: hasOutput ? now : current.lastOutputAt,
         lastSeq: event.seq,
       };
@@ -479,21 +529,28 @@ export function applyAgentEvent(
         ),
         lastSeq: event.seq,
       };
-    case 'tool-output':
+    case 'tool-output': {
+      const startedAt = current.toolStartedAt?.[event.toolCallId] ?? event.startedAt;
       return {
         ...current,
         toolOutputs: { ...current.toolOutputs, [event.toolCallId]: event.output },
+        toolStartedAt:
+          startedAt === undefined
+            ? current.toolStartedAt
+            : { ...current.toolStartedAt, [event.toolCallId]: startedAt },
         lastOutputAt:
           event.output.trim() && event.output !== current.toolOutputs[event.toolCallId]
             ? now
             : current.lastOutputAt,
         lastSeq: event.seq,
       };
+    }
     case 'turn-completed':
       return {
         ...settleTiming(current, now),
         retry: undefined,
         toolOutputs: {},
+        toolStartedAt: {},
         lastSeq: event.seq,
       };
     case 'messages-truncated':
@@ -510,6 +567,7 @@ export function applyAgentEvent(
         error: event.error,
         retry: undefined,
         toolOutputs: {},
+        toolStartedAt: {},
         lastSeq: event.seq,
       };
     case 'session-custom-entry':

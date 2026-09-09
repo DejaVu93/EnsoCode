@@ -1,4 +1,5 @@
 import { ENSO_AGENT_TYPE_KEY } from '@shared/builtinAgents';
+import { SUBAGENT_MODELS_CONFIGURE_PROMPT } from '@shared/i18n';
 import { pickModelCapabilityOverrides } from '@shared/modelCatalog';
 import type { ModelProvider, ModelThinkingLevelOverride } from '@shared/types';
 import { MODEL_THINKING_LEVEL_OVERRIDES } from '@shared/types';
@@ -71,7 +72,7 @@ export function SubagentModelsSettings() {
   const handleAiConfigure = () => {
     void window.electronAPI.window.summonAgent({
       typeKey: ENSO_AGENT_TYPE_KEY,
-      prompt: t('Ask Enso to configure subagent models'),
+      prompt: t(SUBAGENT_MODELS_CONFIGURE_PROMPT),
     });
   };
 

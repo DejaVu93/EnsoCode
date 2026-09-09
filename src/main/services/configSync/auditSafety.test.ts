@@ -113,6 +113,27 @@ describe('config sync import audit safety', () => {
     ).toThrow(/command|conflict|ambiguous/i);
   });
 
+  it('同名不同 id 的多个 MCP 可导出导入：名称歧义时不按名匹配，全部作为新增且不携带本机 env', () => {
+    const result = planImport(
+      current({
+        mcpServers: [mcp('local', 'node_repl', { env: { TOKEN: 'keep-local-secret' } })],
+      }),
+      bundle({
+        mcpServers: [
+          mcp('codex', 'node_repl', { command: 'npx a' }),
+          mcp('ccswitch', 'node_repl', { command: 'npx b' }),
+        ],
+      }),
+      'merge'
+    );
+    const servers = result.state.mcpServers as ConfigSyncMcpServer[];
+    expect(servers).toHaveLength(3);
+    expect(servers).toContainEqual(
+      expect.objectContaining({ id: 'local', env: { TOKEN: 'keep-local-secret' } })
+    );
+    expect(servers.filter((s) => JSON.stringify(s).includes('keep-local-secret'))).toHaveLength(1);
+  });
+
   it('同 ID MCP 的 transport 或 URL 变化会拒绝导入，而不是先携带本机 env 和 args', () => {
     expect(() =>
       planImport(

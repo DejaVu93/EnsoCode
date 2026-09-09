@@ -30,6 +30,8 @@ export const SETTINGS_DATA_COVERAGE = {
   terminalFontFamily: surfaces('appearance.terminal-font-family'),
   terminalFontWeight: surfaces('appearance.terminal-font-weight'),
   terminalFontWeightBold: surfaces('appearance.terminal-bold-weight'),
+  terminalShell: surfaces('general.terminal-shell'),
+  worktreeRoot: surfaces('general.worktree-root'),
   favoriteTerminalThemes: surfaces('appearance.favorite-terminal-themes'),
   statusLineSegments: surfaces('appearance.status-line-segments'),
   loadLocalSkills: surfaces('general.load-local-skills'),
@@ -40,6 +42,9 @@ export const SETTINGS_DATA_COVERAGE = {
   ),
   bashInterceptEnabled: excluded(
     'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
+  hashlineEditEnabled: excluded(
+    'Hashline edit is a desktop session preference, not an Enso capability.'
   ),
   smartCompactEnabled: excluded(
     'Verified smart compaction is a desktop session preference, not an Enso capability.'
@@ -55,7 +60,17 @@ export const SETTINGS_DATA_COVERAGE = {
   customProxyUrl: surfaces('general.custom-proxy-url'),
   openChangesOnFileEdit: excluded('Renderer side-panel preference; not an Enso capability.'),
   compactReadOnlyTools: excluded('Renderer timeline density preference; not an Enso capability.'),
+  expandLiveEdits: excluded('Renderer timeline expansion preference; not an Enso capability.'),
+  chatWide: excluded('Renderer chat column width preference; not an Enso capability.'),
+  notifyMainAgentOnly: excluded(
+    'Desktop/phone completion notification preference; not an Enso capability.'
+  ),
   generationStallTimeoutMin: excluded('Renderer stall-abort preference; not an Enso capability.'),
+  autoArchiveIdleDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
+  autoArchiveMergedWorktrees: excluded(
+    'Renderer sidebar archive preference; not an Enso capability.'
+  ),
+  autoDeleteArchivedDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
   providers: surfaces('providers.list'),
   defaultModel: surfaces('providers.default-model'),
   defaultReasoningEnabled: surfaces('providers.default-model'),
@@ -108,6 +123,8 @@ export const SETTINGS_ACTION_COVERAGE = {
   setTerminalFontFamily: surfaces('appearance.terminal-font-family'),
   setTerminalFontWeight: surfaces('appearance.terminal-font-weight'),
   setTerminalFontWeightBold: surfaces('appearance.terminal-bold-weight'),
+  setTerminalShell: surfaces('general.terminal-shell'),
+  setWorktreeRoot: surfaces('general.worktree-root'),
   toggleFavoriteTerminalTheme: surfaces('appearance.favorite-terminal-themes'),
   setLoadLocalSkills: surfaces('general.load-local-skills'),
   setLoadHarnessAssets: surfaces('general.load-harness-assets'),
@@ -117,6 +134,9 @@ export const SETTINGS_ACTION_COVERAGE = {
   ),
   setBashInterceptEnabled: excluded(
     'Bash intercept is a desktop session preference, not an Enso capability.'
+  ),
+  setHashlineEditEnabled: excluded(
+    'Hashline edit is a desktop session preference, not an Enso capability.'
   ),
   setSmartCompactEnabled: excluded(
     'Verified smart compaction is a desktop session preference, not an Enso capability.'
@@ -134,8 +154,20 @@ export const SETTINGS_ACTION_COVERAGE = {
   setCompactReadOnlyTools: excluded(
     'Renderer timeline density preference; not an Enso capability.'
   ),
+  setExpandLiveEdits: excluded('Renderer timeline expansion preference; not an Enso capability.'),
+  setChatWide: excluded('Renderer chat column width preference; not an Enso capability.'),
+  setNotifyMainAgentOnly: excluded(
+    'Desktop/phone completion notification preference; not an Enso capability.'
+  ),
   setGenerationStallTimeoutMin: excluded(
     'Renderer stall-abort preference; not an Enso capability.'
+  ),
+  setAutoArchiveIdleDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
+  setAutoArchiveMergedWorktrees: excluded(
+    'Renderer sidebar archive preference; not an Enso capability.'
+  ),
+  setAutoDeleteArchivedDays: excluded(
+    'Renderer sidebar archive preference; not an Enso capability.'
   ),
   setStatusLineSegments: surfaces('appearance.status-line-segments'),
   toggleStatusLineSegment: surfaces('appearance.status-line-segments'),
@@ -301,8 +333,11 @@ export const IPC_PRODUCT_COVERAGE = {
   AGENT_CHILD_HISTORY_READ: excluded(
     'Read-only replay of an ended child safe journal; no product capability, no execution rights.'
   ),
+  AGENT_CONVERSATION_RELOAD: excluded(
+    'Manual read-only reload of a conversation (live snapshot or safe journal); no spawn, no execution rights.'
+  ),
   AGENT_PARENT_HISTORY_TAIL: excluded(
-    'Read-only parent jsonl tail for cold-open UI; no spawn, no execution rights.'
+    'Read-only parent jsonl tail/page for cold-open UI; no spawn, no execution rights.'
   ),
   AGENT_SUMMARIZE_TITLE: excluded(
     'Fire-and-forget conversation title summarization; single LLM completion, no execution rights.'
@@ -363,6 +398,12 @@ export const IPC_PRODUCT_COVERAGE = {
   FILES_SEARCH: surfaces('conversations.file-mention.attach'),
   FILES_READ: excluded('Internal bounded file reader used by reviewed UI flows.'),
   GIT_DIFF_HEAD: excluded('Internal git working-tree reader for the Changes panel.'),
+  CHANGES_SNAPSHOTS_READ: excluded(
+    'Internal per-conversation snapshot store for the Changes panel.'
+  ),
+  CHANGES_SNAPSHOTS_WRITE: excluded(
+    'Internal per-conversation snapshot store for the Changes panel.'
+  ),
   SESSIONS_SCAN_EXTERNAL: surfaces('conversations.import-external'),
   SESSIONS_READ_EXTERNAL: excluded('Preview phase of the external conversation import flow.'),
   SESSIONS_IMPORT_EXTERNAL: surfaces('conversations.import-external'),

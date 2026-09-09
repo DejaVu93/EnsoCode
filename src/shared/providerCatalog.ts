@@ -32,6 +32,12 @@ export function resolvePiProviderBaseUrl(api: ModelApiKind, baseUrl: string): st
 
 export const STATIC_PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
   {
+    id: '__custom',
+    label: 'Custom',
+    defaultApi: 'openai-completions',
+    supportsApiKey: true,
+  },
+  {
     id: 'anthropic',
     label: 'Anthropic',
     defaultApi: 'anthropic-messages',
@@ -140,15 +146,9 @@ export const STATIC_PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     defaultApi: 'openai-completions',
     supportsApiKey: true,
   },
-  {
-    id: '__custom',
-    label: 'Custom',
-    defaultApi: 'openai-completions',
-    supportsApiKey: true,
-  },
 ];
 
-/** 把运行时 OAuth 能力并入静态定义；扩展 provider 会自动出现在自定义项之前。 */
+/** 把运行时 OAuth 能力并入静态定义；自定义恒在最前，扩展 provider 接在其后。 */
 export function mergeProviderDefinitions(
   oauthProviders: readonly Pick<OauthProviderInfo, 'id' | 'name'>[]
 ): ProviderDefinition[] {
@@ -175,5 +175,5 @@ export function mergeProviderDefinitions(
     });
   }
 
-  return [...merged.values(), { ...custom }];
+  return [{ ...custom }, ...merged.values()];
 }

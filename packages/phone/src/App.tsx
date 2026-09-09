@@ -85,6 +85,7 @@ export function App() {
   /** 已配对状态下的「配对新电脑」流程（覆盖 PairScreen） */
   const [adding, setAdding] = useState(false);
   const [state, setState] = useState<ConnState>('connecting');
+  const [transport, setTransport] = useState<'relay' | 'direct'>('relay');
   const [catalog, setCatalog] = useState<CatalogEntry[]>([]);
   /** 桌面置顶组的手动拖拽顺序（旧桌面不下发，空 = 按活跃倒序） */
   const [pinnedOrder, setPinnedOrder] = useState<string[]>([]);
@@ -98,6 +99,8 @@ export function App() {
   const [view, setView] = useState<SessionView | null>(null);
   /** 订阅会话同步中（subscribe 已发、snapshot 未回）：此时时间线可能是陈旧的 */
   const [syncing, setSyncing] = useState(false);
+  /** 上滑翻页在途的会话 */
+  const [historyPending, setHistoryPending] = useState<ReadonlySet<string>>(new Set());
   /** 横幅刚收起时短暂闪现「已是最新」，随后淡出 */
   const [okFlash, setOkFlash] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -141,8 +144,11 @@ export function App() {
     // 换绑另一台桌面时清掉上一台的 VAPID 公钥，等新桌面重新下发
     vapidKeyRef.current = null;
     setPushConfigReady(false);
+    setHistoryPending(new Set());
+    setTransport('relay');
     const client = new PairClient(device, {
       onState: setState,
+      onTransport: setTransport,
       onCatalog: (entries, order) => {
         setCatalog(entries);
         setPinnedOrder(order ?? []);
@@ -159,6 +165,14 @@ export function App() {
       onGhostSession: (id) => {
         // 订阅的会话已在桌面被删：跳回列表态，由 firstId 兑底选最近一条
         if (id === activeIdRef.current) setActiveId(null);
+      },
+      onHistoryPending: (id, pending) => {
+        setHistoryPending((prev) => {
+          const next = new Set(prev);
+          if (pending) next.add(id);
+          else next.delete(id);
+          return next;
+        });
       },
       onPushConfig: (key) => {
         vapidKeyRef.current = key;
@@ -177,19 +191,25 @@ export function App() {
     // 切后台时系统会掐死或冻结 socket 且不触发 close：回前台/网络恢复立即探活。
     // 退后台瞬间赶在冻结前上报不可见：桌面据此把关键事件转系统推送
     //（半开 socket 不会 close，光靠 peer-left 桌面要很久才知道手机不在看）
-    const nudge = () => {
+    const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        client.nudge();
+        client.nudge('visibility');
         client.send({ type: 'presence', visible: true });
       } else {
         client.send({ type: 'presence', visible: false });
       }
     };
-    document.addEventListener('visibilitychange', nudge);
-    window.addEventListener('online', nudge);
+    const onOnline = () => {
+      if (document.visibilityState === 'visible') {
+        client.nudge('online');
+        client.send({ type: 'presence', visible: true });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
     return () => {
-      document.removeEventListener('visibilitychange', nudge);
-      window.removeEventListener('online', nudge);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
       client.close();
       clientRef.current = null;
     };
@@ -258,6 +278,11 @@ export function App() {
       : state === 'online' && syncing && activeId
         ? '同步中…'
         : null;
+  // 在线时附带业务帧出口（直连 / 中继）：顶栏副标题与抽屉设备行共用
+  const connectionLabel =
+    state === 'online'
+      ? `${STATE_LABEL.online} · ${transport === 'direct' ? '直连' : '中继'}`
+      : STATE_LABEL[state];
   const prevBannerRef = useRef<string | null>(null);
   useEffect(() => {
     const prev = prevBannerRef.current;
@@ -392,7 +417,7 @@ export function App() {
         cwd={entry?.cwd}
         view={view}
         connState={state}
-        stateLabel={STATE_LABEL[state]}
+        stateLabel={connectionLabel}
         banner={banner}
         onOpenDrawer={() => setDrawerOpen(true)}
         onNewSession={() => setComposing(true)}
@@ -404,6 +429,7 @@ export function App() {
         hasOlder={Boolean(
           activeId && view && view.messages.size > 0 && Math.min(...view.messages.keys()) > 0
         )}
+        historyLoading={Boolean(activeId && historyPending.has(activeId))}
         onLoadOlder={() => activeId && clientRef.current?.requestHistory(activeId)}
         queued={entry?.queued}
         onSend={(text, images) => {
@@ -436,7 +462,7 @@ export function App() {
         devices={devices}
         activeDevicePairId={device.pairId}
         connected={state === 'online'}
-        connectionLabel={STATE_LABEL[state]}
+        connectionLabel={connectionLabel}
         onClose={() => setDrawerOpen(false)}
         onSelect={(id) => {
           setActiveId(id);

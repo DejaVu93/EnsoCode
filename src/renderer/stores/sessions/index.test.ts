@@ -1,14 +1,16 @@
 import type { ChildSessionIdentity } from '@shared/builtinAgents';
 import type { CapabilityAskRequest } from '@shared/capabilities/types';
-import type { ParentHistoryTailResult } from '@shared/types';
 import type {
+  ConversationReloadResult,
   DispatchMainEvent,
+  ParentHistoryTailResult,
   RendererAgentEvent,
   SourceAuthorityProjection,
 } from '@shared/types/agent';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SettingsModule from '../settings';
 import type * as SessionsModule from './index';
+import { MESSAGE_CACHE_TTL_MS } from './messageCache';
 
 let onCapabilityAsk: ((request: CapabilityAskRequest) => void) | undefined;
 let onAgentEvent: ((event: RendererAgentEvent) => void) | undefined;
@@ -17,11 +19,19 @@ let sourceProjection: SourceAuthorityProjection = { projects: [], conversations:
 let nextConversationId = 'parent';
 const agentPrompt = vi.fn(async () => ({ ok: true }));
 const agentSpawn = vi.fn(async () => ({ ok: true }));
-const readParentHistoryTail = vi.fn<() => Promise<ParentHistoryTailResult>>(async () => ({
-  ok: false as const,
-  code: 'not-found' as const,
-  error: 'no',
-}));
+const reloadConversation = vi.fn(
+  async (_conversationId: string): Promise<ConversationReloadResult> => ({
+    ok: false,
+    error: 'no',
+  })
+);
+const readParentHistoryTail = vi.fn(
+  async (_conversationId?: string, _beforeIndex?: number): Promise<ParentHistoryTailResult> => ({
+    ok: false,
+    code: 'not-found',
+    error: 'no',
+  })
+);
 const dispatch = vi.fn();
 const registerModelSelection = vi.fn(async () => ({
   accepted: true as const,
@@ -111,6 +121,7 @@ const hireCoworker = vi.fn(async (): Promise<{ ok: boolean; error?: string }> =>
 const summarizeTitle = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
 const agentAbort = vi.fn(async (_id: string) => ({ ok: true }));
 const agentRelease = vi.fn(async (_id: string) => ({ ok: true }));
+const requestSnapshot = vi.fn(async () => ({ ok: true }));
 
 vi.stubGlobal('navigator', { language: 'en-US' });
 vi.stubGlobal('document', {
@@ -142,9 +153,10 @@ vi.stubGlobal('window', {
         onAgentEvent = callback;
         return vi.fn();
       }),
-      requestSnapshot: vi.fn(async () => ({ ok: true })),
+      requestSnapshot,
       readParentHistoryTail,
       readChildHistory,
+      reloadConversation,
       prompt: agentPrompt,
       summarizeTitle,
       spawn: agentSpawn,
@@ -252,6 +264,7 @@ describe('typed Agent child projection', () => {
       error: 'no',
     });
     agentSpawn.mockClear();
+    requestSnapshot.mockClear();
     nextConversationId = 'parent';
     sourceProjection = {
       projects: [
@@ -1285,7 +1298,11 @@ describe('typed Agent child projection', () => {
   });
 
   describe('回合结束滚动刷新标题', () => {
-    const digest = { userText: '本轮用户请求', assistantText: '本轮 assistant 结论' };
+    const digest = {
+      firstUserText: '会话首条请求',
+      userText: '本轮用户请求',
+      assistantText: '本轮 assistant 结论',
+    };
 
     /** 构造一个已 started、带标题与模型记忆的 root 会话，返回其 id */
     function seedStartedRoot(id: string, overrides: Record<string, unknown> = {}) {
@@ -1310,7 +1327,7 @@ describe('typed Agent child projection', () => {
       }));
     }
 
-    function turnCompleted(id: string, d: { userText: string; assistantText: string } = digest) {
+    function turnCompleted(id: string, d: typeof digest = digest) {
       onAgentEvent?.({
         type: 'turn-completed',
         identity: { sessionId: id, generation: 'g1' },
@@ -1342,11 +1359,37 @@ describe('typed Agent child projection', () => {
         {
           kind: 'rolling',
           currentTitle: '初始标题',
+          firstUserText: '会话首条请求',
           userText: '本轮用户请求',
           assistantText: '本轮 assistant 结论',
         },
         { providerId: 'provider-1', modelId: 'model-1' }
       );
+    });
+
+    it('本轮 user 是推进类短句（“开始实施”）→ 不发滚动总结，但 lastTurnDigest 照常写入', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      const continuation = { ...digest, userText: '开始实施' };
+      turnCompleted('parent', continuation);
+
+      expect(summarizeTitle).not.toHaveBeenCalled();
+      const conversation = sessionsModule.useSessionsStore.getState().conversations.parent;
+      expect(conversation.lastTurnDigest).toEqual(continuation);
+      expect(conversation.titleSummaryPending).toBeUndefined();
+      expect(conversation.title).toBe('初始标题');
+    });
+
+    it('推进类短句带实词（“继续排查节点转圈”）→ 照常发滚动总结', async () => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      seedStartedRoot('parent');
+
+      turnCompleted('parent', { ...digest, userText: '继续排查节点转圈' });
+
+      expect(summarizeTitle).toHaveBeenCalledTimes(1);
     });
 
     it('在飞未回流时第二个 turn-completed 不再调用；收到 title-generated 后再触发', async () => {
@@ -1530,21 +1573,222 @@ describe('typed Agent child projection', () => {
       );
     });
 
-    it('title-generated 的 title 与当前相同 → store state 引用不变', async () => {
+    it('title-generated 的 title 与当前相同 → 标题不变，但在飞态清除', async () => {
       settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
       seedStartedRoot('parent');
       // 制造在飞基准
       turnCompleted('parent');
+      expect(
+        sessionsModule.useSessionsStore.getState().conversations.parent.titleSummaryPending
+      ).toBe(true);
 
-      const before = sessionsModule.useSessionsStore.getState();
       onAgentEvent?.({
         type: 'title-generated',
         conversationId: 'parent',
         title: '初始标题',
       });
-      const after = sessionsModule.useSessionsStore.getState();
-      // 模型选择不改 → 不写 state，引用应保持不变
-      expect(after).toBe(before);
+      const after = sessionsModule.useSessionsStore.getState().conversations.parent;
+      // 模型选择不改 → 标题保持；但“标题已准确”也是成功，转圈必须消失
+      expect(after.title).toBe('初始标题');
+      expect(after.titleSummaryPending).toBeUndefined();
+    });
+  });
+
+  describe('标题总结在飞态、失败态与手动重试', () => {
+    const digest = {
+      firstUserText: '会话首条请求',
+      userText: '本轮用户请求',
+      assistantText: '本轮 assistant 结论',
+    };
+    const conv = () => sessionsModule.useSessionsStore.getState().conversations.parent;
+
+    function seed(overrides: Record<string, unknown> = {}) {
+      sessionsModule.useSessionsStore.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          parent: {
+            ...state.conversations.parent,
+            title: '初始标题',
+            started: true,
+            spawning: false,
+            status: 'idle' as const,
+            generation: 'g1',
+            lastProviderId: 'provider-1',
+            lastModelId: 'model-1',
+            messages: [],
+            titleLocked: undefined,
+            titleSummaryError: undefined,
+            titleSummaryPending: undefined,
+            lastTurnDigest: undefined,
+            ...overrides,
+          },
+        },
+      }));
+    }
+
+    function turnCompleted(seq = 2) {
+      onAgentEvent?.({
+        type: 'turn-completed',
+        identity: { sessionId: 'parent', generation: 'g1' },
+        seq,
+        turnId: `turn-${seq}`,
+        digest,
+      });
+    }
+
+    beforeEach(() => {
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      summarizeTitle.mockClear();
+      summarizeTitle.mockResolvedValue({ ok: true });
+      // 清掉上一用例可能泄漏的在飞基准
+      onAgentEvent?.({ type: 'title-generated', conversationId: 'parent', title: '__reset__' });
+      seed();
+    });
+
+    it('发起总结后 titleSummaryPending=true；title-generated 到达后清除', async () => {
+      turnCompleted();
+      expect(conv().titleSummaryPending).toBe(true);
+      onAgentEvent?.({ type: 'title-generated', conversationId: 'parent', title: '新标题' });
+      expect(conv().titleSummaryPending).toBeUndefined();
+      expect(conv().title).toBe('新标题');
+    });
+
+    it('title-failed 在飞 → 写 titleSummaryError、清 pending；标题不变', async () => {
+      turnCompleted();
+      onAgentEvent?.({
+        type: 'title-failed',
+        conversationId: 'parent',
+        error: 'cursor/composer-2.5-fast: timed out after 60s',
+      });
+      expect(conv().titleSummaryError).toBe('cursor/composer-2.5-fast: timed out after 60s');
+      expect(conv().titleSummaryPending).toBeUndefined();
+      expect(conv().title).toBe('初始标题');
+    });
+
+    it('title-failed 不在飞（迟到） → state 引用不变', async () => {
+      const before = sessionsModule.useSessionsStore.getState();
+      onAgentEvent?.({ type: 'title-failed', conversationId: 'parent', error: 'late' });
+      expect(sessionsModule.useSessionsStore.getState()).toBe(before);
+    });
+
+    it('title-failed 对 titleLocked 会话不写错误', async () => {
+      turnCompleted();
+      sessionsModule.useSessionsStore.getState().renameConversation('parent', '手动改名');
+      // 改名已清在飞；即使再来一个在飞态（模拟竞态）也不该写错误
+      onAgentEvent?.({ type: 'title-failed', conversationId: 'parent', error: 'x' });
+      expect(conv().titleSummaryError).toBeUndefined();
+      expect(conv().title).toBe('手动改名');
+    });
+
+    it('title-generated 成功清除之前的 titleSummaryError', async () => {
+      seed({ titleSummaryError: '旧错误' });
+      turnCompleted();
+      // 发起时就已清错误
+      expect(conv().titleSummaryError).toBeUndefined();
+      seed({ titleSummaryError: '又出错', titleSummaryPending: true });
+      onAgentEvent?.({ type: 'title-generated', conversationId: 'parent', title: '初始标题' });
+      expect(conv().titleSummaryError).toBeUndefined();
+    });
+
+    it('renameConversation 清 titleSummaryError 与 titleSummaryPending', async () => {
+      turnCompleted();
+      seed({ titleSummaryError: '错', titleSummaryPending: true });
+      sessionsModule.useSessionsStore.getState().renameConversation('parent', '手动');
+      expect(conv().titleSummaryError).toBeUndefined();
+      expect(conv().titleSummaryPending).toBeUndefined();
+    });
+
+    it('turn-completed 带 digest → lastTurnDigest 写入', async () => {
+      turnCompleted();
+      expect(conv().lastTurnDigest).toEqual(digest);
+    });
+
+    it('summarizeTitle IPC 同步拒绝 → 与 title-failed 同效', async () => {
+      summarizeTitle.mockResolvedValueOnce({ ok: false, error: 'no usable title model' });
+      turnCompleted();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(conv().titleSummaryError).toBe('no usable title model');
+      expect(conv().titleSummaryPending).toBeUndefined();
+    });
+
+    it('retryTitleSummary：有 lastTurnDigest → rolling，清 error，pending=true', async () => {
+      seed({ lastTurnDigest: digest, titleSummaryError: '错' });
+      sessionsModule.useSessionsStore.getState().retryTitleSummary('parent');
+      expect(summarizeTitle).toHaveBeenCalledWith(
+        'parent',
+        { kind: 'rolling', currentTitle: '初始标题', ...digest },
+        { providerId: 'provider-1', modelId: 'model-1' }
+      );
+      expect(conv().titleSummaryError).toBeUndefined();
+      expect(conv().titleSummaryPending).toBe(true);
+    });
+
+    it('retryTitleSummary：无 digest 有正文 → initial(首条用户文本)', async () => {
+      seed({
+        messages: [
+          { role: 'user', content: [{ type: 'text', text: '首条用户消息原文\n第二行' }] },
+          { role: 'assistant', content: [{ type: 'text', text: '回复' }] },
+        ],
+      });
+      sessionsModule.useSessionsStore.getState().retryTitleSummary('parent');
+      expect(summarizeTitle).toHaveBeenCalledWith(
+        'parent',
+        { kind: 'initial', text: '首条用户消息原文\n第二行' },
+        { providerId: 'provider-1', modelId: 'model-1' }
+      );
+    });
+
+    it('retryTitleSummary：无 digest 无正文 → initial(当前标题)', async () => {
+      sessionsModule.useSessionsStore.getState().retryTitleSummary('parent');
+      expect(summarizeTitle).toHaveBeenCalledWith(
+        'parent',
+        { kind: 'initial', text: '初始标题' },
+        { providerId: 'provider-1', modelId: 'model-1' }
+      );
+    });
+
+    it('retryTitleSummary：titleLocked / 开关关 / 在飞 → 不调用', async () => {
+      seed({ lastTurnDigest: digest, titleLocked: true });
+      sessionsModule.useSessionsStore.getState().retryTitleSummary('parent');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+
+      seed({ lastTurnDigest: digest });
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: false });
+      sessionsModule.useSessionsStore.getState().retryTitleSummary('parent');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+
+      settingsModule.useSettingsStore.setState({ titleSummaryEnabled: true });
+      turnCompleted(); // 制造在飞
+      summarizeTitle.mockClear();
+      sessionsModule.useSessionsStore.getState().retryTitleSummary('parent');
+      expect(summarizeTitle).not.toHaveBeenCalled();
+    });
+
+    it('开关切 false → 全部 titleSummaryError / titleSummaryPending 清空', async () => {
+      turnCompleted();
+      seed({ titleSummaryError: '错', titleSummaryPending: true });
+      settingsModule.useSettingsStore.getState().setTitleSummaryEnabled(false);
+      expect(conv().titleSummaryError).toBeUndefined();
+      expect(conv().titleSummaryPending).toBeUndefined();
+      // 在飞基准也已清：迟到的 title-generated 不再写回
+      onAgentEvent?.({ type: 'title-generated', conversationId: 'parent', title: '迟到' });
+      expect(conv().title).toBe('初始标题');
+    });
+
+    it('partialize 不含 titleSummaryError / titleSummaryPending / lastTurnDigest', async () => {
+      seed({ titleSummaryError: '错', titleSummaryPending: true, lastTurnDigest: digest });
+      const partialize = sessionsModule.useSessionsStore.persist.getOptions().partialize;
+      const persisted = partialize?.(sessionsModule.useSessionsStore.getState()) as {
+        conversations: Record<string, Record<string, unknown>>;
+      };
+      // partialize 用 `key: undefined` 剔除（与周围字段同款），JSON 落盘时不写该键
+      expect(persisted.conversations.parent.titleSummaryError).toBeUndefined();
+      expect(persisted.conversations.parent.titleSummaryPending).toBeUndefined();
+      expect(persisted.conversations.parent.lastTurnDigest).toBeUndefined();
+      expect(JSON.stringify(persisted.conversations.parent)).not.toMatch(
+        /titleSummaryError|titleSummaryPending|lastTurnDigest/
+      );
     });
   });
 
@@ -1823,14 +2067,50 @@ describe('typed Agent child projection', () => {
 });
 
 describe('parent history tail hydrate', () => {
+  beforeAll(async () => {
+    settingsModule ??= await import('../settings');
+    sessionsModule ??= await import('./index');
+  });
+
+  beforeEach(async () => {
+    requestSnapshot.mockClear();
+    readParentHistoryTail.mockReset();
+    readParentHistoryTail.mockResolvedValue({
+      ok: false,
+      code: 'not-found',
+      error: 'no',
+    });
+    if (sessionsModule.useSessionsStore.getState().conversations.parent) return;
+    nextConversationId = 'parent';
+    sourceProjection = {
+      projects: [
+        {
+          projectId: 'project',
+          canonicalPath: '/workspace',
+          state: 'active',
+          version: 1,
+        },
+      ],
+      conversations: [],
+    };
+    sessionsModule.useSessionsStore.setState({
+      conversations: {},
+      order: [],
+      activeId: null,
+      pendingAgentPrefill: undefined,
+    });
+    settingsModule.useSettingsStore.setState({
+      projects: [{ id: 'project', name: 'Project', path: '/workspace' }],
+    });
+    await seedParent();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('spawn 中仍能上屏尾巴，且不写 historyOnly', async () => {
-    let resolveTail:
-      | ((value: {
-          ok: true;
-          messages: Array<{ role: 'assistant'; content: Array<{ type: 'text'; text: string }> }>;
-          baseIndex: number;
-        }) => void)
-      | undefined;
+    let resolveTail: ((value: ParentHistoryTailResult) => void) | undefined;
     readParentHistoryTail.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -1872,6 +2152,71 @@ describe('parent history tail hydrate', () => {
     expect(cold.historyOnly).toBeUndefined();
     expect(cold.historyBaseIndex).toBe(12);
     expect(cold.generation).toBe('stale-generation');
+  });
+
+  it('上滑只按当前 historyBaseIndex 取更早一页', async () => {
+    readParentHistoryTail.mockResolvedValue({
+      ok: true,
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'older' }] }],
+      baseIndex: 11,
+    });
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: false,
+          sessionFile: '/tmp/parent.jsonl',
+          historyBaseIndex: 12,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'tail' }] }],
+        },
+      },
+      activeId: 'parent',
+    }));
+    await sessionsModule.useSessionsStore.getState().loadOlderHistory('parent');
+    expect(readParentHistoryTail).toHaveBeenCalledWith('parent', 12);
+    const parent = sessionsModule.useSessionsStore.getState().conversations.parent;
+    expect(parent.historyBaseIndex).toBe(11);
+    expect(parent.messages.map((message) => (message.content[0] as { text: string }).text)).toEqual(
+      ['older', 'tail']
+    );
+    expect(parent.historyLoading).toBeUndefined();
+  });
+
+  it('上滑在途时 historyLoading，结束后清除', async () => {
+    let resolvePage: ((value: ParentHistoryTailResult) => void) | undefined;
+    readParentHistoryTail.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePage = resolve;
+        })
+    );
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: false,
+          sessionFile: '/tmp/parent.jsonl',
+          historyBaseIndex: 12,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'tail' }] }],
+        },
+      },
+      activeId: 'parent',
+    }));
+    const pending = sessionsModule.useSessionsStore.getState().loadOlderHistory('parent');
+    expect(sessionsModule.useSessionsStore.getState().conversations.parent.historyLoading).toBe(
+      true
+    );
+    resolvePage?.({
+      ok: true,
+      messages: [{ role: 'assistant', content: [{ type: 'text', text: 'older' }] }],
+      baseIndex: 11,
+    });
+    await pending;
+    expect(sessionsModule.useSessionsStore.getState().conversations.parent.historyLoading).toBe(
+      undefined
+    );
   });
 
   it('resume 已在 spawn 时 send 不再二次 spawn', async () => {
@@ -1917,5 +2262,405 @@ describe('parent history tail hydrate', () => {
       .getState()
       .send('go', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
     expect(agentSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  it('切到已有半截权威正文的会话仍要 snapshot，不打尾窗', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        partial: {
+          ...state.conversations.parent,
+          id: 'partial',
+          started: true,
+          spawning: false,
+          status: 'idle',
+          sessionFile: '/tmp/partial.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['parent', 'partial'],
+      activeId: 'parent',
+    }));
+    requestSnapshot.mockClear();
+    readParentHistoryTail.mockClear();
+    sessionsModule.useSessionsStore.getState().selectConversation('partial');
+    expect(requestSnapshot).toHaveBeenCalledWith('partial');
+    expect(readParentHistoryTail).not.toHaveBeenCalled();
+  });
+
+  it('切到空窗可 resume 会话仍走尾窗 + snapshot', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        empty: {
+          ...state.conversations.parent,
+          id: 'empty',
+          started: false,
+          spawning: false,
+          status: 'idle',
+          sessionFile: '/tmp/empty.jsonl',
+          messages: [],
+        },
+      },
+      order: ['parent', 'empty'],
+      activeId: 'parent',
+    }));
+    requestSnapshot.mockClear();
+    readParentHistoryTail.mockClear();
+    sessionsModule.useSessionsStore.getState().selectConversation('empty');
+    expect(requestSnapshot).toHaveBeenCalledWith('empty');
+    expect(readParentHistoryTail).toHaveBeenCalledWith('empty');
+  });
+
+  function seedReleasable(id: string) {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        [id]: {
+          ...state.conversations.parent,
+          id,
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: false,
+          status: 'idle',
+          generation: 'g1',
+          lastSeq: 0,
+          sessionFile: `/tmp/${id}.jsonl`,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+          customEntries: [{ kind: 'agent-completed', at: 1 } as never],
+          historyBaseIndex: 3,
+        },
+      },
+      order: ['parent', id],
+      activeId: 'parent',
+    }));
+  }
+
+  it('worker 释放冷会话（parent-ended）时清掉可能掉队的正文，切回走尾窗', () => {
+    seedReleasable('released');
+    onAgentEvent?.({
+      type: 'parent-ended',
+      identity: { sessionId: 'released', generation: 'g1' },
+      seq: 9,
+      reason: 'evicted',
+    });
+    const released = sessionsModule.useSessionsStore.getState().conversations.released;
+    expect(released.started).toBe(false);
+    expect(released.messages).toEqual([]);
+    expect(released.customEntries).toEqual([]);
+    expect(released.historyBaseIndex).toBeUndefined();
+    readParentHistoryTail.mockClear();
+    sessionsModule.useSessionsStore.getState().selectConversation('released');
+    expect(readParentHistoryTail).toHaveBeenCalledWith('released');
+  });
+
+  it('worker 释放热会话（刚离开）时正文可信，保留', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    seedReleasable('warm');
+    sessionsModule.useSessionsStore.getState().selectConversation('warm');
+    sessionsModule.useSessionsStore.getState().selectConversation('parent');
+    vi.setSystemTime(2_000);
+    onAgentEvent?.({
+      type: 'parent-ended',
+      identity: { sessionId: 'warm', generation: 'g1' },
+      seq: 9,
+      reason: 'released',
+    });
+    const warm = sessionsModule.useSessionsStore.getState().conversations.warm;
+    expect(warm.started).toBe(false);
+    expect(warm.messages).toHaveLength(1);
+    expect(warm.historyBaseIndex).toBe(3);
+    vi.useRealTimers();
+  });
+
+  it('partial snapshot 不往冷会话灌正文，但 worker 持有即 started', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        phoneFed: {
+          ...state.conversations.parent,
+          id: 'phoneFed',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: false,
+          spawning: false,
+          status: 'idle',
+          generation: undefined,
+          sessionFile: '/tmp/phoneFed.jsonl',
+          messages: [],
+          customEntries: [],
+        },
+      },
+      order: ['parent', 'phoneFed'],
+      activeId: 'parent',
+    }));
+    onAgentEvent?.({
+      type: 'snapshot',
+      partial: true,
+      sessions: [
+        {
+          identity: { sessionId: 'phoneFed', generation: 'g1' },
+          status: 'idle',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '手机灌进来的' }] }],
+          commands: [],
+        },
+      ],
+    });
+    const phoneFed = sessionsModule.useSessionsStore.getState().conversations.phoneFed;
+    expect(phoneFed.messages).toEqual([]);
+    expect(phoneFed.started).toBe(true);
+    expect(phoneFed.generation).toBe('g1');
+  });
+
+  it('空 partial snapshot 带 sessionId：目标不在 worker 则收回 started，正在看就清空并读尾窗', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        gone: {
+          ...state.conversations.parent,
+          id: 'gone',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: false,
+          status: 'idle',
+          sessionFile: '/tmp/gone.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['parent', 'gone'],
+      activeId: 'gone',
+    }));
+    readParentHistoryTail.mockClear();
+    onAgentEvent?.({ type: 'snapshot', partial: true, sessionId: 'gone', sessions: [] });
+    const gone = sessionsModule.useSessionsStore.getState().conversations.gone;
+    expect(gone.started).toBe(false);
+    expect(gone.messages).toEqual([]);
+    expect(readParentHistoryTail).toHaveBeenCalledWith('gone');
+  });
+
+  it('空 partial snapshot 带 sessionId：spawning 中的会话不动', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        reviving: {
+          ...state.conversations.parent,
+          id: 'reviving',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: true,
+          status: 'idle',
+          sessionFile: '/tmp/reviving.jsonl',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['parent', 'reviving'],
+      activeId: 'parent',
+    }));
+    onAgentEvent?.({ type: 'snapshot', partial: true, sessionId: 'reviving', sessions: [] });
+    const reviving = sessionsModule.useSessionsStore.getState().conversations.reviving;
+    expect(reviving.started).toBe(true);
+    expect(reviving.messages).toHaveLength(1);
+  });
+
+  it('在会话里坐超 TTL 再离开，TTL 内后台 upsert 仍写入', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    const template = sessionsModule.useSessionsStore.getState().conversations.parent;
+    sessionsModule.useSessionsStore.setState({
+      conversations: {
+        stay: {
+          ...template,
+          id: 'stay',
+          started: false,
+          sessionFile: undefined,
+          activeTabId: undefined,
+          parentId: undefined,
+          messages: [],
+        },
+        leave: {
+          ...template,
+          id: 'leave',
+          started: true,
+          sessionFile: '/tmp/leave.jsonl',
+          status: 'running',
+          generation: 'g1',
+          lastSeq: 0,
+          historyBaseIndex: undefined,
+          activeTabId: undefined,
+          parentId: undefined,
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: '前半' }] }],
+        },
+      },
+      order: ['stay', 'leave'],
+      activeId: 'stay',
+    });
+    sessionsModule.useSessionsStore.getState().selectConversation('leave');
+    vi.setSystemTime(1_000 + MESSAGE_CACHE_TTL_MS + 1);
+    sessionsModule.useSessionsStore.getState().selectConversation('stay');
+    onAgentEvent?.({
+      type: 'message-upsert',
+      identity: { sessionId: 'leave', generation: 'g1' },
+      seq: 1,
+      index: 0,
+      message: { role: 'assistant', content: [{ type: 'text', text: '后半' }] },
+    });
+    const message = sessionsModule.useSessionsStore.getState().conversations.leave.messages[0];
+    expect((message.content[0] as { text: string }).text).toBe('后半');
+  });
+});
+
+describe('manual conversation reload', () => {
+  beforeAll(async () => {
+    settingsModule ??= await import('../settings');
+    sessionsModule ??= await import('./index');
+  });
+
+  beforeEach(async () => {
+    reloadConversation.mockReset();
+    if (!sessionsModule.useSessionsStore.getState().conversations.parent) {
+      nextConversationId = 'parent';
+      sourceProjection = {
+        projects: [
+          { projectId: 'project', canonicalPath: '/workspace', state: 'active', version: 1 },
+        ],
+        conversations: [],
+      };
+      sessionsModule.useSessionsStore.setState({
+        conversations: {},
+        order: [],
+        activeId: null,
+        pendingAgentPrefill: undefined,
+      });
+      settingsModule.useSettingsStore.setState({
+        projects: [{ id: 'project', name: 'Project', path: '/workspace' }],
+      });
+      await seedParent();
+    }
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        live: {
+          ...state.conversations.parent,
+          id: 'live',
+          parentId: undefined,
+          activeTabId: undefined,
+          started: true,
+          spawning: false,
+          status: 'running',
+          generation: 'g1',
+          lastSeq: 5,
+          draftText: 'unsent draft',
+          messages: [{ role: 'assistant', content: [{ type: 'text', text: 'stale' }] }],
+        },
+      },
+      order: ['parent', 'live'],
+      activeId: 'live',
+    }));
+  });
+
+  const liveResult = (seq: number, text: string): ConversationReloadResult => ({
+    ok: true,
+    source: 'live',
+    seq,
+    snapshot: {
+      identity: { sessionId: 'live', generation: 'g1' },
+      status: 'running',
+      messages: [{ role: 'assistant', content: [{ type: 'text', text }] }],
+      commands: [],
+    },
+  });
+  const textsOf = (id: string) =>
+    sessionsModule.useSessionsStore
+      .getState()
+      .conversations[id].messages.map((message) => (message.content[0] as { text: string }).text);
+
+  it('成功：权威正文替换，草稿与 started 保留，返回 null', async () => {
+    reloadConversation.mockResolvedValue(liveResult(9, 'fresh'));
+    const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(error).toBeNull();
+    expect(reloadConversation).toHaveBeenCalledWith('live');
+    const live = sessionsModule.useSessionsStore.getState().conversations.live;
+    expect(textsOf('live')).toEqual(['fresh']);
+    expect(live.draftText).toBe('unsent draft');
+    expect(live.started).toBe(true);
+    expect(live.lastSeq).toBe(9);
+    expect(live.reloading).toBeUndefined();
+  });
+
+  it('在途：reloading 标记，同会话并发合并为一次 IPC', async () => {
+    let resolveReload: ((value: ConversationReloadResult) => void) | undefined;
+    reloadConversation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const first = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    const second = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBe(true);
+    expect(reloadConversation).toHaveBeenCalledTimes(1);
+    resolveReload?.(liveResult(9, 'fresh'));
+    expect(await Promise.all([first, second])).toEqual([null, null]);
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
+  });
+
+  it('在途期间到达的实时事件既即时上屏，也在快照落地后按水位重放', async () => {
+    let resolveReload: ((value: ConversationReloadResult) => void) | undefined;
+    reloadConversation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const pending = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    onAgentEvent?.({
+      type: 'message-upsert',
+      identity: { sessionId: 'live', generation: 'g1' },
+      seq: 10,
+      index: 1,
+      message: { role: 'assistant', content: [{ type: 'text', text: 'after' }] },
+    });
+    expect(textsOf('live')).toEqual(['stale', 'after']);
+    resolveReload?.(liveResult(9, 'fresh'));
+    await pending;
+    expect(textsOf('live')).toEqual(['fresh', 'after']);
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.lastSeq).toBe(10);
+  });
+
+  it('失败：正文不变，返回错误原因', async () => {
+    reloadConversation.mockResolvedValue({ ok: false, error: 'History file is missing.' });
+    const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(error).toBe('History file is missing.');
+    expect(textsOf('live')).toEqual(['stale']);
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
+  });
+
+  it('会话在途中被删除：结果丢弃，不复活', async () => {
+    let resolveReload: ((value: ConversationReloadResult) => void) | undefined;
+    reloadConversation.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveReload = resolve;
+        })
+    );
+    const pending = sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    sessionsModule.useSessionsStore.setState((state) => {
+      const { live: _live, ...rest } = state.conversations;
+      return { conversations: rest, order: ['parent'], activeId: 'parent' };
+    });
+    resolveReload?.(liveResult(9, 'fresh'));
+    await pending;
+    expect(sessionsModule.useSessionsStore.getState().conversations.live).toBeUndefined();
+  });
+
+  it('IPC 抛异常：当失败处理，不留 reloading', async () => {
+    reloadConversation.mockRejectedValue(new Error('ipc down'));
+    const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
+    expect(error).toBe('ipc down');
+    expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
   });
 });

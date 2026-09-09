@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyExploreFold, createExploreFoldState, type LlmMessage } from './exploreFold';
+import {
+  applyExploreFold,
+  createExploreFoldState,
+  createExploreFoldTools,
+  type LlmMessage,
+} from './exploreFold';
 
 const msg = (role: string, text: string, extra?: Partial<LlmMessage>): LlmMessage => ({
   role,
@@ -43,5 +48,25 @@ describe('createExploreFoldState', () => {
     expect(() => state.mark('again')).toThrow(/already active/i);
     const fold = state.fold('report');
     expect(fold.report).toBe('report');
+  });
+});
+
+describe('createExploreFoldTools', () => {
+  it('explore_fold 的结果正文里带上 report,时间线展开即可看到留存内容', async () => {
+    const state = createExploreFoldState();
+    const tools = createExploreFoldTools(state);
+    const fold = tools.find((tool) => tool.name === 'explore_fold');
+    expect(fold).toBeDefined();
+    state.mark('goal');
+    const result = await fold?.execute(
+      'id',
+      { report: '  auth 在 src/auth.ts  ' },
+      undefined,
+      undefined,
+      {} as never
+    );
+    const text = result?.content.map((part) => ('text' in part ? part.text : '')).join('');
+    expect(text).toContain('auth 在 src/auth.ts');
+    expect(text).toContain('Explore folded.');
   });
 });

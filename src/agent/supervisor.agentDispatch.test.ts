@@ -236,6 +236,51 @@ describe('SessionSupervisor deterministic child lifecycle', () => {
     expect(parentSession.prompt).not.toHaveBeenCalled();
   });
 
+  it('手动重读活动会话返回水位且不触发模型执行', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({ type: 'spawn-parent', identity: parent, cwd: '/workspace', model });
+    await waitFor(events, 'parent-ready');
+    expect(() =>
+      supervisor.handleCommand({
+        type: 'reload-session',
+        requestId: 'manual-1',
+        sessionId: parent.sessionId,
+      })
+    ).not.toThrow();
+    expect(events.findLast((event) => event.type === 'session-reloaded')).toMatchObject({
+      requestId: 'manual-1',
+      result: { ok: true, seq: expect.any(Number), snapshot: { identity: parent } },
+    });
+    expect((mocks.sessions[0] as ReturnType<typeof session>).prompt).not.toHaveBeenCalled();
+  });
+
+  it('手动重读不存在的会话返回明确失败而不创建会话', () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    expect(() =>
+      supervisor.handleCommand({
+        type: 'reload-session',
+        requestId: 'manual-2',
+        sessionId: 'missing',
+      })
+    ).not.toThrow();
+    expect(events).toContainEqual({
+      type: 'session-reloaded',
+      requestId: 'manual-2',
+      result: { ok: false, error: expect.any(String) },
+    });
+    expect(mocks.sessions).toHaveLength(0);
+  });
+
   it('persists custom entries outside buildSessionContext and restores them in snapshot', async () => {
     const events: AgentWorkerEvent[] = [];
     const supervisor = new SessionSupervisor({
@@ -279,6 +324,48 @@ describe('SessionSupervisor deterministic child lifecycle', () => {
     expect(snapshot).toMatchObject({
       type: 'snapshot',
       sessions: [expect.objectContaining({ identity: parent, customEntries: [entry] })],
+    });
+    expect(snapshot).not.toHaveProperty('sessionId');
+  });
+
+  it('snapshot 带回 subagents / backgroundTasks，切会话不会清空 TaskBar', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({ type: 'spawn-parent', identity: parent, cwd: '/workspace', model });
+    await waitFor(events, 'parent-ready');
+    const internals = supervisor as unknown as {
+      sessions: Map<string, { subagents: Map<string, unknown> }>;
+      bgTasks: { snapshot: (sessionId: string) => unknown[] };
+    };
+    const agent = { id: 'a1', description: 'recon', status: 'running', startedAt: 1 };
+    internals.sessions.get(parent.sessionId)?.subagents.set(agent.id, agent);
+    const task = { taskId: 't1', command: 'pnpm test', status: 'running', startedAt: 1, tail: '' };
+    internals.bgTasks.snapshot = (sessionId) => (sessionId === parent.sessionId ? [task] : []);
+
+    supervisor.handleCommand({ type: 'snapshot', sessionId: parent.sessionId });
+    expect(events.at(-1)).toMatchObject({
+      type: 'snapshot',
+      sessions: [expect.objectContaining({ subagents: [agent], backgroundTasks: [task] })],
+    });
+  });
+
+  it('targeted snapshot 带回请求的 sessionId，会话不在 worker 时 sessions 为空仍可路由', () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({ type: 'snapshot', sessionId: 'evicted' });
+    expect(events.at(-1)).toEqual({
+      type: 'snapshot',
+      sessions: [],
+      partial: true,
+      sessionId: 'evicted',
     });
   });
 

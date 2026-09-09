@@ -84,7 +84,9 @@ export const IPC_CHANNELS = {
   AGENT_SNAPSHOT: 'agent:snapshot',
   /** 已结束 child 的 safe journal 只读回放（路径由 Main 推导，请求只带 conversationId） */
   AGENT_CHILD_HISTORY_READ: 'agent:child-history-read',
-  /** 父会话 jsonl 尾窗只读（不 spawn）；路径由 Main 从已登记 sessionFile 推导 */
+  /** 手动「重新读取会话」：Main 选来源（worker 活快照 / safe journal），只读不 spawn */
+  AGENT_CONVERSATION_RELOAD: 'agent:conversation-reload',
+  /** 父会话 jsonl 尾窗/分页只读（不 spawn）；路径由 Main 从已登记 sessionFile 推导 */
   AGENT_PARENT_HISTORY_TAIL: 'agent:parent-history-tail',
   AGENT_SUMMARIZE_TITLE: 'agent:summarize-title',
   /** 已启动会话就地换模型；worker 换完回报，Main 据此更新已启动模型记录 */
@@ -178,6 +180,10 @@ export const IPC_CHANNELS = {
   FILES_REVEAL: 'files:reveal',
 
   GIT_DIFF_HEAD: 'git:diff-head',
+
+  // Changes 面板「Session」模式的编辑前快照（主进程按会话落盘）
+  CHANGES_SNAPSHOTS_READ: 'changes:snapshots-read',
+  CHANGES_SNAPSHOTS_WRITE: 'changes:snapshots-write',
 
   // External session import
   SESSIONS_SCAN_EXTERNAL: 'sessions:scan-external',

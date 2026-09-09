@@ -1,67 +1,53 @@
-<!-- TRELLIS:START -->
-# Trellis Instructions
+# EnsoCode 开发约定
 
-These instructions are for AI assistants working in this project.
+本文件是项目对人类和 AI 贡献者都适用的长期约定。
 
-This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
+## 开发原则
 
-- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
-- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
-- `.trellis/workspace/` — per-developer journals and session traces
-- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
+- 变更范围保持最小，不做无关重构或功能扩展。
+- 跨模块、跨层或公开接口改动，先写清行为差距、所属层、必改文件和明确不做的相邻问题。
+- 优先复用现有实现模式；详细规范见 [`docs/engineering-guidelines.md`](docs/engineering-guidelines.md)。
+- 非平凡改动、排障或发现可复用经验时，使用 [`project-knowledge`](.agents/skills/project-knowledge/SKILL.md) 检索和沉淀项目知识。
+- 真实排查过的高代价陷阱见 [`docs/engineering-reference/big-question/`](docs/engineering-reference/big-question/)。
 
-If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
+## 测试先行
 
-If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
-- `.agents/skills/` — reusable Trellis skills
-- `.codex/agents/` — optional custom subagents
+凡是改动可单测逻辑（纯函数、解析器、协议校验、路径校验、store reducer 等），按 Red-Green 循环：
 
-Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
+1. 先写测试并确认它因缺少功能而失败；
+2. 写最小实现使测试通过；
+3. 跑全量测试后再提交。
 
-<!-- TRELLIS:END -->
+重点覆盖身份/去重定义、字符串拼接与解析、安全边界、坏配置和脏输入。文件读取测试使用临时目录，不依赖开发机真实配置。测试应断言可观察行为，而不是只断言内部调用或错误文案。
 
-# 开发纪律（所有贡献者，含 AI）
+涉及模型自主调用工具的功能，至少使用两个不同厂商的模型真机验证；工具 schema 必须声明完整类型，参数归一化必须发生在 schema 校验之前。
 
-## TDD：逻辑改动必须测试先行
+## 提交前检查
 
-凡是改**可单测的逻辑**（纯函数、解析器、协议校验、store reducer——见
-`.trellis/spec/testing.md` 的覆盖范围），按 Red-Green 循环走：
+```bash
+pnpm typecheck && pnpm lint && pnpm test
+```
 
-1. 先写失败测试，**运行并确认它因缺功能而失败**（不是因为拼写错误报错）；
-2. 写最小实现让它通过；
-3. 全量测试保持绿色后才能提交。
+一个可独立描述的修复、功能或重构使用一个独立提交，不把无关改动混在一起。
 
-UI 组件、Electron 窗口行为等 spec 中「暂未覆盖」的范围不强制，但新增的
-纯逻辑若刻意绕开测试（塞进组件里躲避），审查会要求拆出来。
+## 关键边界
 
-### TDD 的角色分离（可选，大改动推荐）
+- 新增 IPC 必须同步修改通道常量、Main handler 注册和 preload typed 出口。
+- IPC 入参一律按 `unknown` 收窄，不能用类型断言代替校验。
+- Renderer 只传标识符，不传任意磁盘路径；路径由 Main 根据权威记录推导并校验边界。
+- API key、MCP env 明文只保留在 Main；不要暴露通用 IPC 调用入口。
+- 会话正文是可丢弃投影，worker / jsonl 才是权威源；reducer 负责事件归并，过期 seq 丢弃。
+- 任何不会真正发给 worker 的操作，都必须在 optimistic echo 之前拒绝。
+- capability 授权按 child generation 建键，不按内部 turnId；child 恢复由 Main 级联完成。
+- 大段文本不要写进 `settings.json`；外部实体删除时同时清理由应用创建的本地副本。
+- 扫描器遵循“来源定位 / 格式读取 / 编排去重”三层结构；单个来源失败不能阻断整体扫描。
 
-TDD 纪律最容易坏在两处：「红」造假（测试和实现同一个脑子写，
-测试贴着既定实现走形式）和「绿」自证（实现者自己宣布通过）。
-逻辑面大的改动（跨模块、用例多、协议/解析器类），推荐用 coworker
-做角色分离，在结构上防住这两点：
+## 排查方式
 
-- **测试先行者**（coworker，`agent_type: tester`）：只读 PRD 与接口契约，产出失败测试并确认红灯；
-  tester 类型的 edit/write 被硬限制在 `*.test.ts` / `*.spec.ts` / `test/**`，写不了实现；
-- **实现者**（主会话或另一 coworker）：只许改实现，不许动测试文件让灯变绿；
-  **红灯到手前不要开写实现**，否则 tester 能读到实现，红灯就不独立了；
-- 验收看 `gate` 退出码，不采信文字汇报；
-- 等 coworker 用 `coworker wait {name}`，不要 `sleep` 轮询；回报被截断时用 `coworker report {name}` 取全文。
+遇到状态不更新、历史为空、输入无响应或只在真机失败的问题，沿完整链路检查：
 
-**调度（一轮结束 ≠ 角色结束）**：`spawn` 只派第一刀切片，禁止把整份 implement.md
-一次性塞进 tester。切片沿用 inline 门槛：这一刀测试预计 < 50 行或用例 < 10 个；超了就拆，
-下一刀 `send` 同一 coworker，不要再 spawn 第二个 tester。`wait` 必须带本刀测试的 `gate`
-（例如 `pnpm exec vitest run src/foo.test.ts`）：红灯看非 0。实现变绿后另跑同一命令期望 0，
-再 `send` 做绿后审计（测试没被改、失败原因曾经是缺功能）或下一刀红灯。角色目标完成才
-`dismiss`，不要 spawn 完一轮就当 one-shot 丢掉。
+```text
+UI → store/reducer → preload → IPC → Main → worker / 文件 / 网络
+```
 
-小的纯函数改动不必拉 coworker，inline Red-Green 即可——判断标准：
-测试文件预计 < 50 行，或用例 < 10 个，直接 inline。
-
-## 小步提交
-
-每完成一个**可独立描述**的改动就 commit——一个 fix、一个 feat、一次重构，
-各自独立成提交。判断标准：commit message 里不需要用「和」「顺便」连接
-两件事。禁止把一整天的工作攒成一个大提交。
-
-提交前自查：`pnpm typecheck && pnpm test` 通过、`biome check` 干净。
+症状位置不一定是根因位置。优先用 CDP、IPC 返回值和持久化文件验证可观察事实，不要只盯着当前组件猜测。

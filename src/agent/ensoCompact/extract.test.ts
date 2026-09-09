@@ -1,39 +1,30 @@
 import { describe, expect, it } from 'vitest';
 import { extractCompactFacts } from './extract';
 import { patchCompactSummary } from './summarize';
+import type { AgentMessage } from './types';
 import { keepRecentTail } from './window';
 
 const entries = [
   {
-    type: 'message',
-    message: {
-      role: 'user',
-      content: 'MUST keep dark mode. Do not use explore_mark. Goal: ship the checkout page.',
-    },
+    role: 'user',
+    content: 'MUST keep dark mode. Do not use explore_mark. Goal: ship the checkout page.',
   },
   {
-    type: 'message',
-    message: {
-      role: 'assistant',
-      content: [
-        { type: 'text', text: 'Working on checkout.' },
-        { type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'src/checkout.ts' } },
-      ],
-    },
+    role: 'assistant',
+    content: [
+      { type: 'text', text: 'Working on checkout.' },
+      { type: 'toolCall', id: 't1', name: 'read', arguments: { path: 'src/checkout.ts' } },
+    ],
   },
   {
-    type: 'message',
-    message: { role: 'toolResult', toolCallId: 't1', content: 'export function Checkout() {}' },
+    role: 'toolResult',
+    toolCallId: 't1',
+    toolName: 'read',
+    content: [{ type: 'text', text: 'export function Checkout() {}' }],
   },
-  {
-    type: 'message',
-    message: { role: 'assistant', content: 'Error: TypeError: cannot read price' },
-  },
-  {
-    type: 'message',
-    message: { role: 'user', content: 'Still blocked on price. Also edit src/price.ts' },
-  },
-];
+  { role: 'assistant', content: 'Error: TypeError: cannot read price' },
+  { role: 'user', content: 'Still blocked on price. Also edit src/price.ts' },
+] as unknown as AgentMessage[];
 
 describe('extractCompactFacts', () => {
   it('抽出硬约束、目标、错误和路径', () => {
@@ -44,6 +35,84 @@ describe('extractCompactFacts', () => {
     expect(facts.errors.some((e) => /TypeError/i.test(e))).toBe(true);
     expect(facts.files).toEqual(expect.arrayContaining(['src/checkout.ts', 'src/price.ts']));
     expect(facts.openLoops.some((l) => /price/i.test(l))).toBe(true);
+  });
+
+  it('分别抽出编辑、写入、Hashline 和读取路径', () => {
+    const facts = extractCompactFacts([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'toolCall', id: 'e1', name: 'edit', arguments: { path: 'src/a.ts', edits: [] } },
+          { type: 'toolCall', id: 'w1', name: 'write', arguments: { path: 'src/b.ts' } },
+          {
+            type: 'toolCall',
+            id: 'e2',
+            name: 'edit',
+            arguments: { input: '[src/c.ts#ABCD]\nPUT 3 foo' },
+          },
+          { type: 'toolCall', id: 'r1', name: 'read', arguments: { path: 'src/read.ts' } },
+        ],
+      },
+    ] as unknown as AgentMessage[]);
+    expect(facts.modifiedFiles).toEqual(
+      expect.arrayContaining(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+    );
+    expect(facts.readFiles).toEqual(['src/read.ts']);
+    expect(facts.files).toEqual(
+      expect.arrayContaining(['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/read.ts'])
+    );
+  });
+
+  it('只采用最后一次 todo 调用的状态', () => {
+    const facts = extractCompactFacts([
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'toolCall',
+            id: 't1',
+            name: 'todo',
+            arguments: { todos: [{ content: 'X', status: 'completed' }] },
+          },
+          {
+            type: 'toolCall',
+            id: 't2',
+            name: 'todo',
+            arguments: {
+              todos: [
+                { content: 'Y', status: 'completed' },
+                { content: 'Z', status: 'in_progress' },
+              ],
+            },
+          },
+        ],
+      },
+    ] as unknown as AgentMessage[]);
+    expect(facts.completedTodos).toEqual(['Y']);
+    expect(facts.activeTodos).toEqual(['Z']);
+  });
+
+  it('从失败工具结果抽出错误文本', () => {
+    const facts = extractCompactFacts([
+      {
+        role: 'toolResult',
+        toolCallId: 'r1',
+        toolName: 'read',
+        isError: true,
+        content: [{ type: 'text', text: 'ENOENT: no such file' }],
+      },
+    ] as unknown as AgentMessage[]);
+    expect(facts.errors).toContain('ENOENT: no such file');
+  });
+
+  it('合并 fileOps 中的读写路径', () => {
+    const facts = extractCompactFacts([], {
+      read: new Set(['x.ts']),
+      written: new Set(['y.ts']),
+      edited: new Set(),
+    });
+    expect(facts.readFiles).toContain('x.ts');
+    expect(facts.modifiedFiles).toContain('y.ts');
   });
 });
 
@@ -82,6 +151,10 @@ describe('patchCompactSummary', () => {
       constraints: ['Do not use explore_mark'],
       errors: ['TypeError: cannot read price'],
       files: ['src/checkout.ts'],
+      readFiles: [],
+      modifiedFiles: [],
+      completedTodos: [],
+      activeTodos: [],
       openLoops: ['blocked on price'],
     });
     expect(patched).toMatch(/## Goal/);

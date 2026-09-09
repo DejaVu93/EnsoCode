@@ -22,7 +22,13 @@ import type { DefaultModelRef } from '../defaultModel';
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
 import { parseSmartCompactMode } from '../smartCompactMode';
 import { WINDOWS_LOCAL_SHELLS, type WindowsLocalShell } from '../windowsLocalShell';
-import { MODEL_API_KINDS, type ModelApiKind, type ModelCapabilityOverrides } from './llm';
+import {
+  MODEL_API_KINDS,
+  type ModelApiKind,
+  type ModelCapabilityOverrides,
+  type ModelReasoningOverride,
+  type ModelThinkingLevelOverride,
+} from './llm';
 import { type AgentDispatchTask, parseAgentDispatchTask } from './mentions';
 
 export type { ChildSessionIdentity, SessionIdentity } from '../builtinAgents';
@@ -31,8 +37,10 @@ export { parseChildSessionIdentity, parseSessionIdentity } from '../builtinAgent
 /** 会话状态。waiting/done 属权限门与 subagent 刀，M1 不引入 */
 export type NodeStatus = 'idle' | 'running' | 'failed';
 
-/** 一轮结束时 worker 切出的压缩摘要；两段均已在 worker 侧按上限截断 */
+/** 一轮结束时 worker 切出的压缩摘要；三段均已在 worker 侧按上限截断 */
 export interface TurnDigest {
+  /** 会话首条 user 文本（清洗后截头）：滚动总结的主旨锚点，防止单轮动作劫持标题；无 user 时为空串 */
+  firstUserText: string;
   /** 本轮全部 user 文本（清洗后 '\n' 拼接，截头） */
   userText: string;
   /** 本轮最后一条含 text 的 assistant 文本（截尾） */
@@ -42,7 +50,17 @@ export interface TurnDigest {
 /** 标题总结输入：initial = 首条消息即时总结；rolling = 每轮结束后的滚动刷新 */
 export type TitleSummaryInput =
   | { kind: 'initial'; text: string }
-  | { kind: 'rolling'; currentTitle: string; userText: string; assistantText: string };
+  | {
+      kind: 'rolling';
+      currentTitle: string;
+      /** 会话首条请求，作为主旨锚点；允许空串（冷会话拿不到） */
+      firstUserText: string;
+      userText: string;
+      assistantText: string;
+    };
+
+/** 标题总结回退链最多候选数：标题模型 → 全局默认 → 会话模型 */
+export const TITLE_SUMMARY_MAX_CANDIDATES = 3;
 
 /** spawn 下发的模型配置。apiKey 只在 Main → worker 方向出现，事件类型不给 auth 位置 */
 export interface SpawnModelConfig extends ModelCapabilityOverrides {
@@ -147,6 +165,9 @@ export interface AgentTypeSpawnConfig {
   model?: SpawnModelConfig;
   /** true = agent_pick：主 agent 必须传 model，禁止继承；false/缺省 = 固定模型或跟随会话，不允许自选覆盖 */
   allowModelOverride?: boolean;
+  /** 类型级推理覆盖：赢过模型条目预设，输给派发 thinking；缺省 = 跟随 */
+  reasoning?: ModelReasoningOverride;
+  thinkingLevel?: ModelThinkingLevelOverride;
 }
 
 /**
@@ -442,6 +463,17 @@ export type ChildHistoryResult =
   | { ok: true; projection: SafeJournalProjection }
   | { ok: false; code: 'not-found' | 'unavailable'; error: string };
 
+/**
+ * 手动「重新读取会话」结果。来源由 Main 决定：会话在 worker 内存活着 → live 快照（带事件 seq 水位）；
+ * 否则走 safe journal 只读投影（history）。失败一律给原因，渲染层保留旧内容并提示。
+ */
+export type ConversationReloadResult =
+  | { ok: true; source: 'live'; snapshot: SessionSnapshot; seq: number }
+  | { ok: true; source: 'history'; projection: SafeJournalProjection }
+  /** 根会话不在 worker 里：pi jsonl 尾窗（baseIndex 为绝对起点，与上滑翻页契约一致） */
+  | { ok: true; source: 'tail'; messages: ProjectedMessage[]; baseIndex: number }
+  | { ok: false; error: string };
+
 export type ParentHistoryTailResult =
   | { ok: true; messages: ProjectedMessage[]; baseIndex: number }
   | { ok: false; code: 'not-found' | 'unavailable'; error: string };
@@ -494,6 +526,8 @@ export type AgentCommand =
       exploreFoldEnabled?: boolean;
       /** 拦截 cat/grep/sed -i 等，强制走 read/grep/edit/write/find；缺省关 */
       bashInterceptEnabled?: boolean;
+      /** Hashline 行锚点 read/edit；缺省关 */
+      hashlineEditEnabled?: boolean;
       /** 父会话加载 Enso compact hook 作为 compact 摘要后端 */
       smartCompactEnabled?: boolean;
       /** 独立摘要模型；缺省跟随当前会话模型 */
@@ -602,11 +636,13 @@ export type AgentCommand =
     }
   | { type: 'abort'; identity: SessionIdentity }
   | {
-      /** 标题总结：一次性补全，不创建会话、不落盘；失败静默（不回事件） */
+      /** 标题总结：一次性补全，不创建会话、不落盘；worker 按序尝试 candidates（递增超时），
+       *  任一成功回 title-generated，全失败回 title-failed */
       type: 'summarize-title';
       conversationId: string;
       input: TitleSummaryInput;
-      model: SpawnModelConfig;
+      /** 回退链上全部可解析候选，按优先级排序；1–3 项 */
+      candidates: SpawnModelConfig[];
     }
   | { type: 'abort-retry'; identity: SessionIdentity }
   | { type: 'retry'; identity: SessionIdentity }
@@ -619,6 +655,7 @@ export type AgentCommand =
       entry: AgentSessionCustomEntry;
     }
   | { type: 'snapshot'; sessionId?: string }
+  | { type: 'reload-session'; requestId: string; sessionId: string }
   /** 不可被闲置回收的会话全集（桌面正在查看 + 手机订阅中），每次全量覆盖 */
   | { type: 'pin-sessions'; sessionIds: string[] }
   | { type: 'warm-mcp'; servers: McpServerSpawnConfig[] }
@@ -697,10 +734,12 @@ export interface ProjectedMessage {
   timing?: MessageTiming;
   /** todo 工具 toolResult 的清单快照 */
   todos?: TodoItem[];
-  /** 工具执行耗时（仅 toolResult 消息带；worker 按 tool_execution_start/end 打点） */
+  /** 工具执行耗时（仅 toolResult 消息带；worker 按 tool_execution_start/end 打点，不含排队） */
   toolDurationMs?: number;
   /** subagent 工具 toolResult 的执行元数据 */
   subagentMeta?: { modelId?: string; outputTokens?: number; steps?: number };
+  /** Hashline edit 成功结果：补丁前后全文（不含 patch） */
+  editDiff?: { oldText: string; newText: string };
   /** compactionSummary 消息：压缩前的上下文 token 数 */
   tokensBefore?: number;
   /** 摘要来自 Enso compact hook，不是原生 summarizer */
@@ -729,6 +768,11 @@ export interface SessionSnapshot {
   /** 压完提示的锚点，**绝对消息 index** 口径（压完那刻 messages.length），不随 baseIndex 平移 */
   compactionNoticeAt?: number;
 }
+
+/** 手动只读快照的水位仅用于重读，不改变自动 snapshot 的兼容契约。 */
+export type SessionReloadResult =
+  | { ok: true; snapshot: SessionSnapshot; seq: number }
+  | { ok: false; error: string };
 
 /** 会话可用的斜杠命令（pi 的 skills 与 prompt templates），name 含 / 前缀 */
 export interface SlashCommand {
@@ -821,7 +865,7 @@ export type RendererChildLifecycleEvent =
 
 /** Renderer 收到统一普通+child事件流；exact profile proof 只在 worker→Main 边界。 */
 export type RendererAgentEvent =
-  | Exclude<AgentWorkerEvent, ChildLifecycleEvent | McpWorkerEvent>
+  | Exclude<AgentWorkerEvent, ChildLifecycleEvent | McpWorkerEvent | { type: 'session-reloaded' }>
   | RendererChildLifecycleEvent
   | { type: 'worker-exited' };
 
@@ -870,6 +914,8 @@ export type AgentWorkerEvent =
       seq: number;
       toolCallId: string;
       output: string;
+      /** 该工具真正开始执行的 wall clock；后续增量覆盖不改 */
+      startedAt?: number;
     }
   | { type: 'messages-truncated'; identity: SessionIdentity; seq: number; length: number }
   | {
@@ -960,6 +1006,12 @@ export type AgentWorkerEvent =
       title: string;
     }
   | {
+      /** 标题总结全部候选均失败：同为旁路事件；error 为人可读的最后一次失败原因（含模型标识） */
+      type: 'title-failed';
+      conversationId: string;
+      error: string;
+    }
+  | {
       type: 'task-output';
       identity: SessionIdentity;
       seq: number;
@@ -982,7 +1034,9 @@ export type AgentWorkerEvent =
       entry: AgentSessionCustomEntry;
     }
   | McpWorkerEvent
-  | { type: 'snapshot'; sessions: SessionSnapshot[]; partial?: boolean };
+  /** sessionId：targeted 快照回带请求目标；sessions 为空时 renderer 据此收回 started */
+  | { type: 'snapshot'; sessions: SessionSnapshot[]; partial?: boolean; sessionId?: string }
+  | { type: 'session-reloaded'; requestId: string; result: SessionReloadResult };
 
 /** MCP 连接旁路事件：无 identity/seq，不属于任何会话，Main 走独立 IPC 通道转发 */
 export type McpWorkerEvent =
@@ -1044,14 +1098,22 @@ export function parseMcpOAuthTokens(value: unknown): McpOAuthTokens | null {
   };
 }
 
-/** turn-completed.digest 的形状校验：两段必须是字符串（允许空），不允许多余键 */
+/** turn-completed.digest 的形状校验：三段必须是字符串（允许空），不允许多余键 */
 export function parseTurnDigest(value: unknown): TurnDigest | null {
-  if (!isRecord(value) || !hasExactKeys(value, ['userText', 'assistantText'])) return null;
-  if (typeof value.userText !== 'string' || typeof value.assistantText !== 'string') return null;
+  if (!isRecord(value) || !hasExactKeys(value, ['firstUserText', 'userText', 'assistantText'])) {
+    return null;
+  }
+  if (
+    typeof value.firstUserText !== 'string' ||
+    typeof value.userText !== 'string' ||
+    typeof value.assistantText !== 'string'
+  ) {
+    return null;
+  }
   return value as unknown as TurnDigest;
 }
 
-/** 标题总结输入校验：initial 要求 text 非空；rolling 要求 currentTitle 非空且两段至少一段非空 */
+/** 标题总结输入校验：initial 要求 text 非空；rolling 要求 currentTitle 非空、firstUserText 为字符串（可空）且本轮两段至少一段非空 */
 export function parseTitleSummaryInput(value: unknown): TitleSummaryInput | null {
   if (!isRecord(value)) return null;
   if (value.kind === 'initial') {
@@ -1062,8 +1124,15 @@ export function parseTitleSummaryInput(value: unknown): TitleSummaryInput | null
       : null;
   }
   if (value.kind === 'rolling') {
-    return hasExactKeys(value, ['kind', 'currentTitle', 'userText', 'assistantText']) &&
+    return hasExactKeys(value, [
+      'kind',
+      'currentTitle',
+      'firstUserText',
+      'userText',
+      'assistantText',
+    ]) &&
       isNonEmptyString(value.currentTitle) &&
+      typeof value.firstUserText === 'string' &&
       typeof value.userText === 'string' &&
       typeof value.assistantText === 'string' &&
       (value.userText.trim().length > 0 || value.assistantText.trim().length > 0)
@@ -1741,6 +1810,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           'loadHarnessAssets',
           'exploreFoldEnabled',
           'bashInterceptEnabled',
+          'hashlineEditEnabled',
           'smartCompactEnabled',
           'smartCompactSummaryModel',
           'smartCompactMode',
@@ -1767,6 +1837,8 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         (value.exploreFoldEnabled !== undefined && typeof value.exploreFoldEnabled !== 'boolean') ||
         (value.bashInterceptEnabled !== undefined &&
           typeof value.bashInterceptEnabled !== 'boolean') ||
+        (value.hashlineEditEnabled !== undefined &&
+          typeof value.hashlineEditEnabled !== 'boolean') ||
         (value.smartCompactEnabled !== undefined &&
           typeof value.smartCompactEnabled !== 'boolean') ||
         (value.smartCompactSummaryModel !== undefined &&
@@ -1842,10 +1914,13 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         : null;
     }
     case 'summarize-title':
-      return hasExactKeys(value, ['type', 'conversationId', 'input', 'model']) &&
+      return hasExactKeys(value, ['type', 'conversationId', 'input', 'candidates']) &&
         isNonEmptyString(value.conversationId) &&
         parseTitleSummaryInput(value.input) &&
-        parseSpawnModelConfig(value.model)
+        Array.isArray(value.candidates) &&
+        value.candidates.length >= 1 &&
+        value.candidates.length <= TITLE_SUMMARY_MAX_CANDIDATES &&
+        value.candidates.every((candidate) => parseSpawnModelConfig(candidate))
         ? (value as unknown as AgentCommand)
         : null;
     case 'prompt':
@@ -1977,6 +2052,12 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         parseAgentSessionCustomEntry(value.entry)
         ? (value as unknown as AgentCommand)
         : null;
+    case 'reload-session':
+      return hasExactKeys(value, ['type', 'requestId', 'sessionId']) &&
+        isNonEmptyString(value.requestId) &&
+        isNonEmptyString(value.sessionId)
+        ? (value as unknown as AgentCommand)
+        : null;
     case 'snapshot':
       if (hasExactKeys(value, ['type'])) return { type: 'snapshot' };
       return hasExactKeys(value, ['type', 'sessionId']) && isNonEmptyString(value.sessionId)
@@ -2062,6 +2143,24 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
   ) {
     return parseLifecycleEvent(value);
   }
+  if (value.type === 'session-reloaded') {
+    if (
+      !hasExactKeys(value, ['type', 'requestId', 'result']) ||
+      !isNonEmptyString(value.requestId) ||
+      !isRecord(value.result)
+    )
+      return null;
+    const result = value.result;
+    const valid =
+      result.ok === true
+        ? hasExactKeys(result, ['ok', 'snapshot', 'seq']) &&
+          parseSessionSnapshot(result.snapshot) !== null &&
+          isSequence(result.seq)
+        : result.ok === false &&
+          hasExactKeys(result, ['ok', 'error']) &&
+          isNonEmptyString(result.error);
+    return valid ? (value as unknown as AgentWorkerEvent) : null;
+  }
   if (value.type === 'snapshot') {
     return Array.isArray(value.sessions) &&
       value.sessions.every((session) => parseSessionSnapshot(session) !== null)
@@ -2100,6 +2199,13 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
     return hasExactKeys(value, ['type', 'conversationId', 'title']) &&
       isNonEmptyString(value.conversationId) &&
       isNonEmptyString(value.title)
+      ? (value as unknown as AgentWorkerEvent)
+      : null;
+  }
+  if (value.type === 'title-failed') {
+    return hasExactKeys(value, ['type', 'conversationId', 'error']) &&
+      isNonEmptyString(value.conversationId) &&
+      isNonEmptyString(value.error)
       ? (value as unknown as AgentWorkerEvent)
       : null;
   }
@@ -2196,7 +2302,9 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'tool-output':
-      return isNonEmptyString(value.toolCallId) && typeof value.output === 'string'
+      return isNonEmptyString(value.toolCallId) &&
+        typeof value.output === 'string' &&
+        (value.startedAt === undefined || typeof value.startedAt === 'number')
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'task-started':

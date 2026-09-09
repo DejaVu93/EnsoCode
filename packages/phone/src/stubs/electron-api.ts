@@ -12,6 +12,10 @@ export function installElectronApiShim(): void {
       git: {
         diffHead: async () => ({ ok: false as const, error: 'unavailable' as const }),
       },
+      changes: {
+        readSnapshots: async (): Promise<Record<string, string>> => ({}),
+        writeSnapshots: async () => false,
+      },
       workspaceFiles: {
         listDir: async () => ({ ok: false as const, error: 'unavailable' }),
         read: async () => ({ ok: false as const, error: 'unavailable' }),

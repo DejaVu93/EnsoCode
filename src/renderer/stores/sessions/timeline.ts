@@ -49,6 +49,8 @@ export type TimelineItem =
       todos: TodoItem[] | null;
       /** 工具执行耗时（完成后显示）；未知为 null */
       durationMs: number | null;
+      /** 真正开始执行的 wall clock；null = 已跟踪但未开跑；缺省 = 这条链路不打点 */
+      startedAt?: number | null;
       /** subagent 工具的执行元数据（模型/token/步数）；非 subagent 为 null */
       agentMeta: { modelId?: string; outputTokens?: number; steps?: number } | null;
     }
@@ -109,6 +111,7 @@ const SUMMARY_KEYS = [
 ];
 
 const PATH_SUMMARY_KEYS = new Set(['path', 'file_path']);
+const HASHLINE_HEADER = /^\[(.+)#([0-9A-Fa-f]{4})\]$/;
 
 /** 项目内绝对路径收成相对路径；前缀碰巧相同的目录不误切 */
 export function toProjectRelativePath(value: string, cwd?: string): string {
@@ -123,6 +126,16 @@ export function toProjectRelativePath(value: string, cwd?: string): string {
   return value;
 }
 
+function hashlinePathFromInput(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  for (const line of input.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    return HASHLINE_HEADER.exec(trimmed)?.[1];
+  }
+  return undefined;
+}
+
 function summarizeArgs(args: unknown, cwd?: string): string {
   if (!args || typeof args !== 'object') return '';
   const record = args as Record<string, unknown>;
@@ -132,8 +145,26 @@ function summarizeArgs(args: unknown, cwd?: string): string {
       return PATH_SUMMARY_KEYS.has(key) ? toProjectRelativePath(value, cwd) : value;
     }
   }
+  const hashlinePath = hashlinePathFromInput(record.input);
+  if (hashlinePath) return toProjectRelativePath(hashlinePath, cwd);
   const json = JSON.stringify(record);
   return json === '{}' ? '' : json.slice(0, 80);
+}
+
+/** 时间线顶部：翻页在途 / 已到第 0 条 / 不占文案 */
+export type HistoryPageChrome = 'none' | 'loading' | 'start';
+
+/** 到头提示只给「曾经有更早、现已翻完」的会话；刚开场 / 一页就完的短会话不显示 */
+export function historyPageChrome(
+  hasItems: boolean,
+  loading: boolean,
+  hasOlder: boolean | undefined,
+  everHadOlder = false
+): HistoryPageChrome {
+  if (!hasItems) return 'none';
+  if (loading) return 'loading';
+  if (hasOlder === false && everHadOlder) return 'start';
+  return 'none';
 }
 
 /** write 工具参数里取出写入内容 */
@@ -146,7 +177,16 @@ export function extractWriteContent(name: string, args: unknown): string | null 
 /** edit 工具参数里取出替换块（保持同一数组引用，供 memo 做引用比较） */
 export function extractEdits(name: string, args: unknown): EditBlock[] | null {
   if (name !== 'edit' || !args || typeof args !== 'object') return null;
-  let edits = (args as Record<string, unknown>).edits;
+  const record = args as Record<string, unknown>;
+  // legacy 单块 {path, oldText, newText}（Hashline 松 schema 下模型常用）
+  if (
+    !('edits' in record) &&
+    typeof record.oldText === 'string' &&
+    typeof record.newText === 'string'
+  ) {
+    return singleBlock(record, record.oldText, record.newText);
+  }
+  let edits = record.edits;
   // 部分模型把 edits 数组双重编码成 JSON 字符串（worker 执行侧已归一化，渲染侧同样兜底）
   if (typeof edits === 'string') {
     try {
@@ -164,6 +204,27 @@ export function extractEdits(name: string, args: unknown): EditBlock[] | null {
       typeof (e as EditBlock).newText === 'string'
   );
   return ok ? (edits as EditBlock[]) : null;
+}
+
+/** Hashline edit 无 edits[] 时，用 toolResult 前后全文合成一块可渲 diff */
+function extractHashlineDiff(
+  name: string,
+  editDiff: { oldText: string; newText: string } | null | undefined
+): EditBlock[] | null {
+  if (name !== 'edit' || !editDiff) return null;
+  if (typeof editDiff.oldText !== 'string' || typeof editDiff.newText !== 'string') return null;
+  return singleBlock(editDiff, editDiff.oldText, editDiff.newText);
+}
+
+/** 合成的单块按来源对象缓存，保持引用稳定供行 memo 比较 */
+const singleBlockCache = new WeakMap<object, EditBlock[]>();
+function singleBlock(key: object, oldText: string, newText: string): EditBlock[] {
+  let blocks = singleBlockCache.get(key);
+  if (!blocks) {
+    blocks = [{ oldText, newText }];
+    singleBlockCache.set(key, blocks);
+  }
+  return blocks;
 }
 
 const partText = (message: ProjectedMessage): string =>
@@ -247,7 +308,9 @@ function buildMessageTimeline(
   running: boolean,
   cwd?: string,
   toolOutputs?: Record<string, string>,
-  pendingApprovals?: readonly ApprovalRequestInfo[]
+  pendingApprovals?: readonly ApprovalRequestInfo[],
+  toolStartedAt?: Record<string, number>,
+  historyBaseIndex = 0
 ): TimelineItem[] {
   const reviewingIds = reviewingToolCallIds(pendingApprovals);
   const results = new Map<
@@ -258,6 +321,7 @@ function buildMessageTimeline(
       todos: TodoItem[] | null;
       durationMs: number | null;
       agentMeta: { modelId?: string; outputTokens?: number; steps?: number } | null;
+      editDiff: { oldText: string; newText: string } | null;
     }
   >();
   for (const message of messages) {
@@ -268,6 +332,7 @@ function buildMessageTimeline(
         todos: message.todos ?? null,
         durationMs: message.toolDurationMs ?? null,
         agentMeta: message.subagentMeta ?? null,
+        editDiff: message.editDiff ?? null,
       });
     }
   }
@@ -294,6 +359,7 @@ function buildMessageTimeline(
   let turnSteps = 0;
   messages.forEach((message, messageIndex) => {
     const isLastMessage = messageIndex === messages.length - 1;
+    const absIndex = historyBaseIndex + messageIndex;
     if (message.role === 'user') {
       turnStartMs = undefined;
       turnSteps = 0;
@@ -306,21 +372,21 @@ function buildMessageTimeline(
         const detail = noteMatch[1].trim();
         items.push({
           kind: 'task-note',
-          key: `${messageIndex}`,
+          key: `${absIndex}`,
           summary: detail.split('\n', 1)[0] ?? detail,
           detail,
         });
         return;
       }
       if (text || images.length > 0) {
-        items.push({ kind: 'user', key: `${messageIndex}`, text, images });
+        items.push({ kind: 'user', key: `${absIndex}`, text, images });
       }
       return;
     }
     if (message.role === 'compactionSummary') {
       items.push({
         kind: 'compaction',
-        key: `${messageIndex}`,
+        key: `${absIndex}`,
         summary: partText(message),
         tokensBefore: message.tokensBefore ?? null,
         ...(message.verified ? { verified: true } : {}),
@@ -340,7 +406,7 @@ function buildMessageTimeline(
     // 空占位 part，按「最后一个 part」判会把正在生成的块误判为已完结
     const lastActiveIndex = findLastActivePartIndex(message.content);
     message.content.forEach((part, partIndex) => {
-      const key = `${messageIndex}-${partIndex}`;
+      const key = `${absIndex}-${partIndex}`;
       const isStreamingPart = isLastMessage && partIndex === lastActiveIndex;
       // pi 流式中的消息 stopReason 是 "pending"（非空！），只有真正的终止原因才算完结
       const settled = Boolean(message.stopReason) && message.stopReason !== 'pending';
@@ -428,11 +494,16 @@ function buildMessageTimeline(
                 : running
                   ? 'ok'
                   : 'error',
-            edits: extractEdits(part.name, part.arguments),
+            // 执行失败 = 文件没改，参数里的意图 diff 不能显示成已应用
+            edits: result?.isError
+              ? null
+              : (extractEdits(part.name, part.arguments) ??
+                extractHashlineDiff(part.name, result?.editDiff)),
             writeContent: extractWriteContent(part.name, part.arguments),
             todos: result?.todos ?? null,
             durationMs: result?.durationMs ?? null,
             agentMeta: result?.agentMeta ?? null,
+            ...(result || !toolStartedAt ? {} : { startedAt: toolStartedAt[part.id] ?? null }),
           });
           return;
         }
@@ -447,7 +518,7 @@ function buildMessageTimeline(
       const retried = messages[messageIndex + 1]?.role === 'assistant';
       const pendingRetry = running && messageIndex === messages.length - 1;
       if (!retried && !pendingRetry) {
-        items.push({ kind: 'error', key: `${messageIndex}-err`, text: message.errorMessage });
+        items.push({ kind: 'error', key: `${absIndex}-err`, text: message.errorMessage });
       }
     }
   });
@@ -477,8 +548,12 @@ const messageItemIndex = (item: TimelineItem): number => {
   return Number.isInteger(index) ? index : -1;
 };
 
-const messageItemTime = (item: TimelineItem, messages: readonly ProjectedMessage[]): number => {
-  const index = messageItemIndex(item);
+const messageItemTime = (
+  item: TimelineItem,
+  messages: readonly ProjectedMessage[],
+  historyBaseIndex = 0
+): number => {
+  const index = messageItemIndex(item) - historyBaseIndex;
   return index >= 0
     ? (messages[index]?.timestamp ?? Number.NEGATIVE_INFINITY)
     : Number.NEGATIVE_INFINITY;
@@ -536,17 +611,23 @@ export function buildTimeline(
   options?: {
     compaction?: 'queued' | 'running';
     compactionNoticeAt?: number;
+    /** 当前权威消息对应的 worker 绝对起点；尾窗分页时行 key 用绝对下标 */
+    historyBaseIndex?: number;
     /** 运行中工具的输出快照（toolCallId → 文本）；真实 toolResult 到位后优先用后者 */
     toolOutputs?: Record<string, string>;
     pendingApprovals?: readonly ApprovalRequestInfo[];
+    toolStartedAt?: Record<string, number>;
   }
 ): TimelineItem[] {
+  const historyBaseIndex = options?.historyBaseIndex ?? 0;
   const messageItems = buildMessageTimeline(
     messages,
     running,
     cwd,
     options?.toolOutputs,
-    options?.pendingApprovals
+    options?.pendingApprovals,
+    options?.toolStartedAt,
+    historyBaseIndex
   );
   const merged =
     customEntries.length === 0
@@ -554,7 +635,7 @@ export function buildTimeline(
       : [
           ...messageItems.map((item, order) => ({
             item,
-            at: messageItemTime(item, messages),
+            at: messageItemTime(item, messages, historyBaseIndex),
             order,
           })),
           ...customEntries.map((entry, index) => ({
@@ -796,7 +877,7 @@ export function foldTimeline(
     // 非 compact 仍把 running 钉在组外，方便看此刻在跑什么。
     const pinned = (s: TimelineItem): boolean => {
       if (s.kind !== 'tool') return false;
-      if (s.edits !== null || !!s.writeContent || s.name === 'todo') return true;
+      if (s.edits !== null || s.writeContent || s.name === 'todo') return true;
       if (s.state !== 'running' && s.state !== 'reviewing') return false;
       return !(compact && isReadOnlyTool(s));
     };

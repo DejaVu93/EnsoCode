@@ -6,6 +6,7 @@ import type {
 import type { Locale } from '@shared/i18n';
 import type { ProxyMode } from '@shared/proxy';
 import type { StatusLineSegmentId } from '@shared/statusLine';
+import type { TerminalShell } from '@shared/terminalShell';
 import type {
   AgentTypeEntry,
   InstructionEntry,
@@ -80,6 +81,7 @@ export interface SettingsState {
   terminalFontFamily: string;
   terminalFontWeight: FontWeight;
   terminalFontWeightBold: FontWeight;
+  terminalShell: TerminalShell;
   favoriteTerminalThemes: string[];
 
   /**
@@ -100,11 +102,17 @@ export interface SettingsState {
   /** Windows 本地 agent 命令壳；auto=本机 PowerShell。SSH/非 Windows 忽略。 */
   windowsLocalShell: WindowsLocalShell;
 
+  /** 隔离会话 worktree 的根目录（绝对路径）；'' = userData/worktrees。设备本地，不参与 config-sync */
+  worktreeRoot: string;
+
   /** 探后折叠：模型可 explore_mark / explore_fold；缺省关 */
   exploreFoldEnabled: boolean;
 
   /** 强制用 read/grep/edit/write/find 替代 cat/grep/sed -i 等 shell 读写；缺省关 */
   bashInterceptEnabled: boolean;
+
+  /** Hashline 行锚点 read/edit；缺省关。开时 edit 仍兼容 oldText replace */
+  hashlineEditEnabled: boolean;
 
   /** 父会话用 Enso compact hook 做 compact 摘要；缺省关，新会话生效 */
   smartCompactEnabled: boolean;
@@ -125,8 +133,20 @@ export interface SettingsState {
   openChangesOnFileEdit: boolean;
   /** 只读工具（read/grep/find/ls）一行化 + 进行中的轮也折组；缺省 true */
   compactReadOnlyTools: boolean;
+  /** agent 运行中 edit/write 的行到位时自动展开 diff/内容；缺省 true */
+  expandLiveEdits: boolean;
+  /** 聊天列铺满：去掉两侧阶梯 max-w；缺省 false（居中阅读宽度） */
+  chatWide: boolean;
+  /** 仅主 agent 发送完成/失败通知；coworker 提问/审批仍提醒；缺省 true */
+  notifyMainAgentOnly: boolean;
   /** 无 token/工具结果超过此时长则中止；0 = 永不；单位分钟 */
   generationStallTimeoutMin: number;
+  /** 闲置超过此天数自动归档；0 = 永不；缺省 30 */
+  autoArchiveIdleDays: number;
+  /** 已合并 worktree 清理并归档；缺省关 */
+  autoArchiveMergedWorktrees: boolean;
+  /** 归档超过此天数自动删除；0 = 永不；缺省 0 */
+  autoDeleteArchivedDays: number;
 
   // 背景图（主窗口生效；渲染见 BackgroundLayer + useBackgroundImage）
   /** 背景图总开关；缺省 false */
@@ -219,12 +239,15 @@ export interface SettingsState {
   setTerminalFontFamily: (family: string) => void;
   setTerminalFontWeight: (weight: FontWeight) => void;
   setTerminalFontWeightBold: (weight: FontWeight) => void;
+  setTerminalShell: (value: TerminalShell) => void;
+  setWorktreeRoot: (path: string) => void;
   toggleFavoriteTerminalTheme: (theme: string) => void;
   setLoadLocalSkills: (value: boolean) => void;
   setLoadHarnessAssets: (value: boolean) => void;
   setWindowsLocalShell: (value: WindowsLocalShell) => void;
   setExploreFoldEnabled: (value: boolean) => void;
   setBashInterceptEnabled: (value: boolean) => void;
+  setHashlineEditEnabled: (value: boolean) => void;
   setSmartCompactEnabled: (value: boolean) => void;
   setSmartCompactModel: (value: DefaultModelRef | null) => void;
   setSmartCompactMode: (value: import('@shared/smartCompactMode').SmartCompactMode) => void;
@@ -233,7 +256,13 @@ export interface SettingsState {
   setCustomProxyUrl: (url: string) => void;
   setOpenChangesOnFileEdit: (value: boolean) => void;
   setCompactReadOnlyTools: (value: boolean) => void;
+  setExpandLiveEdits: (value: boolean) => void;
+  setChatWide: (value: boolean) => void;
+  setNotifyMainAgentOnly: (value: boolean) => void;
   setGenerationStallTimeoutMin: (minutes: number) => void;
+  setAutoArchiveIdleDays: (days: number) => void;
+  setAutoArchiveMergedWorktrees: (value: boolean) => void;
+  setAutoDeleteArchivedDays: (days: number) => void;
 
   // Background image actions（数值 setter 内部 clamp，非法值落回缺省）
   setBackgroundImageEnabled: (value: boolean) => void;

@@ -15,6 +15,17 @@ const TIMEOUT_MS = 15000;
 /** 连通性探测上限。1 会让 thinking 模型在思维链阶段直接超限（上游 502）。 */
 const TEST_MAX_OUTPUT_TOKENS = 4096;
 
+const OFFICIAL_ANTHROPIC_HOST = 'api.anthropic.com';
+
+export function isOfficialAnthropicHost(urlOrBase: string): boolean {
+  try {
+    const parsed = new URL(urlOrBase);
+    return parsed.hostname.toLowerCase() === OFFICIAL_ANTHROPIC_HOST;
+  } catch {
+    return false;
+  }
+}
+
 export function resolveBase(config: ProviderApiConfig): string {
   const base = config.baseUrl.trim().replace(/\/+$/, '');
   return base || DEFAULT_BASE_URLS[config.api];
@@ -68,11 +79,27 @@ export async function listModels(config: ProviderApiConfig): Promise<ListModelsR
         headers = { Authorization: `Bearer ${key}` };
     }
 
-    const response = await request(url, { headers });
+    let response = await request(url, { headers, redirect: 'manual' });
+    if (
+      response.status === 401 &&
+      config.api === 'anthropic-messages' &&
+      !isOfficialAnthropicHost(url)
+    ) {
+      // 第三方 Anthropic 首次 401 时允许以 Bearer 替换 x-api-key 重试一次同一 URL（保留 anthropic-version）
+      const retryHeaders: Record<string, string> = {
+        Authorization: `Bearer ${key}`,
+        'anthropic-version': ANTHROPIC_VERSION,
+      };
+      response = await request(url, { headers: retryHeaders, redirect: 'manual' });
+    }
+
     if (!response.ok) return { ok: false, models: [], error: httpError(response) };
 
-    const data = (await response.json()) as Record<string, unknown>;
-    const models = extractModelEntries(config.api, data);
+    const data = await response.json();
+    if (!isValidModelListPayload(config.api, data)) {
+      return { ok: false, models: [], error: 'Invalid model list response format' };
+    }
+    const models = extractModelEntries(config.api, data as Record<string, unknown>);
     return { ok: true, models };
   } catch (error) {
     const secrets = createSecretSet([config.apiKey]);
@@ -129,6 +156,17 @@ function attachTokenLimits(id: string, item: Record<string, unknown>): FetchedMo
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
   };
+}
+
+export function isValidModelListPayload(api: ModelApiKind, data: unknown): boolean {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return false;
+  }
+  const obj = data as Record<string, unknown>;
+  if (api === 'google-generative-ai' || api === 'ollama') {
+    return Array.isArray(obj.models);
+  }
+  return Array.isArray(obj.data);
 }
 
 export function extractModelEntries(

@@ -456,7 +456,6 @@ describe('config sync sender-bound import flow', () => {
     });
     settings.patchSettingsState('providers', [
       shared('local-a', 'Shared', 'https://a.example.test'),
-      shared('local-b', ' shared ', 'https://b.example.test'),
     ]);
 
     const file = join(userData, 'plan-failure.enso-config');

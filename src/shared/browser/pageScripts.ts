@@ -173,9 +173,15 @@ export const PAGE_LOCK_OVERLAY_SCRIPT = `(() => {
   return 'ok';
 })()`;
 
+/** 幂等；只有确认节点真的没了才返回 'ok'，宿主据此才敢落 locked=false。 */
 export const PAGE_UNLOCK_OVERLAY_SCRIPT = `(() => {
-  document.getElementById(${JSON.stringify(LOCK_OVERLAY_ID)})?.remove();
-  return 'ok';
+  const ID = ${JSON.stringify(LOCK_OVERLAY_ID)};
+  for (let i = 0; i < 8; i++) {
+    const el = document.getElementById(ID);
+    if (!el) return 'ok';
+    el.remove();
+  }
+  return document.getElementById(ID) ? 'stuck' : 'ok';
 })()`;
 
 export const pageSelectOptionScript = (ref: string, values: string[]): string => `(() => {
@@ -335,6 +341,8 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     inset: '0',
     zIndex: '2147483646',
     pointerEvents: 'none',
+    overflow: 'hidden',
+    contain: 'strict',
   });
   const box = document.createElement('div');
   Object.assign(box.style, {
@@ -405,25 +413,27 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     display: 'none',
     pointerEvents: 'auto',
     cursor: 'crosshair',
+    overflow: 'hidden',
+    contain: 'strict',
   });
+  const lockFill = (el) => {
+    el.style.setProperty('position', 'absolute', 'important');
+    el.style.setProperty('inset', '0', 'important');
+    el.style.setProperty('width', '100%', 'important');
+    el.style.setProperty('height', '100%', 'important');
+    el.style.setProperty('max-width', '100%', 'important');
+    el.style.setProperty('max-height', '100%', 'important');
+    el.style.setProperty('box-sizing', 'border-box', 'important');
+    el.style.setProperty('pointer-events', 'none', 'important');
+  };
   const freezeImg = document.createElement('img');
-  Object.assign(freezeImg.style, {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    objectFit: 'fill',
-    pointerEvents: 'none',
-    imageRendering: 'auto',
-  });
+  freezeImg.alt = '';
+  freezeImg.draggable = false;
+  lockFill(freezeImg);
+  freezeImg.style.setProperty('object-fit', 'fill', 'important');
+  freezeImg.style.setProperty('image-rendering', 'auto', 'important');
   const draw = document.createElement('canvas');
-  Object.assign(draw.style, {
-    position: 'absolute',
-    inset: '0',
-    width: '100%',
-    height: '100%',
-    pointerEvents: 'none',
-  });
+  lockFill(draw);
   const cropCard = document.createElement('div');
   Object.assign(cropCard.style, {
     position: 'fixed',
@@ -511,6 +521,7 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     box.style.visibility = 'hidden';
     hint.style.visibility = 'hidden';
     tag.style.visibility = 'hidden';
+    freezeLayer.style.visibility = 'hidden';
   };
   const showChrome = () => {
     box.style.visibility = '';
@@ -776,8 +787,8 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
   function showActions() {
     const crop = cropRect();
     paintCrop(cropImg, crop);
-    cropImg.style.width = crop.width + 'px';
-    cropImg.style.height = crop.height + 'px';
+    cropImg.style.setProperty('width', crop.width + 'px', 'important');
+    cropImg.style.setProperty('height', crop.height + 'px', 'important');
     Object.assign(cropCard.style, {
       display: 'block',
       left: crop.x + 'px',
@@ -821,8 +832,9 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     freezeImg.onload = ready;
     freezeImg.src = freezeUrl.indexOf('data:') === 0 ? freezeUrl : 'data:image/png;base64,' + freezeUrl;
     sizeCanvas();
-    freezeLayer.style.display = 'block';
     hide();
+    freezeLayer.style.visibility = '';
+    freezeLayer.style.display = 'block';
     if (freezeImg.complete) ready();
   };
   const startFreeze = () => {
@@ -830,6 +842,7 @@ export const PAGE_DESIGN_MODE_ENABLE_SCRIPT = `(() => {
     phase = 'freezing';
     hide();
     sizeCanvas();
+    freezeLayer.style.visibility = '';
     freezeLayer.style.display = 'block';
     freezeLayer.style.background = 'transparent';
     freezeImg.style.opacity = '1';

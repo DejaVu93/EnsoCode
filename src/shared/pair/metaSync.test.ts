@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   catalogSyncFingerprint,
   changedMetaChannels,
+  channelsForMetaPush,
   pairJsonFingerprint,
   shouldRelayPairSnapshot,
   slimCatalogForPhone,
   slimProjectsForPhone,
+  withholdRendererMeta,
 } from './metaSync';
 
 describe('catalogSyncFingerprint', () => {
@@ -53,6 +55,27 @@ describe('changedMetaChannels', () => {
   });
 });
 
+describe('withholdRendererMeta', () => {
+  const all = ['catalog', 'projects', 'providers', 'appearance', 'pushConfig', 'hostInfo'] as const;
+
+  it('renderer 尚未推过目录：扣下 catalog/projects/providers/appearance，只放 main 自有的通道', () => {
+    // host 重启后 guest 已在房里，peer-joined 先于 renderer 首次 push；此时 catalog 是空初值，
+    // 发出去会让 guest 把仍在订阅的会话误判为幽灵而跳离
+    expect(withholdRendererMeta([...all], false)).toEqual(['pushConfig', 'hostInfo']);
+  });
+
+  it('renderer 已推过目录：原样放行', () => {
+    expect(withholdRendererMeta([...all], true)).toEqual([...all]);
+  });
+
+  it('保持输入顺序，不补不重排', () => {
+    expect(withholdRendererMeta(['hostInfo', 'catalog', 'pushConfig'], false)).toEqual([
+      'hostInfo',
+      'pushConfig',
+    ]);
+  });
+});
+
 describe('pairJsonFingerprint', () => {
   it('同结构同指纹', () => {
     expect(pairJsonFingerprint({ a: 1 })).toBe(pairJsonFingerprint({ a: 1 }));
@@ -96,6 +119,39 @@ describe('slimProjectsForPhone', () => {
         { id: 'p', name: 'app', path: '/Users/me/app', kind: 'local' as const },
       ])
     ).toEqual([{ id: 'p', name: 'app', kind: 'local' }]);
+  });
+});
+
+describe('channelsForMetaPush', () => {
+  const next = {
+    catalog: 'c',
+    projects: 'p',
+    providers: 'pr',
+    appearance: 'a',
+    pushConfig: 'push',
+    hostInfo: 'host',
+  } as const;
+
+  it('指纹未变且非强制：不发', () => {
+    expect(channelsForMetaPush({ ...next }, { ...next }, true)).toEqual([]);
+  });
+
+  it('guest 显式 snapshot（force）：即使指纹未变也整包重发', () => {
+    expect(channelsForMetaPush({ ...next }, { ...next }, true, true)).toEqual([
+      'catalog',
+      'projects',
+      'providers',
+      'appearance',
+      'pushConfig',
+      'hostInfo',
+    ]);
+  });
+
+  it('force 仍尊重 catalogReady：renderer 未就绪时不发空目录', () => {
+    expect(channelsForMetaPush({ ...next }, { ...next }, false, true)).toEqual([
+      'pushConfig',
+      'hostInfo',
+    ]);
   });
 });
 

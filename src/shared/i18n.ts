@@ -1,9 +1,22 @@
 export type Locale = 'en' | 'zh';
 
+/** 「AI 自动配置」按钮召唤 Enso 时下发的完整提示词（key 即英文原文，中文见字典） */
+export const SUBAGENT_MODELS_CONFIGURE_PROMPT =
+  'Configure "Let the agent pick subagent models" for me. How it is used: when the main agent dispatches a subagent or coworker (built-in types: scout for read-only recon, reviewer for code review, tester for writing tests, worker for implementation), it reads each entry\'s description from the tool\'s model parameter to choose a model per subtask — so descriptions are decision rules, not marketing copy. Steps: 1) read the current entries and toggle state; 2) list providers with valid credentials and their enabled models, never invent models; 3) pick 2–4 models that cover: a cheap, fast, long-context model for recon / reading / summarizing; a strong reasoning model for review, architecture and hard debugging; a reliable coding model for implementation; 4) add what is missing, fix duplicates or unusable entries, then enable the toggle; 5) each description is one short sentence in my interface language: when to use it, relative cost / speed, one caveat. Finish by listing the final entries with the reason for each.';
+
 export const zhTranslations: Record<string, string> = {
   'Add to favorites': '添加收藏',
   Appearance: '外观',
   'Bold font weight': '粗体字重',
+  'Terminal shell': '终端 Shell',
+  'System default': '系统默认',
+  'Applies to new side panel terminals. SSH projects keep the remote login shell.':
+    '仅对新开的侧边栏终端生效。SSH 项目仍用远端登录 shell。',
+  'Worktree root directory': 'Worktree 根目录',
+  'Where isolated session worktrees are created. Leave empty to use the app data directory. Existing worktrees stay where they are.':
+    '隔离会话的 worktree 建在此目录下。留空则用应用数据目录。已有 worktree 不迁移。',
+  'Default location': '默认位置',
+  'Enter an absolute path': '请输入绝对路径',
   'Choose interface theme': '选择界面主题',
   'Color scheme': '配色方案',
   Dark: '深色',
@@ -113,6 +126,8 @@ export const zhTranslations: Record<string, string> = {
   'Regular expression': '正则',
   'Previous match': '上一个',
   'Next match': '下一个',
+  'Use full chat width': '铺满两侧',
+  'Use reading width': '恢复两侧留白',
   'Toggle side panel': '折叠/展开右侧面板',
   'Toggle side panel fullscreen': '右侧面板全屏',
   'Expand side panel': '全屏右侧面板',
@@ -129,6 +144,9 @@ export const zhTranslations: Record<string, string> = {
     'Agent 改文件后自动打开右侧 Changes',
   'Open in side panel': '在侧栏打开',
   'Compact read-only tool calls': '精简只读工具调用',
+  'Expand file edits while running': '运行中自动展开文件改动',
+  'Automatically unfold the diff or written content of edit/write calls while the agent is still running':
+    'agent 运行中，edit/write 调用的 diff 或写入内容自动展开',
   'Verified smart compaction': '验证式智能压缩',
   'Use Enso verified summary for long-session compact. Falls back to default compact on failure. May be slower and use more tokens. Takes effect on the next session.':
     'Enso 自有验证式摘要做长会话 compact。失败回退默认压缩。可能更慢、更费 token。下一个会话生效。',
@@ -145,15 +163,31 @@ export const zhTranslations: Record<string, string> = {
     '所选模型已不可用——将回退到当前会话模型。',
   'Show read/grep/find/ls as one-line rows and fold consecutive tool calls while the agent is still running':
     'read/grep/find/ls 显示为单行，agent 运行中也折叠连续的工具调用',
+  'Notify only for the main agent': '仅主 agent 发送完成通知',
+  'Skip coworker completion and failure notifications on this computer and the paired phone. Questions and approvals still notify.':
+    'coworker 的回合完成和失败不弹桌面或手机通知。提问和审批仍会提醒。',
   'Stop if no output': '无输出则停止',
   'Abort and retry the run when no tokens or tool results arrive for this long. Thinking counts as output.':
     '超过此时长没有 token 或工具结果就中止并重试。思考输出也算有输出。',
   Never: '永不',
   '{{count}} min': '{{count}} 分钟',
+  '{{count}} day': '{{count}} 天',
+  '{{count}} days': '{{count}} 天',
+  'Archive idle conversations': '归档闲置会话',
+  'Move conversations that have been idle this long into Archived. Does not delete them.':
+    '将闲置超过此天数的会话移入已归档，不会删除。',
+  'Clean up merged worktrees': '清理已合并 worktree',
+  'When archiving idle conversations, also remove isolated worktrees that are merged and clean.':
+    '归档闲置会话时，一并清理已合并且干净的隔离 worktree。',
+  'Delete archived conversations after': '归档超过此天数后删除',
+  'Permanently delete conversations that have been archived longer than this. This cannot be undone. Choosing a positive value deletes already-overdue archived conversations immediately.':
+    '永久删除归档超过此天数的会话，不可恢复。改成正数会立即删除已超期的归档。',
   'No output for {{minutes}} minutes — retrying': '{{minutes}} 分钟没有输出，正在重试',
   'Stopped after repeated stalls': '多次卡住后已停止',
   'No file changes in this conversation yet.': '本会话还没有文件改动。',
   'No changes relative to HEAD.': '相对 HEAD 没有改动。',
+  'Collapse all': '全部折叠',
+  'Expand all': '全部展开',
   'Not a git repository.': '不是 git 仓库。',
   'Git diff is not available for this workspace.': '当前工作区不支持 Git diff。',
   'Terminal appearance': '终端外观',
@@ -323,6 +357,9 @@ export const zhTranslations: Record<string, string> = {
     '新会话发出首条消息后，用 AI 自动生成简短标题。',
   'Follows the default model': '跟随默认模型',
   'Follow default model': '改跟默认模型',
+  'Summarizing title': '标题总结中',
+  'Title summary failed': '标题总结失败',
+  'Click to retry': '点击重试',
   'Selected model is unavailable — falls back to the default model.':
     '所选模型已不可用——将回退到默认模型。',
   'No default model': '未设置默认模型',
@@ -703,6 +740,8 @@ export const zhTranslations: Record<string, string> = {
   'Clean up worktree': '清理 worktree',
   'Clean up worktree?': '清理 worktree？',
   'Failed to clean up worktree': '清理 worktree 失败',
+  'Reload conversation': '重新读取会话',
+  'Failed to reload conversation': '重新读取会话失败',
   'Clean up': '清理',
   'Archive session and clean up worktree?': '归档会话并清理 worktree？',
   'The isolated worktree has unfinished work: {{warning}}. The session falls back to the main working tree.':
@@ -730,6 +769,7 @@ export const zhTranslations: Record<string, string> = {
   Collapse: '收起',
   'Expand sidebar': '展开侧边栏',
   'Approval required': '需要审批',
+  'Waiting for your answer': '等待你回答',
   'Type an answer…': '输入回答…',
   'Message will queue until this round finishes…': '消息将排队,本轮结束后发送…',
   Queued: '排队',
@@ -803,8 +843,8 @@ export const zhTranslations: Record<string, string> = {
   Rename: '重命名',
   'Model selection': '模型选择',
   'Auto configure with AI': 'AI 自动配置',
-  'Ask Enso to configure subagent models':
-    '请帮我配置【允许子代理指定模型】（subagent-models），根据当前可用的模型服务，挑选适合子任务的便宜轻量模型和主力模型，并生成选型依据描述。',
+  [SUBAGENT_MODELS_CONFIGURE_PROMPT]:
+    '请帮我配置【允许子代理指定模型】。使用场景：主 Agent 派发 subagent/coworker（内置类型：scout 只读调研、reviewer 代码评审、tester 写测试、worker 实现）时，会从工具的 model 参数里读取每个条目的描述来给子任务挑模型，所以描述要写成选型规则，而不是宣传语。步骤：1）先读取当前条目和开关状态；2）列出凭证有效的模型服务及其已启用模型，不要凭空编造模型；3）挑 2–4 个模型覆盖：便宜、快、长上下文的用于调研/阅读/总结；推理最强的用于评审、架构和疑难排查；稳定的编码模型用于实现；4）补缺、去重、清理不可用条目，然后打开开关；5）每条描述用我的界面语言写一句话：什么时候用、相对成本/速度、一个注意点。最后列出最终条目及各自的选型理由。',
   'Must be picked by main agent': '必须由主 Agent 选择',
   'Picked by main agent': '由主 Agent 选择',
   'Fixed model': '自选固定模型',
@@ -885,6 +925,8 @@ export const zhTranslations: Record<string, string> = {
   Clear: '清除',
   'No conversations yet': '暂无对话',
   'Preparing session…': '正在读取历史…',
+  'Loading earlier messages…': '加载更早的消息…',
+  'Beginning of conversation': '已到对话开头',
   'Retry resume': '重新恢复',
   Todos: '任务清单',
   '{{count}} tool calls': '{{count}} 个工具调用',
@@ -907,6 +949,7 @@ export const zhTranslations: Record<string, string> = {
   'Search models': '搜索模型',
   'No models found': '没有匹配的模型',
   'Import session': '导入会话',
+  'More actions': '更多操作',
   'Pick a conversation from a local AI app under {{name}}.':
     '从本地 AI 应用导入 {{name}} 项目下的对话历史。',
   'No sessions found for this project': '没有找到该项目的会话',
@@ -955,6 +998,11 @@ export const zhTranslations: Record<string, string> = {
   'Force read/find tools': '强制走 read/find 工具',
   'Block cat/head/grep/sed -i in the shell and require the dedicated file tools. Off by default. Takes effect on the next session.':
     '拦截 shell 里的 cat/head/grep/sed -i，要求改用专用文件工具。默认关。下次开会话生效。',
+  'Hashline edit': 'Hashline 编辑',
+  'Line-anchored read/edit with snapshot tags. Off by default. Takes effect on the next session. oldText replace still works when Force read/find is off.':
+    '带快照标签的行锚点 read/edit。默认关。下次开会话生效。未开强制 read/find 时仍可用 oldText 替换。',
+  'Also turn on Force read/find tools so the model uses tagged read more often. Edit still accepts oldText replace either way.':
+    '建议同时打开强制走 read/find 工具，模型会更多用带标签的 read。无论是否打开，edit 仍接受 oldText 替换。',
   'Load project harness assets': '加载项目内其它工具目录',
   'Also load skills from .claude/.codex/.cursor and rule files (.cursorrules, .cursor/rules, .claude/rules) in the project':
     '同时加载项目内 .claude/.codex/.cursor 下的 skills，以及规则文件（.cursorrules、.cursor/rules、.claude/rules）',
@@ -1075,6 +1123,8 @@ export const zhTranslations: Record<string, string> = {
   'Generate a pairing code to let a phone or another desktop connect.':
     '生成配对码，让手机或另一台桌面连入。',
   'Waiting for device': '等待设备',
+  'Direct link': '直连',
+  'Via relay': '中继',
   Copied: '已复制',
   'Browse and drive conversations on another EnsoCode desktop. Its agent, keys and history stay there.':
     '浏览并操控另一台 EnsoCode 桌面上的会话。agent、密钥与历史都留在对方机器上。',

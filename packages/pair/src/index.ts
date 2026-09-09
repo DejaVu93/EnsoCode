@@ -12,6 +12,33 @@ export {
   type PairKeypair,
   sealFrame,
 } from './crypto';
+export { createBrowserDirectPeerFactory } from './direct/browserPeer';
+export {
+  CHUNK_PAYLOAD_BYTES,
+  createReassembler,
+  encodeChunks,
+  type Reassembler,
+} from './direct/chunk';
+export {
+  DIRECT_NEGOTIATE_TIMEOUT_MS,
+  type DirectAction,
+  type DirectEvent,
+  type DirectPhase,
+  type DirectRole,
+  type DirectState,
+  type DirectTransport,
+  directBackoffDelay,
+  initialDirectState,
+  reduceDirect,
+} from './direct/directSession';
+export { DirectLink, type DirectLinkDeps, type DirectSignal } from './direct/link';
+export { classifyNatMapping, describeCandidates, type NatMapping } from './direct/nat';
+export {
+  type DirectPeer,
+  type DirectPeerFactory,
+  isAllowedCandidate,
+  normalizeCandidate,
+} from './direct/peer';
 export {
   buildPairLink,
   buildPairUri,
@@ -38,8 +65,12 @@ export {
   type ApprovalMode,
   type AttachedImage,
   type CatalogEntry,
+  DIRECT_SIGNAL_MAX_CHARS,
+  type DirectCandidate,
+  type DirectCapability,
   type HostAppearance,
   type HostToPhone,
+  type IceServerEntry,
   isPhoneCommand,
   type PairControl,
   PHONE_COMMAND_TYPES,
@@ -58,3 +89,21 @@ export {
   type PairedDevice,
   toWebSocketUrl,
 } from './relay';
+export {
+  createCachedHostLookup,
+  isMagicDnsOnly,
+  type NetworkInterfaceSnapshot,
+  type NudgeReason,
+  networkFingerprint,
+  parseLiteralHost,
+  parseRelayHostCache,
+  parseResolvConfNameservers,
+  parseScutilGlobalNameservers,
+  pickRelayConnectAddress,
+  type RelayHostAddress,
+  serializeRelayHostCache,
+  shouldReplaceOnNudge,
+  shouldSkipRelayLookup,
+  shouldUsePinnedRelaySocket,
+  TAILSCALE_MAGIC_DNS,
+} from './revive';

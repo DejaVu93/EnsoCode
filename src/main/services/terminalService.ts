@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs';
 import os from 'node:os';
+import { resolveTerminalShellFile, type TerminalShell } from '@shared/terminalShell';
 import type { TerminalCreateRequest, TerminalCreateResult } from '@shared/types';
 import { IPC_CHANNELS } from '@shared/types';
 import type { WebContents } from 'electron';
@@ -19,11 +20,6 @@ function isDirectory(dir: string): boolean {
   } catch {
     return false;
   }
-}
-
-function defaultShell(): string {
-  if (process.platform === 'win32') return process.env.COMSPEC || 'cmd.exe';
-  return process.env.SHELL || '/bin/zsh';
 }
 
 /** 与 agent spawn 同一口径:有隔离 worktree 用它,否则本地项目根,都没有才 home */
@@ -46,9 +42,9 @@ export interface TerminalSpawnSpec {
   env?: Record<string, string>;
 }
 
-export function localShellSpec(cwd: string): TerminalSpawnSpec {
+export function localShellSpec(cwd: string, shell: TerminalShell = 'auto'): TerminalSpawnSpec {
   return {
-    file: defaultShell(),
+    file: resolveTerminalShellFile(shell, process.platform, process.env),
     args: [],
     cwd: isDirectory(cwd) ? cwd : os.homedir(),
     env: { ...process.env, TERM: 'xterm-256color', TERM_PROGRAM: 'EnsoCode' } as Record<

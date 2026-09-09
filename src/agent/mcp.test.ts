@@ -23,8 +23,8 @@ vi.mock('@modelcontextprotocol/sdk/client/index.js', () => ({
     connect(...args: unknown[]) {
       return clientState.connect(...(args as []));
     }
-    listTools() {
-      return clientState.listTools();
+    listTools(...args: unknown[]) {
+      return clientState.listTools(...(args as []));
     }
     callTool(...args: unknown[]) {
       return clientState.callTool(...(args as []));
@@ -319,6 +319,23 @@ describe('McpManager per-server timeouts', () => {
     await vi.advanceTimersByTimeAsync(2);
     await expect(pending).rejects.toThrow(/80ms/);
     vi.useRealTimers();
+  });
+
+  it('forwards timeouts to SDK RequestOptions so the SDK 60s default does not win', async () => {
+    clientState.connect = vi.fn(async () => {});
+    clientState.listTools = vi.fn(async () => ({
+      tools: [{ name: 'search', inputSchema: { type: 'object' } }],
+    }));
+    clientState.callTool = vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+    const { manager } = makeManager();
+    const tools = await manager.toolsFor([
+      { ...httpServer, connectTimeoutMs: 300_000, callTimeoutMs: 3_600_000 },
+    ]);
+    await tools[0]?.execute('tc-1', {}, undefined, undefined, {} as never);
+    const argsOf = (fn: { mock: { calls: unknown[][] } }) => fn.mock.calls[0] ?? [];
+    expect(argsOf(clientState.connect)[1]).toMatchObject({ timeout: 300_000 });
+    expect(argsOf(clientState.listTools)[1]).toMatchObject({ timeout: 300_000 });
+    expect(argsOf(clientState.callTool)[2]).toMatchObject({ timeout: 3_600_000 });
   });
 });
 
