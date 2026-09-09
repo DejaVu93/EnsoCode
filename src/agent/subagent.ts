@@ -274,7 +274,16 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
       };
       deps.emitUpdate({ ...info });
 
-      const session = await deps.createSubSession(agentType, modelOption?.config, thinking);
+      let session: AgentSession;
+      try {
+        session = await deps.createSubSession(agentType, modelOption?.config, thinking);
+      } catch (error) {
+        info.status = 'failed';
+        info.currentActivity = '';
+        info.resultText = error instanceof Error ? error.message : String(error);
+        deps.emitUpdate({ ...info });
+        throw error;
+      }
       let dirty = false;
       const timer = setInterval(() => {
         if (!dirty) return;

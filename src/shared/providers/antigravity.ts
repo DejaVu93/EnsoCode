@@ -1845,17 +1845,17 @@ export const ANTIGRAVITY_FALLBACK_MODELS: PiModelSpec[] = ANTIGRAVITY_LOGICAL_MO
 
 /**
  * 把 `fetchAvailableModels` 发现的**原始 wire id** 与逻辑表合并：
- * - wire id 能归到某条逻辑模型 → 不单独暴露，只用来确认该逻辑模型在本账号可用
- * - 归不到的 → 原样暴露（id 即 wire id），后端上新模型不至于用不了
- * - 逻辑条目的 wire id 一个都没被后端返回 → 本账号 tier 拿不到，不暴露
+ * - 现有逻辑入口：任一 wire 被后端返回才暴露（已有会话 / effortRouting 兼容）
+ * - 发现到的原始 id 一律保留为不透明身份；归组不得删掉 Fetch 可选的远端 id
+ * - 去重只看本次已插入的 id：逻辑没插入时同名 raw 仍保留（含 displayName）
+ * - 逻辑条目的 wire 一个都没被后端返回 → 本账号 tier 拿不到，不暴露
  */
 export function mergeAntigravityModels(discovered: PiModelSpec[]): PiModelSpec[] {
   const available = new Set(discovered.map((spec) => spec.id));
-  const claimed = new Set<string>();
   const merged: PiModelSpec[] = [];
+  const inserted = new Set<string>();
   for (const logical of ANTIGRAVITY_LOGICAL_MODELS) {
     const wireIds = antigravityWireIds(logical);
-    for (const wire of wireIds) claimed.add(wire);
     if (!wireIds.some((wire) => available.has(wire))) continue;
     merged.push(
       modelSpec(
@@ -1868,13 +1868,14 @@ export function mergeAntigravityModels(discovered: PiModelSpec[]): PiModelSpec[]
         logical.thinkingLevelMap
       )
     );
+    inserted.add(logical.id);
   }
   for (const spec of discovered) {
-    if (claimed.has(spec.id)) continue;
-    // `gemini-3-flash` 这类 id 既是逻辑 id 又是后端的独立 wire id。原样暴露会与逻辑条目
-    // 撞 id，而且 resolve 时照样走逻辑映射，所以这个 id 一律交给逻辑表处理。
-    if (LOGICAL_BY_ID[spec.id]) continue;
+    // 不能按全表 LOGICAL_BY_ID 跳过：裸逻辑同名 id 且没有 route wire 时逻辑不会插入，
+    // 再 skip 会把唯一的远端身份丢掉。
+    if (inserted.has(spec.id)) continue;
     merged.push(spec);
+    inserted.add(spec.id);
   }
   return sortModelSpecs(merged);
 }

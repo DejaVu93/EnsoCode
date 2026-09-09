@@ -158,7 +158,11 @@ try {
     // 分段移动：dnd-kit PointerSensor 需要超过 activation 阈值的连续真实移动
     const steps = 20;
     for (let i = 1; i <= steps; i++) {
-      await mouse('mouseMoved', from.x + ((to.x - from.x) * i) / steps, from.y + ((to.y - from.y) * i) / steps);
+      await mouse(
+        'mouseMoved',
+        from.x + ((to.x - from.x) * i) / steps,
+        from.y + ((to.y - from.y) * i) / steps
+      );
       await new Promise((r) => setTimeout(r, 25));
     }
     await new Promise((r) => setTimeout(r, 150)); // 悬停让 droppable 识别
