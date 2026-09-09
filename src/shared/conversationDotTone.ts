@@ -1,23 +1,29 @@
 export type ConversationDotTone = 'running' | 'failed' | 'waiting' | 'unread' | 'idle';
 
 type ChildActivityConversation = {
-  status: string;
+  status?: string;
   spawning?: boolean;
   subagents?: readonly { status: string }[];
   coworkerIds?: readonly string[];
 };
 
 export function conversationHasRunningChild(
-  conversation: ChildActivityConversation,
-  conversations: Readonly<Record<string, ChildActivityConversation | undefined>>
+  conversation: ChildActivityConversation | undefined,
+  conversations: Readonly<Record<string, ChildActivityConversation | undefined>>,
+  seen?: Set<string>
 ): boolean {
-  return (
-    conversation.subagents?.some((agent) => agent.status === 'running') === true ||
-    conversation.coworkerIds?.some((childId) => {
-      const child = conversations[childId];
-      return Boolean(child && (child.spawning || child.status === 'running'));
-    }) === true
-  );
+  if (!conversation) return false;
+  if (conversation.subagents?.some((agent) => agent.status === 'running') === true) return true;
+  const visited = seen ?? new Set<string>();
+  for (const childId of conversation.coworkerIds ?? []) {
+    if (visited.has(childId)) continue;
+    visited.add(childId);
+    const child = conversations[childId];
+    if (!child) continue;
+    if (child.spawning || child.status === 'running') return true;
+    if (conversationHasRunningChild(child, conversations, visited)) return true;
+  }
+  return false;
 }
 
 export function conversationDotTone(input: {

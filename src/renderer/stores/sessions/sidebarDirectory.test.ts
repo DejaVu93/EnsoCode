@@ -30,4 +30,29 @@ describe('selectSidebarConversations', () => {
     expect(next.a.title).toBe('u');
     expect(next.a.status).toBe('idle');
   });
+
+  it('父会话 idle 但 coworker running 时投影 hasRunningChild，供侧栏蓝点', () => {
+    const directory = selectSidebarConversations({
+      parent: conv('parent', { status: 'idle', coworkerIds: ['kid'] }),
+      kid: conv('kid', { status: 'running', parentId: 'parent' }),
+    });
+    expect(directory.parent.status).toBe('idle');
+    expect(directory.parent.hasRunningChild).toBe(true);
+    expect(directory.kid.hasRunningChild).toBe(false);
+  });
+
+  it('coworker 从 idle 变为 running 时重建目录，父条目 hasRunningChild 翻转', () => {
+    const parent = conv('parent', { status: 'idle', coworkerIds: ['kid'] });
+    const first = selectSidebarConversations({
+      parent,
+      kid: conv('kid', { status: 'idle', parentId: 'parent' }),
+    });
+    const second = selectSidebarConversations({
+      parent,
+      kid: conv('kid', { status: 'running', parentId: 'parent' }),
+    });
+    expect(second).not.toBe(first);
+    expect(first.parent.hasRunningChild).toBe(false);
+    expect(second.parent.hasRunningChild).toBe(true);
+  });
 });

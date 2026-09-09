@@ -37,6 +37,27 @@ describe('conversationHasRunningChild', () => {
   it('coworker 投影缺失时没有活跃子任务', () => {
     expect(conversationHasRunningChild(parent, {})).toBe(false);
   });
+
+  it('会话投影缺失时没有活跃子任务', () => {
+    expect(conversationHasRunningChild(undefined, { child: { status: 'running' } })).toBe(false);
+  });
+
+  it('coworker 自身 idle 但其 subagent 运行时父会话仍有活跃子任务', () => {
+    expect(
+      conversationHasRunningChild(parent, {
+        child: { status: 'idle', subagents: [{ status: 'running' }] },
+      })
+    ).toBe(true);
+  });
+
+  it('嵌套 coworker 运行时父会话仍有活跃子任务', () => {
+    expect(
+      conversationHasRunningChild(parent, {
+        child: { status: 'idle', coworkerIds: ['grand'] },
+        grand: { status: 'running' },
+      })
+    ).toBe(true);
+  });
 });
 
 describe('conversationDotTone', () => {

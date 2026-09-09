@@ -8,7 +8,7 @@ import {
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { ENSO_AGENT_TYPE_KEY } from '@shared/builtinAgents';
-import { conversationDotTone, conversationHasRunningChild } from '@shared/conversationDotTone';
+import { conversationDotTone } from '@shared/conversationDotTone';
 import {
   ALL_GROUP_ID,
   filterProjectsByGroup,
@@ -156,8 +156,6 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
   const cleanupWorktree = useSessionsStore((state) => state.cleanupWorktree);
   const refreshWorktreeStatuses = useSessionsStore((state) => state.refreshWorktreeStatuses);
   const worktreeStatuses = useSessionsStore((state) => state.worktreeStatuses);
-  const hasRunningChild = (id: string) =>
-    conversationHasRunningChild(conversations[id], conversations);
 
   // 折叠的项目分组（记忆到 localStorage）
   const [collapsedProjects, setCollapsedProjects] = useState<Record<string, boolean>>(() => {
@@ -772,7 +770,6 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                     id={id}
                     conversation={conversations[id]}
                     active={activeId === id}
-                    hasRunningChild={hasRunningChild(id)}
                     switchHint={switchHintFor(id, 'active')}
                     locale={locale}
                     nowTick={nowTick}
@@ -820,7 +817,6 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                         id={id}
                         conversation={conversations[id]}
                         active={activeId === id}
-                        hasRunningChild={hasRunningChild(id)}
                         switchHint={switchHintFor(id, 'pinned')}
                         locale={locale}
                         nowTick={nowTick}
@@ -1061,7 +1057,6 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                                 id={id}
                                                 conversation={conversations[id]}
                                                 active={activeId === id}
-                                                hasRunningChild={hasRunningChild(id)}
                                                 switchHint={switchHintFor(id, 'project')}
                                                 locale={locale}
                                                 nowTick={nowTick}
@@ -1323,7 +1318,6 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                                     id={id}
                                     conversation={conversations[id]}
                                     active={activeId === id}
-                                    hasRunningChild={hasRunningChild(id)}
                                     locale={locale}
                                     nowTick={nowTick}
                                     worktreeStatus={
@@ -1866,6 +1860,7 @@ interface ConversationRowProps {
     title: string;
     status: string;
     spawning: boolean;
+    hasRunningChild?: boolean;
     pinned?: boolean;
     archived?: boolean;
     createdAt: number;
@@ -1881,7 +1876,6 @@ interface ConversationRowProps {
     reloading?: boolean;
   };
   active: boolean;
-  hasRunningChild: boolean;
   locale: Parameters<typeof formatRelativeTime>[1];
   nowTick: number;
   /** 顶部 Pinned 栏目里用项目名做 hover 提示 */
@@ -1910,7 +1904,6 @@ function ConversationRow({
   id,
   conversation,
   active,
-  hasRunningChild,
   locale,
   nowTick,
   hoverTitle,
@@ -1960,7 +1953,7 @@ function ConversationRow({
       tabIndex={0}
       title={hoverTitle}
     >
-      <ConversationDot conversation={conversation} hasRunningChild={hasRunningChild} />
+      <ConversationDot conversation={conversation} />
       {isolated && <WorktreeBadge status={worktreeStatus} />}
       {sourceTitle && (
         <span className="truncate text-[10px] text-muted-foreground/70">
@@ -2190,22 +2183,21 @@ function TitleSummaryBadge({
 
 function ConversationDot({
   conversation,
-  hasRunningChild,
 }: {
   conversation: {
     status: string;
     spawning: boolean;
     unread?: boolean;
     pendingAsks?: { requestId: string }[];
+    hasRunningChild?: boolean;
   };
-  hasRunningChild: boolean;
 }) {
   const tone = conversationDotTone({
     status: conversation.status,
     spawning: conversation.spawning,
     unread: conversation.unread,
     pendingAskCount: conversation.pendingAsks?.length ?? 0,
-    hasRunningChild,
+    hasRunningChild: conversation.hasRunningChild,
   });
   return <ConversationStatusIndicator tone={tone} size="sm" />;
 }

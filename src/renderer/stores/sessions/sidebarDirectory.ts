@@ -1,8 +1,12 @@
+import { conversationHasRunningChild } from '@shared/conversationDotTone';
+
 export interface SidebarDirectoryEntry {
   id: string;
   title: string;
   status: string;
   spawning: boolean;
+  /** 子会话 / subagent 仍在跑：侧栏蓝点，即使本会话 idle */
+  hasRunningChild?: boolean;
   pinned?: boolean;
   archived?: boolean;
   archivedAt?: number;
@@ -54,12 +58,13 @@ function lastActiveAt(conversation: Source): number | undefined {
   return conversation.messages.at(-1)?.timestamp ?? conversation.lastActiveAt;
 }
 
-function project(conversation: Source): SidebarDirectoryEntry {
+function project(conversation: Source, hasRunningChild: boolean): SidebarDirectoryEntry {
   return {
     id: conversation.id ?? '',
     title: conversation.title,
     status: conversation.status ?? 'idle',
     spawning: conversation.spawning === true,
+    hasRunningChild,
     pinned: conversation.pinned,
     archived: conversation.archived,
     archivedAt: conversation.archivedAt,
@@ -100,7 +105,18 @@ export function selectSidebarConversations(
   const prints: string[] = [];
   for (const [id, conversation] of Object.entries(conversations)) {
     if (!conversation) continue;
-    const entry = project(conversation);
+    const entry = project(
+      conversation,
+      conversationHasRunningChild(
+        {
+          status: conversation.status ?? 'idle',
+          spawning: conversation.spawning,
+          subagents: conversation.subagents,
+          coworkerIds: conversation.coworkerIds,
+        },
+        conversations
+      )
+    );
     next[id] = entry;
     prints.push(`${id}:${fingerprint(entry)}`);
   }

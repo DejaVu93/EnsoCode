@@ -388,6 +388,10 @@ export function ChatView() {
               <StatusDot
                 status={conversation.spawning ? 'running' : conversation.status}
                 pendingAskCount={(conversation.pendingAsks ?? []).length}
+                hasRunningChild={
+                  conversation.id === parent.id &&
+                  allConversations[parent.id]?.hasRunningChild === true
+                }
               />
             </div>
           }
@@ -618,7 +622,15 @@ const ENSO_PREFILL_CANDIDATE: AgentTypeMentionCandidate = {
   canEdit: false,
 };
 
-function StatusDot({ status, pendingAskCount = 0 }: { status: string; pendingAskCount?: number }) {
-  const tone = conversationDotTone({ status, pendingAskCount });
+function StatusDot({
+  status,
+  pendingAskCount = 0,
+  hasRunningChild = false,
+}: {
+  status: string;
+  pendingAskCount?: number;
+  hasRunningChild?: boolean;
+}) {
+  const tone = conversationDotTone({ status, pendingAskCount, hasRunningChild });
   return <ConversationStatusIndicator tone={tone} size="md" title={status} />;
 }
