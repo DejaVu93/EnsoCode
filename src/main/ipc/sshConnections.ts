@@ -2,7 +2,6 @@ import { resolveSshTarget } from '@shared/ssh';
 import { IPC_CHANNELS } from '@shared/types';
 import { ipcMain } from 'electron';
 import { getSshConnectionStore, type SshConnectionUpsert } from '../services/sshConnectionStore';
-import { defaultKnownHostsPath, trustSshHostKey } from '../services/sshHostKey';
 import { sshListRemoteDirs, sshProbeLogin } from '../services/sshProbe';
 import { isMainWebContents } from '../windows/MainWindow';
 import { isSettingsWebContents } from '../windows/SettingsWindow';
@@ -99,12 +98,15 @@ export function registerSshConnectionHandlers(): void {
     }
     const secret = getSshConnectionStore().getSecret(id);
     if (!secret) return { ok: false, error: '连接不存在。' };
-    return trustSshHostKey(
-      secret.host,
-      secret.port ?? 22,
-      defaultKnownHostsPath(),
-      undefined,
-      resolveSshTarget(secret)
-    );
+    const failure = await sshProbeLogin(resolveSshTarget(secret), {
+      auth: secret.auth,
+      port: secret.port,
+      password: secret.password,
+      strictHostKeyChecking: 'accept-new',
+    });
+    if (!failure || (!failure.hostKey && !/主机密钥未信任/.test(failure.error))) {
+      return { ok: true };
+    }
+    return { ok: false, error: failure.error };
   });
 }

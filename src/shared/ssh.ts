@@ -39,6 +39,8 @@ export interface SshExecArgsOptions {
   auth?: 'key' | 'password';
   /** 非 22 才写 -p */
   port?: number;
+  /** 用户确认后写入 known_hosts；仅探测/信任使用 */
+  strictHostKeyChecking?: 'accept-new';
 }
 
 /** 有 user 则 user@host,否则 host(ssh config 别名) */
@@ -91,6 +93,9 @@ export function buildSshExecArgs(
   }
   if (options.port && options.port !== 22) args.push('-p', String(options.port));
   args.push('-o', `ConnectTimeout=${options.connectTimeoutSeconds ?? 10}`);
+  if (options.strictHostKeyChecking === 'accept-new') {
+    args.push('-o', 'StrictHostKeyChecking=accept-new');
+  }
   if (options.controlPath) {
     args.push(
       '-o',

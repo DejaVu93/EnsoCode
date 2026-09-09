@@ -69,6 +69,13 @@ describe('buildSshExecArgs', () => {
     expect(buildSshExecArgs('h', 'true', { auth: 'key', port: 22 }).includes('-p')).toBe(false);
     expect(buildSshExecArgs('h', 'true', {}).join(' ')).toContain('BatchMode=yes');
   });
+
+  it('accept-new 仅在显式打开时写入 StrictHostKeyChecking', () => {
+    expect(buildSshExecArgs('h', 'true', {}).join(' ')).not.toContain('StrictHostKeyChecking');
+    expect(
+      buildSshExecArgs('h', 'true', { strictHostKeyChecking: 'accept-new' }).join(' ')
+    ).toContain('StrictHostKeyChecking=accept-new');
+  });
 });
 
 describe('buildSshPtyArgs', () => {

@@ -42,6 +42,7 @@ export function parseSshKeyscanOutput(stdout: string): ParsedSshKeyscanKey | nul
     if (parts.length < 3) continue;
     const [hostToken, keyType, key] = parts;
     if (!hostToken || !keyType || !key) continue;
+    if (!/^(ssh-|ecdsa-|sk-)/.test(keyType)) continue;
     parsed.push({ hostToken, keyType, key, line: `${hostToken} ${keyType} ${key}` });
   }
   for (const type of KEY_TYPE_PREF) {

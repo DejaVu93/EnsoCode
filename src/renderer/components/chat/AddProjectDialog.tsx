@@ -58,9 +58,14 @@ function RemoteDirBrowser({
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   const requestSeq = React.useRef(0);
+  const pathRef = React.useRef<string | null>(null);
+  const onHostKeyRef = React.useRef(onHostKey);
+  onHostKeyRef.current = onHostKey;
+  const fallbackHostRef = React.useRef(fallbackHost);
+  fallbackHostRef.current = fallbackHost;
 
   const load = React.useCallback(
-    (target?: string) => {
+    (target?: string, promptHostKey = true) => {
       const seq = ++requestSeq.current;
       setLoading(true);
       setError('');
@@ -70,12 +75,13 @@ function RemoteDirBrowser({
           if (seq !== requestSeq.current) return;
           if (result.ok) {
             setPath(result.path);
+            pathRef.current = result.path;
             setDirs(result.dirs);
             return;
           }
-          const challenge = hostKeyFromSshFailure(result, fallbackHost);
-          if (challenge) {
-            onHostKey(challenge);
+          const challenge = hostKeyFromSshFailure(result, fallbackHostRef.current);
+          if (challenge && promptHostKey) {
+            onHostKeyRef.current(challenge);
             return;
           }
           setError(result.error);
@@ -87,7 +93,7 @@ function RemoteDirBrowser({
           if (seq === requestSeq.current) setLoading(false);
         });
     },
-    [connectionId, fallbackHost, onHostKey, t]
+    [connectionId, t]
   );
 
   // 仅挂载/切换连接时以当前输入为起点；后续导航由 load 驱动，不跟随输入框变化
@@ -99,8 +105,11 @@ function RemoteDirBrowser({
 
   React.useEffect(() => {
     if (!hostKeyRetry) return;
-    load(path ?? (initialRef.current?.startsWith('/') ? initialRef.current : undefined));
-  }, [hostKeyRetry, load, path]);
+    load(
+      pathRef.current ?? (initialRef.current?.startsWith('/') ? initialRef.current : undefined),
+      false
+    );
+  }, [hostKeyRetry, load]);
 
   const parent = path && path !== '/' ? path.replace(/\/[^/]+$/, '') || '/' : null;
 

@@ -101,7 +101,7 @@ export function SshSettings() {
     reload();
   };
 
-  const test = async (id: string) => {
+  const test = async (id: string, promptHostKey = true) => {
     setTestingId(id);
     setTestHint(null);
     const result = await window.electronAPI.sshConnections.test(id);
@@ -109,7 +109,7 @@ export function SshSettings() {
     if (!result.ok) {
       const connection = connections.find((row) => row.id === id);
       const challenge = hostKeyFromSshFailure(result, connection);
-      if (challenge) {
+      if (challenge && promptHostKey) {
         setHostKey({ id, challenge });
         return;
       }
@@ -120,16 +120,15 @@ export function SshSettings() {
   const trustHost = async () => {
     if (!hostKey) return;
     setTrusting(true);
-    const trusted = await window.electronAPI.sshConnections.trustHost(hostKey.id);
+    const id = hostKey.id;
+    const trusted = await window.electronAPI.sshConnections.trustHost(id);
     setTrusting(false);
+    setHostKey(null);
     if (!trusted.ok) {
       setTestHint(trusted.error || t('Could not save host key.'));
-      setHostKey(null);
       return;
     }
-    const id = hostKey.id;
-    setHostKey(null);
-    await test(id);
+    await test(id, false);
   };
 
   return (

@@ -5,9 +5,9 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   appendKnownHostLine,
+  challengeFromScan,
   classifySshHostKeyFailure,
   parseSshKeyscanOutput,
-  challengeFromScan,
   scanSshHostKey,
   sshKeyFingerprint,
   toSshHostKeyChallenge,
@@ -53,6 +53,7 @@ describe('parseSshKeyscanOutput / sshKeyFingerprint', () => {
         ?.keyType
     ).toBe('ecdsa-sha2-nistp256');
     expect(parseSshKeyscanOutput('# only\n\n')).toBeNull();
+    expect(parseSshKeyscanOutput('box SSH-2.0-OpenSSH_9.0 not-a-key')).toBeNull();
   });
 
   it('toSshHostKeyChallenge 不含 known_hosts 整行', () => {
