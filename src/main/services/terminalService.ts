@@ -42,15 +42,46 @@ export interface TerminalSpawnSpec {
   env?: Record<string, string>;
 }
 
+const UTF8_LOCALE_RE = /utf-?8/i;
+
+function isUtf8Locale(value: string | undefined): boolean {
+  return Boolean(value && UTF8_LOCALE_RE.test(value));
+}
+
+function utf8Fallback(lang: string | undefined): string {
+  if (!lang || lang === 'C' || lang === 'POSIX') return 'en_US.UTF-8';
+  if (isUtf8Locale(lang)) return lang;
+  const dot = lang.lastIndexOf('.');
+  return dot > 0 ? `${lang.slice(0, dot)}.UTF-8` : `${lang}.UTF-8`;
+}
+
+/** Electron 从 Finder 启动时常没有 UTF-8 locale，xterm 输入中文会乱码 */
+export function withUtf8Locale(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === 'string') out[key] = value;
+  }
+  if (
+    isUtf8Locale(out.LC_ALL) ||
+    (!out.LC_ALL && (isUtf8Locale(out.LC_CTYPE) || isUtf8Locale(out.LANG)))
+  ) {
+    return out;
+  }
+  const fallback = utf8Fallback(out.LANG);
+  out.LANG = isUtf8Locale(out.LANG) ? out.LANG : fallback;
+  if (out.LC_ALL) out.LC_ALL = fallback;
+  if (!isUtf8Locale(out.LC_CTYPE)) out.LC_CTYPE = out.LANG;
+  return out;
+}
+
 export function localShellSpec(cwd: string, shell: TerminalShell = 'auto'): TerminalSpawnSpec {
   return {
     file: resolveTerminalShellFile(shell, process.platform, process.env),
     args: [],
     cwd: isDirectory(cwd) ? cwd : os.homedir(),
-    env: { ...process.env, TERM: 'xterm-256color', TERM_PROGRAM: 'EnsoCode' } as Record<
-      string,
-      string
-    >,
+    env: withUtf8Locale({ ...process.env, TERM: 'xterm-256color', TERM_PROGRAM: 'EnsoCode' }),
   };
 }
 
@@ -89,7 +120,7 @@ export function createTerminal(
       cwd: spec.cwd,
       cols,
       rows,
-      env: spec.env,
+      env: withUtf8Locale(spec.env ?? process.env),
     });
     const entry: TerminalEntry = { pty, sender };
     pty.onData((data) => {

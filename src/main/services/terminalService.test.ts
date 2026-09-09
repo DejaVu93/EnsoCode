@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { pickSessionCwd, resolvePtySize } from './terminalService';
+import { pickSessionCwd, resolvePtySize, withUtf8Locale } from './terminalService';
 
 const exists = (dir: string) => dir === '/wt' || dir === '/proj';
 
@@ -53,5 +53,34 @@ describe('resolvePtySize', () => {
   it('0 或负数不当成有效尺寸', () => {
     expect(resolvePtySize(0, 0)).toEqual({ cols: 80, rows: 24 });
     expect(resolvePtySize(-1, 12)).toEqual({ cols: 80, rows: 12 });
+  });
+});
+
+describe('withUtf8Locale', () => {
+  it('Finder 启动常见的空 locale 补成 UTF-8，不掉 TERM', () => {
+    const next = withUtf8Locale({ TERM: 'xterm-256color', TERM_PROGRAM: 'EnsoCode' });
+    expect(next.TERM).toBe('xterm-256color');
+    expect(next.LANG).toMatch(/utf-?8/i);
+    expect(next.LC_CTYPE).toMatch(/utf-?8/i);
+    expect(next.LC_ALL).toBeUndefined();
+  });
+
+  it('已是 UTF-8 的 LANG 不改', () => {
+    expect(withUtf8Locale({ LANG: 'zh_CN.UTF-8' }).LANG).toBe('zh_CN.UTF-8');
+  });
+
+  it('LANG=C / POSIX 换成 UTF-8', () => {
+    expect(withUtf8Locale({ LANG: 'C' }).LANG).toMatch(/utf-?8/i);
+    expect(withUtf8Locale({ LANG: 'POSIX' }).LANG).toMatch(/utf-?8/i);
+  });
+
+  it('GBK 等非 UTF-8 编码改成 同语言.UTF-8，xterm 只走 UTF-8', () => {
+    expect(withUtf8Locale({ LANG: 'zh_CN.GBK' }).LANG).toBe('zh_CN.UTF-8');
+  });
+
+  it('LC_ALL=C 会压过 LANG，必须一并改成 UTF-8', () => {
+    const next = withUtf8Locale({ LANG: 'zh_CN.UTF-8', LC_ALL: 'C' });
+    expect(next.LC_ALL).toMatch(/utf-?8/i);
+    expect(next.LANG).toMatch(/utf-?8/i);
   });
 });
