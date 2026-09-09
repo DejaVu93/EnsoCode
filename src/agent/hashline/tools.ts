@@ -5,6 +5,7 @@ import { createHashlineEditTool } from './editTool';
 import { formatHashlineHeader, formatNumberedLines } from './format';
 import {
   EDIT_INVALID_MESSAGE,
+  EDIT_MIXED_MESSAGE,
   HASHLINE_EDIT_DESCRIPTION,
   HASHLINE_EDIT_GUIDELINES,
   HASHLINE_PUT_EXAMPLE,
@@ -116,6 +117,7 @@ export function wrapHashlineEditDefinition<T extends { execute: (...args: never[
       execute: (async (toolCallId: string, params: unknown, ...rest: unknown[]) => {
         const kind = classifyEditArgs(params).kind;
         if (kind === 'replace') return execute(toolCallId, withoutInput(params), ...rest);
+        if (kind === 'mixed') throw new Error(EDIT_MIXED_MESSAGE);
         if (kind === 'hashline') {
           const input = String((params as { input?: string } | undefined)?.input ?? '');
           const applied = await applyHashlineToFile({
@@ -145,7 +147,7 @@ export function wrapHashlineEditDefinition<T extends { execute: (...args: never[
   );
 }
 
-/** 混发时 replace 优先：去掉 input，避免 stock edit 收到陆外字段 */
+/** replace 路径剥掉误带的 input，避免 stock edit 收到额外字段 */
 function withoutInput(params: unknown): unknown {
   if (!params || typeof params !== 'object' || !('input' in params)) return params;
   const { input: _input, ...rest } = params as Record<string, unknown>;

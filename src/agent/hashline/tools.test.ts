@@ -112,7 +112,7 @@ describe('wrapHashlineEditDefinition', () => {
     expect(stock.execute).not.toHaveBeenCalled();
   });
 
-  it('input 与非空 edits 混发时走 stock replace，不动 Hashline', async () => {
+  it('input 与非空 edits 混发时拒绝，不写文件也不走 stock', async () => {
     const { stock, writeText, wrapped } = wrappedFixture();
     const params = {
       path: '/tmp/a.ts',
@@ -120,8 +120,8 @@ describe('wrapHashlineEditDefinition', () => {
       edits: [{ oldText: 'world', newText: 'hello' }],
     };
     expect(wrapped.prepareArguments(params)).toEqual(params);
-    expect(await wrapped.execute('call-mixed', params)).toBe('stock-result');
-    expect(stock.execute).toHaveBeenCalledOnce();
+    await expect(wrapped.execute('call-mixed', params)).rejects.toThrow(/both|exactly one mode/i);
+    expect(stock.execute).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
   });
 
@@ -211,11 +211,13 @@ describe('selectHashlineTools', () => {
     expect(edit.execute).toHaveBeenCalledOnce();
   });
 
-  it('开启后 input 混发非空 edits 交给 stock edit 且剥掉 input', async () => {
+  it('开启后 input 混发非空 edits 拒绝且不调用 stock edit', async () => {
     const { edit, selected } = setup(true);
     const edits = [{ oldText: 'a', newText: 'b' }];
-    await selected.edit.execute('call-3', { path: '/tmp/a.ts', input: '[/tmp/a.ts#0000]', edits });
-    expect(edit.execute).toHaveBeenCalledWith('replace', { path: '/tmp/a.ts', edits });
+    await expect(
+      selected.edit.execute('call-3', { path: '/tmp/a.ts', input: '[/tmp/a.ts#0000]', edits })
+    ).rejects.toThrow(/both|exactly one mode/i);
+    expect(edit.execute).not.toHaveBeenCalled();
   });
 
   it('开启后无快照文件头的 Hashline 参数拒绝且不调用 stock edit', async () => {

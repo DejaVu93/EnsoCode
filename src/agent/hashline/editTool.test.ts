@@ -27,18 +27,31 @@ describe('createHashlineEditTool', () => {
     expect(callbacks.applyReplace).not.toHaveBeenCalled();
   });
 
-  it('input 混发空壳 edits 走补丁处理器；混发非空 edits 走替换处理器', async () => {
+  it('input 混发空壳 edits 走补丁处理器', async () => {
     const empty = handlers();
     await createHashlineEditTool(empty).execute('call-3a', { input: 'PUT...', edits: [] });
     expect(empty.applyHashline).toHaveBeenCalledOnce();
     expect(empty.applyReplace).not.toHaveBeenCalled();
 
-    const filled = handlers();
-    await createHashlineEditTool(filled).execute('call-3b', {
-      input: '[a#0000]',
-      edits: [{ oldText: 'a', newText: 'b' }],
+    const blank = handlers();
+    await createHashlineEditTool(blank).execute('call-3c', {
+      input: 'PUT...',
+      edits: [{ oldText: '', newText: '' }],
     });
-    expect(filled.applyReplace).toHaveBeenCalledOnce();
+    expect(blank.applyHashline).toHaveBeenCalledOnce();
+    expect(blank.applyReplace).not.toHaveBeenCalled();
+  });
+
+  it('input 混发非空 edits 时拒绝，两边处理器都不调用', async () => {
+    const filled = handlers();
+    const tool = createHashlineEditTool(filled);
+    await expect(
+      tool.execute('call-3b', {
+        input: '[a#0000]',
+        edits: [{ oldText: 'a', newText: 'b' }],
+      })
+    ).rejects.toThrow(/both|exactly one mode/i);
+    expect(filled.applyReplace).not.toHaveBeenCalled();
     expect(filled.applyHashline).not.toHaveBeenCalled();
   });
 

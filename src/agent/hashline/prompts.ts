@@ -14,10 +14,10 @@ export const HASHLINE_PUT_EXAMPLE = '[src/a.ts#1A2B]\nPUT 3.=4:\n+const a = 1;\n
 export const HASHLINE_EDIT_DESCRIPTION =
   'Edit a single file in one of two mutually exclusive modes — never send both in one call. ' +
   '(1) Hashline: only `input`, a patch whose first line is the exact [path#TAG] header from the latest read/grep/write of that file, followed by one or more PUT blocks. ' +
-  '(2) Replace: `path` + `edits` [{oldText, newText}] with exact, unique oldText. Use replace when you have no fresh tag.';
+  '(2) Replace: `path` + `edits` [{oldText, newText}] with exact, unique oldText. Use replace when you have no fresh tag. Mixed calls are rejected.';
 
 export const HASHLINE_EDIT_GUIDELINES = [
-  'edit has two exclusive modes: hashline `input` (header line + PUT blocks) or replace `path` + `edits`. Do not put the [path#TAG] header in `input` and the change in `edits` — pick one mode.',
+  'edit has two exclusive modes: hashline `input` (header line + PUT blocks) or replace `path` + `edits`. Do not put the [path#TAG] header in `input` and the change in `edits` — pick one mode. Sending both is rejected.',
   `Hashline supports only PUT. ${HASHLINE_PUT_RULE} To delete lines, PUT a wider range and re-emit the lines you keep. Never invent or fabricate a tag.`,
 ];
 
@@ -26,7 +26,10 @@ export const HASHLINE_WRITE_GUIDELINES = [
 ];
 
 export const EDIT_INVALID_MESSAGE =
-  'edit needs either hashline `input` ([path#TAG] header line + PUT blocks) or replace `path` + `edits` [{oldText, newText}].';
+  'edit needs exactly one mode: hashline `input` ([path#TAG] header line + PUT blocks), or replace `path` + `edits` [{oldText, newText}]. Do not send both.';
+
+export const EDIT_MIXED_MESSAGE =
+  'edit was called with both hashline `input` and replace `edits`/`oldText`. Send exactly one mode in this call: only `input` (header line + PUT blocks), or only `path` + `edits` [{oldText, newText}].';
 
 export function withGuidelines<T>(tool: T, extra: readonly string[]): T {
   const current = tool as T & { promptGuidelines?: string[] };
