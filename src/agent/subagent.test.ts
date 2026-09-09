@@ -364,3 +364,39 @@ describe('subagent structured yield', () => {
     expect(session.prompt).toHaveBeenCalledTimes(3);
   });
 });
+
+describe('subagent 启动失败收尾', () => {
+  it.each([true, false] as const)(
+    'createSubSession 拒绝后发出同 id failed，且不返回 dispatched（wait=%s）',
+    async (wait) => {
+      const error = new Error('oauth model not found...');
+      const deps = makeDeps({
+        createSubSession: vi.fn(async () => {
+          throw error;
+        }),
+      });
+      const tool = createSubagentTool(deps);
+      await expect(
+        tool.execute(
+          't1',
+          { description: 'x', prompt: 'do', wait },
+          undefined,
+          undefined,
+          {} as never
+        )
+      ).rejects.toBe(error);
+      expect(deps.notify).not.toHaveBeenCalled();
+      const emitted = (deps.emitUpdate as ReturnType<typeof vi.fn>).mock.calls.map(
+        ([info]) => info
+      );
+      expect(emitted).toHaveLength(2);
+      expect(emitted[0]).toMatchObject({ status: 'running', currentActivity: 'starting…' });
+      expect(emitted[1]).toMatchObject({
+        id: emitted[0].id,
+        status: 'failed',
+        currentActivity: '',
+        resultText: error.message,
+      });
+    }
+  );
+});
