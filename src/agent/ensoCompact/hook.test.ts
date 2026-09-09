@@ -270,6 +270,91 @@ describe('enso compact hook', () => {
       /## Evicted from context|shot\.jpg|read image/
     );
   });
+  it('单趟 complete 抛 Input token limit exceeded 时仍返回 compaction', async () => {
+    const messages = [{ role: 'user', content: 'Goal: ship checkout' }];
+    const { result } = await run(messages, (prompt) => {
+      if (isChunk(prompt)) return answer('### CHUNK ok');
+      if (prompt.includes('IMMUTABLE'))
+        return answer('## Goal\nship checkout\n## Progress\n### Done\n- [x] a');
+      throw new Error('Input token limit exceeded');
+    });
+    expect(result).toBeDefined();
+    expect(result?.compaction?.summary).toContain('## Goal');
+  });
+  it('单趟失败且分层也全挂时 assembleFallback 仍交 compaction', async () => {
+    const messages = [{ role: 'user', content: 'Goal: ship checkout' }];
+    const { result } = await run(messages, () => {
+      throw new Error('Input token limit exceeded');
+    });
+    expect(result).toBeDefined();
+    expect(result?.compaction?.summary).toContain('## Goal');
+  });
+  it('钩子失败但用户未取消时不得 return undefined', async () => {
+    const messages = [{ role: 'user', content: 'Goal: ship checkout' }];
+    const { result } = await run(
+      messages,
+      () => {
+        throw new Error('Input token limit exceeded');
+      },
+      undefined,
+      new AbortController().signal
+    );
+    expect(result).not.toBeUndefined();
+    expect(result?.compaction?.summary).toContain('## Goal');
+  });
+  it('调用前已 abort 时仍可让出原生（保持现有语义）', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { result } = await run(
+      [{ role: 'user', content: 'Goal: stop' }],
+      () => {
+        throw new Error('Input token limit exceeded');
+      },
+      undefined,
+      controller.signal
+    );
+    expect(result).toBeUndefined();
+  });
+  it('摘要模型 contextWindow 很小时强制切块', async () => {
+    const messages = Array.from({ length: 10 }, (_, i) => ({
+      role: 'user',
+      content: `Goal: ship. Step ${i}: ` + 'x'.repeat(3000),
+    }));
+    const prompts: string[] = [];
+    const handler = hookFor({
+      mode: 'fast',
+      summaryModel: { provider: 'enso-test', id: 'cheap' },
+    })();
+    const result = (await handler?.(
+      {
+        reason: 'manual',
+        branchEntries: Array.from({ length: 3 }, (_, i) => ({
+          type: 'message',
+          message: { role: 'user', content: `dummy-${i}` },
+        })),
+        preparation: {
+          tokensBefore: 1000,
+          firstKeptEntryId: 'keep',
+          messagesToSummarize: messages,
+        },
+        signal: new AbortController().signal,
+      },
+      {
+        sessionManager: { getBranch: () => [] },
+        model: { id: 'session' },
+        modelRegistry: {
+          find: () => ({ id: 'cheap', provider: 'enso-test', contextWindow: 4000 }),
+          complete: async (_model: unknown, request: unknown) => {
+            const prompt = promptText(request);
+            prompts.push(prompt);
+            return answer(isChunk(prompt) ? '### CHUNK ok' : '## Goal\nassembled\n## Progress');
+          },
+        },
+      }
+    )) as Result;
+    expect(prompts.some(isChunk)).toBe(true);
+    expect(result?.compaction?.summary).toContain('## Goal');
+  });
   it('overflow 的最小尾巴仍超预算时明确取消', async () => {
     const branch = [
       { id: 'old-1', type: 'message', message: { role: 'user', content: 'old' } },

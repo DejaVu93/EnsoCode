@@ -29,9 +29,22 @@ const BASE_TIMEOUT_MS = 60_000;
 const PER_CALL_TIMEOUT_MS = 30_000;
 const MAX_TIMEOUT_MS = 180_000;
 const CHUNK_CONCURRENCY = 3;
+/** 摘要 prompt 模板 + facts + 输出预留；从摘要模型窗口里扣掉。 */
+const SUMMARY_INPUT_RESERVE = 2_500;
 const MAX_TOKENS = { fast: 2048, auto: 4096, balanced: 4096, thorough: 6144 } as const;
 
 type Complete = (prompt: string, maxTokens: number) => Promise<string>;
+
+function positiveWindow(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+/** 用摘要模型窗口收紧 mode 预算，避免会话模型很大、摘要模型很小仍走单趟。 */
+function clampToModelWindow(modeBudget: number, contextWindow: number | undefined): number {
+  if (!contextWindow) return modeBudget;
+  const usable = Math.max(512, contextWindow - SUMMARY_INPUT_RESERVE);
+  return Math.min(modeBudget, usable);
+}
 
 function asEntries(value: unknown): CompactBranchEntry[] {
   return Array.isArray(value) ? (value as CompactBranchEntry[]) : [];
@@ -121,6 +134,11 @@ export function createEnsoCompactFactory(options: EnsoCompactOptions = {}) {
 
       const mode: CompactMode = options.mode ?? 'auto';
       const budget = BUDGETS[mode];
+      const summaryWindow = positiveWindow(
+        (model as { contextWindow?: unknown }).contextWindow
+      );
+      const singlePassMaxTokens = clampToModelWindow(budget.singlePassMaxTokens, summaryWindow);
+      const maxChunkTokens = clampToModelWindow(budget.maxChunkTokens, summaryWindow);
       const previousSummary = preparation.previousSummary;
       let keptId = firstKeptEntryId;
       let evicted: EvictedItem[] = [];
@@ -148,18 +166,19 @@ export function createEnsoCompactFactory(options: EnsoCompactOptions = {}) {
         ]);
         if (pruned.length === 0) return;
         const transcript = serializeMessages(pruned);
-        const single = estimateTextTokens(transcript) < budget.singlePassMaxTokens;
         prepared = {
           facts: extractCompactFacts(pruned, preparation.fileOps),
           transcript,
-          chunks: single ? [] : chunkMessages(pruned, budget.maxChunkTokens),
+          // 始终切块，单趟失败时可直接降级分层，不必再算一次
+          chunks: chunkMessages(pruned, maxChunkTokens),
         };
       } catch {
+        // 准备阶段是本地确定性操作；失败时无 facts，无法构造兜底，只能让位原生
         return;
       }
       const { facts, transcript, chunks } = prepared;
-      const single = chunks.length === 0;
-      const calls = single ? 1 : chunks.length + 1;
+      const preferSingle = estimateTextTokens(transcript) < singlePassMaxTokens;
+      const calls = preferSingle ? 1 : chunks.length + 1;
 
       const controller = new AbortController();
       const timer = setTimeout(
@@ -182,22 +201,48 @@ export function createEnsoCompactFactory(options: EnsoCompactOptions = {}) {
           )
         );
       const maxTokens = MAX_TOKENS[mode];
+      const finish = (drafted: string) => ({
+        compaction: {
+          summary: patchCompactSummary(drafted, facts, evicted),
+          firstKeptEntryId: keptId,
+          tokensBefore,
+        },
+      });
       try {
-        const drafted = single
-          ? (await complete(compactSummaryPrompt(facts, transcript, previousSummary), maxTokens)) ||
-            assembleFallback(facts, [], previousSummary)
-          : await summarizeHierarchical(chunks, facts, previousSummary, complete, maxTokens);
-        // 用户取消/超时后不要拿降级摘要当成功结果
-        if (signal.aborted || !drafted) return;
-        return {
-          compaction: {
-            summary: patchCompactSummary(drafted, facts, evicted),
-            firstKeptEntryId: keptId,
-            tokensBefore,
-          },
-        };
+        let drafted: string;
+        if (preferSingle) {
+          try {
+            drafted =
+              (await complete(
+                compactSummaryPrompt(facts, transcript, previousSummary),
+                maxTokens
+              )) || assembleFallback(facts, [], previousSummary);
+          } catch {
+            // token limit / 模型错误：分层比 Pi 原生单次摘要更可能成功
+            if (event.signal.aborted) return;
+            drafted = await summarizeHierarchical(
+              chunks,
+              facts,
+              previousSummary,
+              complete,
+              maxTokens
+            );
+          }
+        } else {
+          drafted = await summarizeHierarchical(
+            chunks,
+            facts,
+            previousSummary,
+            complete,
+            maxTokens
+          );
+        }
+        // 只有用户取消才让位；内部超时仍交确定性兜底，避免原生再撞窗
+        if (event.signal.aborted) return;
+        return finish(drafted || assembleFallback(facts, [], previousSummary));
       } catch {
-        return;
+        if (event.signal.aborted) return;
+        return finish(assembleFallback(facts, [], previousSummary));
       } finally {
         clearTimeout(timer);
       }
