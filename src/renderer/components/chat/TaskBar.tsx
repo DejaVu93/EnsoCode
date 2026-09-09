@@ -177,7 +177,16 @@ export function TaskBar({ sessionId, tasks, subagents }: TaskBarProps) {
                 {t('Output')}
                 <ChevronDown className={cn('h-3 w-3 transition-transform', open && 'rotate-180')} />
               </button>
-              {agent.status !== 'running' && (
+              {agent.status === 'running' ? (
+                <button
+                  type="button"
+                  onClick={() => void window.electronAPI.agent.stopSubagent(sessionId, agent.id)}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-destructive transition-colors hover:bg-destructive/10"
+                  title={t('Stop subagent')}
+                >
+                  <Square className="h-3 w-3" />
+                </button>
+              ) : (
                 <button
                   type="button"
                   onClick={() => dismiss(agent.id)}

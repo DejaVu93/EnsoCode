@@ -756,6 +756,13 @@ export function stopBackgroundTask(
   return sendAgentCommand({ type: 'task-stop', identity, taskId });
 }
 
+export function stopSubagent(
+  identity: SessionIdentity,
+  agentId: string
+): { ok: boolean; error?: string } {
+  return sendAgentCommand({ type: 'subagent-stop', identity, agentId });
+}
+
 export function setSessionApprovalMode(
   identity: SessionIdentity,
   mode: ApprovalMode,

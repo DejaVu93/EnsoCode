@@ -400,3 +400,86 @@ describe('subagent 启动失败收尾', () => {
     }
   );
 });
+
+describe('subagent 手动中止', () => {
+  it('createSubSession 挂起时 abort 能结束 starting 并标 failed', async () => {
+    let abort: (() => void) | undefined;
+    let resolveCreate: ((session: AgentSession) => void) | undefined;
+    const late = fakeSession('late');
+    late.dispose = vi.fn();
+    const deps = makeDeps({
+      createSubSession: vi.fn(
+        () =>
+          new Promise<AgentSession>((resolve) => {
+            resolveCreate = resolve;
+          })
+      ),
+      registerAbort: (_id, fn) => {
+        if (fn) abort = fn;
+      },
+    });
+    const tool = createSubagentTool(deps);
+    const running = tool.execute(
+      't1',
+      { description: 'x', prompt: 'do' },
+      undefined,
+      undefined,
+      {} as never
+    );
+    await vi.waitFor(() => expect(abort).toBeDefined());
+    abort?.();
+    await expect(running).rejects.toThrow(/aborted/i);
+    const emitted = (deps.emitUpdate as ReturnType<typeof vi.fn>).mock.calls.map(([info]) => info);
+    expect(emitted.at(-1)).toMatchObject({
+      id: emitted[0].id,
+      status: 'failed',
+      currentActivity: '',
+      resultText: expect.stringMatching(/aborted/i),
+    });
+    resolveCreate?.(late);
+    await vi.waitFor(() => expect(late.dispose).toHaveBeenCalled());
+  });
+
+  it('wait:true 父 signal 在 starting 阶段即可连坐', async () => {
+    const controller = new AbortController();
+    const deps = makeDeps({
+      createSubSession: vi.fn(() => new Promise<AgentSession>(() => {})),
+    });
+    const tool = createSubagentTool(deps);
+    const running = tool.execute(
+      't1',
+      { description: 'x', prompt: 'do' },
+      controller.signal,
+      undefined,
+      {} as never
+    );
+    await vi.waitFor(() => expect(deps.emitUpdate).toHaveBeenCalled());
+    controller.abort();
+    await expect(running).rejects.toThrow(/aborted/i);
+  });
+
+  it('已创建会话后 abort 会 session.abort', async () => {
+    let abort: (() => void) | undefined;
+    const session = fakeSession('running');
+    session.abort = vi.fn(async () => {});
+    session.prompt = vi.fn(() => new Promise<void>(() => {}));
+    const deps = makeDeps({
+      createSubSession: vi.fn(async () => session),
+      registerAbort: (_id, fn) => {
+        if (fn) abort = fn;
+      },
+    });
+    const tool = createSubagentTool(deps);
+    const running = tool.execute(
+      't1',
+      { description: 'x', prompt: 'do' },
+      undefined,
+      undefined,
+      {} as never
+    );
+    await vi.waitFor(() => expect(session.prompt).toHaveBeenCalled());
+    abort?.();
+    await expect(running).rejects.toThrow(/aborted/i);
+    expect(session.abort).toHaveBeenCalled();
+  });
+});

@@ -99,6 +99,7 @@ export const IPC_CHANNELS = {
   /** renderer → main：上报当前正在查看的会话，供系统通知抑制判断 */
   NOTIFICATION_ACTIVE_SESSION: 'notification:active-session',
   AGENT_TASK_STOP: 'agent:task-stop',
+  AGENT_SUBAGENT_STOP: 'agent:subagent-stop',
   AGENT_REWIND: 'agent:rewind',
   /** 手动压缩会话上下文（/compact 与上下文面板按钮共用） */
   AGENT_COMPACT: 'agent:compact',

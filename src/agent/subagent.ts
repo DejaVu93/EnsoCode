@@ -40,6 +40,8 @@ export interface SubagentDeps {
   notify(text: string, urgent?: boolean): void;
   /** 结构化 yield 登记，供父会话 read agent://id */
   storeYield?(id: string, value: unknown): void;
+  /** 登记/清除按 id 中止；UI 停按钮与父 abort（wait:true）都走这里 */
+  registerAbort?(id: string, abort: (() => void) | null): void;
 }
 
 /** 从 pi 会话消息取最后一条 assistant 文本 */
@@ -73,6 +75,66 @@ function pushLog(info: SubagentInfo, line: string): void {
   const log = info.activityLog;
   log.push(line);
   if (log.length > 200) log.splice(0, log.length - 200);
+}
+
+const ABORTED = 'Subagent aborted';
+
+function abortedError(): Error {
+  return new Error(ABORTED);
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortedError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortedError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) reject(abortedError());
+        else resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(signal.aborted ? abortedError() : error);
+      }
+    );
+  });
+}
+
+/** create 挂起时也能被 abort 解开；迟到的会话随即 dispose，避免泄漏 */
+async function createSessionOrAbort(
+  created: Promise<AgentSession>,
+  signal: AbortSignal
+): Promise<AgentSession> {
+  const disposeLate = () => {
+    void created
+      .then((session) => {
+        try {
+          session.dispose();
+        } catch {}
+      })
+      .catch(() => {});
+  };
+  if (signal.aborted) {
+    disposeLate();
+    throw abortedError();
+  }
+  signal.addEventListener('abort', disposeLate, { once: true });
+  try {
+    const session = await abortable(created, signal);
+    signal.removeEventListener('abort', disposeLate);
+    if (signal.aborted) {
+      try {
+        session.dispose();
+      } catch {}
+      throw abortedError();
+    }
+    return session;
+  } catch (error) {
+    if (!signal.aborted) signal.removeEventListener('abort', disposeLate);
+    throw error;
+  }
 }
 
 /**
@@ -274,14 +336,26 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
       };
       deps.emitUpdate({ ...info });
 
+      const controller = new AbortController();
+      const abortNow = () => controller.abort();
+      deps.registerAbort?.(id, abortNow);
+      if (wait) {
+        if (signal?.aborted) abortNow();
+        else signal?.addEventListener('abort', abortNow, { once: true });
+      }
+
       let session: AgentSession;
       try {
-        session = await deps.createSubSession(agentType, modelOption?.config, thinking);
+        session = await createSessionOrAbort(
+          deps.createSubSession(agentType, modelOption?.config, thinking),
+          controller.signal
+        );
       } catch (error) {
         info.status = 'failed';
         info.currentActivity = '';
         info.resultText = error instanceof Error ? error.message : String(error);
         deps.emitUpdate({ ...info });
+        deps.registerAbort?.(id, null);
         throw error;
       }
       let dirty = false;
@@ -333,9 +407,9 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
           dirty = true;
         }
       });
-      // 阻塞模式下父 abort 连坐杀子;异步模式派发后独立跑,不受父 abort 影响
       const onAbort = () => void session.abort();
-      if (wait) signal?.addEventListener('abort', onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
+      else controller.signal.addEventListener('abort', onAbort, { once: true });
 
       let footer = '';
       const run = async (): Promise<string> => {
@@ -347,7 +421,7 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
           : '';
         const fullPrompt = `${rolePrefix}${prompt}${schemaSuffix}`;
         try {
-          await session.prompt(fullPrompt);
+          await abortable(session.prompt(fullPrompt), controller.signal);
           if (schema) {
             const collected = await collectStructuredYield({
               text: lastAssistantText(session),
@@ -368,25 +442,28 @@ export function createSubagentTool(deps: SubagentDeps): ToolDefinition {
           });
           result += `\n\n${footer}`;
           // gate 验收:退出码说了算,不信子代理自称完成
-          if (gate && !(wait && signal?.aborted)) {
+          if (gate && !controller.signal.aborted) {
             result += `\n\n${await deps.runGate(gate)}`;
           }
-          const aborted = wait && signal?.aborted;
+          const aborted = controller.signal.aborted;
           info.status = aborted ? 'failed' : 'done';
           info.resultText = result;
           info.currentActivity = '';
           deps.emitUpdate({ ...info });
-          if (aborted) throw new Error('Subagent aborted');
+          if (aborted) throw abortedError();
           return result;
         } catch (error) {
           info.status = 'failed';
           info.currentActivity = '';
+          info.resultText ??= error instanceof Error ? error.message : String(error);
           deps.emitUpdate({ ...info });
           throw error;
         } finally {
           clearInterval(timer);
           unsubscribe();
-          if (wait) signal?.removeEventListener('abort', onAbort);
+          if (wait) signal?.removeEventListener('abort', abortNow);
+          controller.signal.removeEventListener('abort', onAbort);
+          deps.registerAbort?.(id, null);
           session.dispose();
         }
       };

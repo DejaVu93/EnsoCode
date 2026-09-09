@@ -267,6 +267,18 @@ describe('parent/child commands', () => {
     ).toBeNull();
   });
 
+  it('subagent-stop 必须 exact identity + 非空 agentId', () => {
+    const command = { type: 'subagent-stop', identity: parent, agentId: 'agent-1' };
+    expect(parseAgentCommand(command)).toEqual(command);
+    expect(
+      parseAgentCommand({ ...command, identity: { ...parent, generation: 'old' } })
+    ).toBeNull();
+    expect(parseAgentCommand({ type: 'subagent-stop', identity: parent, agentId: '' })).toBeNull();
+    expect(
+      parseAgentCommand({ type: 'subagent-stop', sessionId: parent.sessionId, agentId: 'agent-1' })
+    ).toBeNull();
+  });
+
   it('spawn-parent 携 bashInterceptEnabled:合法通过,脏值拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
     expect(parseAgentCommand({ ...base, bashInterceptEnabled: true })).toEqual({

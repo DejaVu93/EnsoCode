@@ -67,6 +67,7 @@ import {
   spawnSession,
   steerSession,
   stopBackgroundTask,
+  stopSubagent,
   summarizeConversationTitle,
 } from '../services/agentHost';
 import { pickBrowserFileRoot, setBrowserFileRootResolver } from '../services/browserFileRoot';
@@ -1025,6 +1026,17 @@ export function registerAgentHandlers(): void {
         return { ok: false, error: 'invalid task stop or stale generation' };
       }
       return stopBackgroundTask(identity, taskId);
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.AGENT_SUBAGENT_STOP,
+    (_event, sessionId: unknown, agentId: unknown): AgentActionResult => {
+      const identity = exactIdentity(sessionId);
+      if (!identity || !isNonEmptyString(agentId)) {
+        return { ok: false, error: 'invalid subagent stop or stale generation' };
+      }
+      return stopSubagent(identity, agentId);
     }
   );
 

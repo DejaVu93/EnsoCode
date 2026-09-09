@@ -879,6 +879,7 @@ export const zhTranslations: Record<string, string> = {
   'Read-only (read/grep/find/ls)': '只读(read/grep/find/ls)',
   Stop: '停止',
   'Stop task': '停止任务',
+  'Stop subagent': '停止子代理',
   'Dismiss coworker': '解雇 coworker',
   'Hire coworker': '雇佣 coworker',
   'Set a session goal (/goal <objective> · pause · resume · clear)':
