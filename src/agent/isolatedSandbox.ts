@@ -261,7 +261,7 @@ export function createIsolatedSandboxTool(options: IsolatedSandboxToolOptions): 
     name: 'exec',
     label: 'Isolated sandbox',
     description:
-      'If you are about to make 3+ similar read/grep/find calls and only need the aggregate, use exec instead of repeating those tools. ' +
+      'Prefer exec when you are about to make 3+ similar read/grep/find calls and only need a reduced result (count, path list, boolean, extracted fields) — not for exploring or dumping full file bodies into parent context. ' +
       'Example:\n' +
       'const files = (await find({pattern:"src/**/*.ts"})).content.split("\\n").filter(Boolean);\n' +
       'const hits = await Promise.all(files.map(f => grep({pattern:"TODO", path:f})));\n' +
@@ -273,10 +273,9 @@ export function createIsolatedSandboxTool(options: IsolatedSandboxToolOptions): 
       'Tool names: "-" and "__" become "_": mcp__semble__search → mcp_semble_search. ' +
       'catalog.list() / listTools() lists callable names. store()/load() last for this live session. Not a shell.',
     promptSnippet:
-      'exec: 3+ similar read/grep/find when you only need the aggregate — not for exploring. ' +
-      'No console; return the value. Uncaught throw fails the cell. MCP names collapse __ and - to _.',
+      'exec: prefer for 3+ similar read/grep/find when you only need a reduced result (count, path list, boolean, extracted fields) — not for exploring or dumping full file bodies. Write JS and return the value. Uncaught throw fails the cell. MCP names collapse __ and - to _.',
     promptGuidelines: [
-      'If you are about to make 3+ similar read/grep/find calls and only need the aggregate, use exec instead.',
+      'Prefer exec over repeating similar read/grep/find: if paths/pattern are already known and you only need an aggregate (count, path list, boolean, extracted fields), one exec cell is cheaper than N tool rounds. Do not use exec to explore unknown code or to load full files into parent context.',
       'No console.log — there is no console, fetch, setTimeout, URL, TextEncoder, or structuredClone. Use return.',
       'Tool failures resolve with isError: true and do not throw. A JS exception still fails the whole cell.',
       'Each nested tool returns { content: string, details?: unknown, isError: boolean }. Do not treat the result as a raw string.',

@@ -44,12 +44,15 @@ describe('looksLikeShellCommand', () => {
 });
 
 describe('createIsolatedSandboxTool', () => {
-  it('prompt 写明只要聚合结果才用 exec，探索/并行读不要进沙箱', () => {
+  it('prompt 默认倾向 exec 做已知路径的聚合，探索/全文进上下文不要进沙箱', () => {
     const tool = createIsolatedSandboxTool({ getTools: () => [] });
     const text = [tool.description, tool.promptSnippet, ...(tool.promptGuidelines ?? [])].join(
       '\n'
     );
+    expect(text).toMatch(/prefer exec/i);
     expect(text).toMatch(/3\+ similar read\/grep\/find/i);
+    expect(text).toMatch(/reduced result/i);
+    expect(text).toMatch(/not for exploring/i);
     expect(text).toMatch(/No console/i);
     expect(text).toMatch(/isError: true/i);
     expect(text).toMatch(/listTools/i);
