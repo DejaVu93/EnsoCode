@@ -46,4 +46,22 @@ describe('createHashlineIo', () => {
     expect(writeRemote).toHaveBeenCalledWith(target, 'next\n');
     await expect(readFile(target, 'utf8')).rejects.toThrow();
   });
+
+  it('远程 POSIX cwd 把 Windows 本地化路径还原后再读写', async () => {
+    const readRemote = vi
+      .fn<(path: string) => Promise<Buffer>>()
+      .mockResolvedValue(Buffer.from('ok\n'));
+    const writeRemote = vi.fn(async () => undefined);
+    const io = createHashlineIo({
+      cwd: '/Users/dg/PycharmProjects/listing',
+      remote: { readFile: readRemote, writeFile: writeRemote },
+    });
+    await expect(io.readText('src/a.ts')).resolves.toBe('ok\n');
+    await io.writeText('C:\\Users\\dg\\PycharmProjects\\listing\\src\\b.ts', 'next\n');
+    expect(readRemote).toHaveBeenCalledWith('/Users/dg/PycharmProjects/listing/src/a.ts');
+    expect(writeRemote).toHaveBeenCalledWith(
+      '/Users/dg/PycharmProjects/listing/src/b.ts',
+      'next\n'
+    );
+  });
 });

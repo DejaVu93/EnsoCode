@@ -42,6 +42,27 @@ function fakeExecutor(respond: (call: Call) => { stdout?: string; code?: number 
 }
 
 describe('read/edit/write operations', () => {
+  it('Windows 盘符/反斜杠路径还原为 POSIX 再发给远端', async () => {
+    const { calls, executor } = fakeExecutor();
+    const ops = createRemoteOperations(executor);
+    await ops.read.readFile('C:\\Users\\dg\\PycharmProjects\\listing\\README.md');
+    expect(calls[0]).toMatchObject({
+      kind: 'execRaw',
+      command: ['cat', '--', '/Users/dg/PycharmProjects/listing/README.md'],
+    });
+    await ops.ls.stat('C:\\Users\\dg\\PycharmProjects\\listing');
+    expect(String(calls[1].command)).toContain("if [ -d '/Users/dg/PycharmProjects/listing' ]");
+    await ops.write.writeFile('C:\\Users\\dg\\PycharmProjects\\listing\\dir\\b.txt', 'x');
+    expect(calls.map((c) => c.command)).toContainEqual([
+      'mkdir',
+      '-p',
+      '--',
+      '/Users/dg/PycharmProjects/listing/dir',
+    ]);
+    const write = calls.find((c) => typeof c.command === 'string' && c.command.includes('cat >'));
+    expect(write?.command).toBe("cat > '/Users/dg/PycharmProjects/listing/dir/b.txt'");
+  });
+
   it('readFile 走 execRaw cat(字节安全);access 用 test -r,失败抛错', async () => {
     const { calls, executor } = fakeExecutor((call) =>
       Array.isArray(call.command) && call.command[0] === 'test' ? { code: 1 } : { stdout: 'data' }
@@ -70,6 +91,21 @@ describe('read/edit/write operations', () => {
     const ops = createRemoteOperations(executor);
     await ops.edit.access('/srv/a.txt');
     expect(calls[0].command).toEqual(['test', '-r', '/srv/a.txt', '-a', '-w', '/srv/a.txt']);
+  });
+});
+
+describe('find glob posix cwd', () => {
+  it('Windows cwd 还原为 POSIX,结果相对搜索根', async () => {
+    const { calls, executor } = fakeExecutor(() => ({
+      stdout: '/Users/dg/PycharmProjects/listing/src/a.ts\n',
+    }));
+    const ops = createRemoteOperations(executor);
+    const results = await ops.find.glob('*.ts', 'C:\\Users\\dg\\PycharmProjects\\listing', {
+      ignore: ['node_modules'],
+      limit: 10,
+    });
+    expect(String(calls[0].command)).toContain("find '/Users/dg/PycharmProjects/listing'");
+    expect(results).toEqual(['src/a.ts']);
   });
 });
 

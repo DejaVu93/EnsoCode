@@ -30,17 +30,27 @@ function setup() {
     procs.push({ args: args as string[], proc });
     return proc as never;
   };
-  const executor = createSshExecutor('user@dev-box', '/tmp/ctl', spawnImpl);
+  const executor = createSshExecutor(
+    'user@dev-box',
+    '/tmp/ctl',
+    spawnImpl,
+    { auth: 'key' },
+    'darwin'
+  );
   return { procs, executor };
 }
 
 describe('resolveSshControlPath', () => {
   it('压到 /tmp/ec-ssh/<8位哈希>/%C,展开后仍低于 Darwin 104 字节上限', () => {
     const long = '/Users/j3n5en/Library/Application Support/enso-code/agent/pi-agent/ssh';
-    const resolved = resolveSshControlPath(long);
+    const resolved = resolveSshControlPath(long, 'darwin');
     expect(resolved).toMatch(/^\/tmp\/ec-ssh\/[0-9a-f]{8}\/%C$/);
-    expect(resolved.replace('%C', '0'.repeat(40)).length).toBeLessThan(104);
-    expect(resolveSshControlPath(long)).toBe(resolved);
+    expect(resolved?.replace('%C', '0'.repeat(40)).length).toBeLessThan(104);
+    expect(resolveSshControlPath(long, 'darwin')).toBe(resolved);
+  });
+
+  it('Windows 不启用 ControlMaster 套接字复用', () => {
+    expect(resolveSshControlPath('C:\\Users\\app\\ssh', 'win32')).toBeUndefined();
   });
 });
 
@@ -49,7 +59,7 @@ describe('SshExecutor', () => {
     const { procs, executor } = setup();
     const pending = executor.exec(['ls', '-la'], { cwd: '/srv/app' });
     const { args, proc } = procs[0];
-    expect(args.join(' ')).toContain(`ControlPath=${resolveSshControlPath('/tmp/ctl')}`);
+    expect(args.join(' ')).toContain(`ControlPath=${resolveSshControlPath('/tmp/ctl', 'darwin')}`);
     expect(args[args.length - 2]).toBe('user@dev-box');
     expect(args[args.length - 1]).toBe("cd '/srv/app' && 'ls' '-la'");
     proc.stdout.emit('data', Buffer.from('file1\n'));
@@ -131,6 +141,28 @@ describe('SshExecutor', () => {
     controller.abort();
     expect(procs[0].proc.kill).toHaveBeenCalled();
     await expect(pending).resolves.toEqual({ exitCode: null });
+  });
+
+  it('Windows 下 spawn ssh 不含 ControlMaster/ControlPath', async () => {
+    const procs: { args: string[]; proc: FakeProc }[] = [];
+    const spawnImpl: SpawnLike = (_cmd, args) => {
+      const proc = new FakeProc();
+      procs.push({ args: args as string[], proc });
+      return proc as never;
+    };
+    const executor = createSshExecutor(
+      'user@dev-box',
+      '/tmp/ctl',
+      spawnImpl,
+      { auth: 'key' },
+      'win32'
+    );
+    const pending = executor.exec(['ls']);
+    const joined = procs[0].args.join(' ');
+    expect(joined).not.toContain('ControlMaster');
+    expect(joined).not.toContain('ControlPath=');
+    procs[0].proc.emit('close', 0);
+    await pending;
   });
 
   it('code 255(ssh 自身失败)保留 stderr 供上层归因', async () => {

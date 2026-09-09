@@ -4,7 +4,7 @@
  * grep 的搜索本体在 SDK 内是本地 spawn rg,无法注入,由 remoteTools 单独包 execute。
  */
 
-import { dirname } from 'node:path';
+import path from 'node:path';
 import type {
   BashOperations,
   EditOperations,
@@ -15,6 +15,7 @@ import type {
 } from '@earendil-works/pi-coding-agent';
 import { shellQuote } from '@shared/ssh';
 import type { SshExecutor } from './executor';
+import { relativizePosixRemotePath, toPosixRemotePath } from './posixPath';
 
 const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   png: 'image/png',
@@ -95,38 +96,43 @@ export interface RemoteOperations {
 
 export function createRemoteOperations(executor: SshExecutor): RemoteOperations {
   const readFile = async (absolutePath: string): Promise<Buffer> => {
-    const result = await executor.execRaw(['cat', '--', absolutePath]);
-    if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot read ${absolutePath}`);
+    const remotePath = toPosixRemotePath(absolutePath);
+    const result = await executor.execRaw(['cat', '--', remotePath]);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot read ${remotePath}`);
     return result.stdout;
   };
 
   const writeFile = async (absolutePath: string, content: string): Promise<void> => {
-    await mkdir(dirname(absolutePath));
-    const result = await executor.exec(`cat > ${shellQuote(absolutePath)}`, {
+    const remotePath = toPosixRemotePath(absolutePath);
+    await mkdir(path.posix.dirname(remotePath));
+    const result = await executor.exec(`cat > ${shellQuote(remotePath)}`, {
       stdin: Buffer.from(content, 'utf8'),
     });
-    if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot write ${absolutePath}`);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot write ${remotePath}`);
   };
 
   const mkdir = async (dir: string): Promise<void> => {
-    const result = await executor.exec(['mkdir', '-p', '--', dir]);
-    if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot mkdir ${dir}`);
+    const remotePath = toPosixRemotePath(dir);
+    const result = await executor.exec(['mkdir', '-p', '--', remotePath]);
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot mkdir ${remotePath}`);
   };
 
   const accessRead = async (absolutePath: string): Promise<void> => {
-    const result = await executor.exec(['test', '-r', absolutePath]);
-    if (result.code !== 0) throw new Error(`${absolutePath} is not readable on remote host`);
+    const remotePath = toPosixRemotePath(absolutePath);
+    const result = await executor.exec(['test', '-r', remotePath]);
+    if (result.code !== 0) throw new Error(`${remotePath} is not readable on remote host`);
   };
 
   const accessReadWrite = async (absolutePath: string): Promise<void> => {
-    const result = await executor.exec(['test', '-r', absolutePath, '-a', '-w', absolutePath]);
+    const remotePath = toPosixRemotePath(absolutePath);
+    const result = await executor.exec(['test', '-r', remotePath, '-a', '-w', remotePath]);
     if (result.code !== 0) {
-      throw new Error(`${absolutePath} is not readable/writable on remote host`);
+      throw new Error(`${remotePath} is not readable/writable on remote host`);
     }
   };
 
   const exists = async (absolutePath: string): Promise<boolean> => {
-    const result = await executor.exec(['test', '-e', absolutePath]);
+    const result = await executor.exec(['test', '-e', toPosixRemotePath(absolutePath)]);
     return result.code === 0;
   };
 
@@ -141,24 +147,30 @@ export function createRemoteOperations(executor: SshExecutor): RemoteOperations 
     ls: {
       exists,
       stat: async (absolutePath) => {
+        const remotePath = toPosixRemotePath(absolutePath);
         const result = await executor.exec(
-          `if [ -d ${shellQuote(absolutePath)} ]; then echo d; elif [ -e ${shellQuote(absolutePath)} ]; then echo f; else exit 2; fi`
+          `if [ -d ${shellQuote(remotePath)} ]; then echo d; elif [ -e ${shellQuote(remotePath)} ]; then echo f; else exit 2; fi`
         );
-        if (result.code !== 0) throw new Error(`${absolutePath} not found on remote host`);
+        if (result.code !== 0) throw new Error(`${remotePath} not found on remote host`);
         const isDir = result.stdout.trim() === 'd';
         return { isDirectory: () => isDir };
       },
       readdir: async (absolutePath) => {
-        const result = await executor.exec(['ls', '-a', '--', absolutePath]);
-        if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot ls ${absolutePath}`);
+        const remotePath = toPosixRemotePath(absolutePath);
+        const result = await executor.exec(['ls', '-a', '--', remotePath]);
+        if (result.code !== 0) throw new Error(result.stderr.trim() || `cannot ls ${remotePath}`);
         return result.stdout.split('\n').filter((e) => e && e !== '.' && e !== '..');
       },
     },
     find: {
       exists,
       glob: async (pattern, cwd, options) => {
-        const result = await executor.exec(buildRemoteFindScript(pattern, cwd, options));
-        return result.stdout.split('\n').filter(Boolean);
+        const root = toPosixRemotePath(cwd);
+        const result = await executor.exec(buildRemoteFindScript(pattern, root, options));
+        return result.stdout
+          .split('\n')
+          .filter(Boolean)
+          .map((entry) => relativizePosixRemotePath(entry, root));
       },
     },
     bash: {
@@ -168,7 +180,7 @@ export function createRemoteOperations(executor: SshExecutor): RemoteOperations 
           signal: options.signal,
           // BashOperations 的 timeout 单位是秒(见 SDK resolveTimeoutMs)
           timeoutMs: options.timeout !== undefined ? options.timeout * 1000 : undefined,
-          cwd,
+          cwd: toPosixRemotePath(cwd),
         }),
     },
   };

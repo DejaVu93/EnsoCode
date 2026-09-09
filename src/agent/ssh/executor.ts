@@ -1,7 +1,7 @@
 /**
- * worker 内的 SSH 执行器:系统 ssh 子进程 + ControlMaster 连接复用。
- * 每个远程会话持有一个实例;ControlPath 按 host 哈希(%C)落在 controlDir,
- * 同 host 多会话自然共享一条真连接,worker 退出后 ControlPersist 到期自动断。
+ * worker 内的 SSH 执行器:系统 ssh 子进程。非 Windows 启用 ControlMaster 连接复用;
+ * ControlPath 按 host 哈希(%C)落在 controlDir,同 host 多会话共享一条真连接,
+ * worker 退出后 ControlPersist 到期自动断。Windows OpenSSH 不支持 Unix socket,禁用复用。
  */
 
 import { type ChildProcess, spawn } from 'node:child_process';
@@ -80,7 +80,12 @@ export interface SshExecutor {
  * userData/agent/ssh/%C 在 macOS 上会直接超限导致全部 ssh 失败,
  * 所以 socket 落 /tmp/ec-ssh/<controlDir 8 位哈希>/%C(同 agentDir 复用同一条 multiplex)。
  */
-export function resolveSshControlPath(controlDir: string): string {
+export function resolveSshControlPath(
+  controlDir: string,
+  platform: NodeJS.Platform = process.platform
+): string | undefined {
+  // Windows OpenSSH 不支持 Unix socket ControlMaster,强制启用会 getsockname failed: Not a socket
+  if (platform === 'win32') return undefined;
   const digest = createHash('sha1').update(controlDir).digest('hex').slice(0, 8);
   const dir = `/tmp/ec-ssh/${digest}`;
   mkdirSync(dir, { recursive: true });
@@ -91,11 +96,12 @@ export function createSshExecutor(
   host: string,
   controlDir: string,
   spawnImpl: SpawnLike = spawn,
-  remote: Pick<AgentRemoteConfig, 'auth' | 'port' | 'password'> = { auth: 'key' }
+  remote: Pick<AgentRemoteConfig, 'auth' | 'port' | 'password'> = { auth: 'key' },
+  platform: NodeJS.Platform = process.platform
 ): SshExecutor {
-  const controlPath = resolveSshControlPath(controlDir);
+  const controlPath = resolveSshControlPath(controlDir, platform);
   const sshOptions = {
-    controlPath,
+    ...(controlPath ? { controlPath } : {}),
     auth: remote.auth,
     ...(remote.port ? { port: remote.port } : {}),
   };

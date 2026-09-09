@@ -1,5 +1,6 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
+import { resolvePosixRemotePath } from '../ssh/posixPath';
 
 export type HashlineIo = {
   readText: (filePath: string) => Promise<string>;
@@ -7,7 +8,8 @@ export type HashlineIo = {
   readFileText: (filePath: string) => Promise<string | undefined>;
 };
 
-function resolvePath(cwd: string, filePath: string): string {
+function resolvePath(cwd: string, filePath: string, remote?: boolean): string {
+  if (remote) return resolvePosixRemotePath(cwd, filePath);
   return isAbsolute(filePath) ? filePath : resolve(cwd, filePath);
 }
 
@@ -18,7 +20,8 @@ export function createHashlineIo(options: {
     writeFile: (absolutePath: string, content: string) => Promise<void>;
   };
 }): HashlineIo {
-  const toAbsolute = (filePath: string) => resolvePath(options.cwd, filePath);
+  const toAbsolute = (filePath: string) =>
+    resolvePath(options.cwd, filePath, Boolean(options.remote));
   if (options.remote) {
     const remote = options.remote;
     const readText = async (filePath: string) =>
