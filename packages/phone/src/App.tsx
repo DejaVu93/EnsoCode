@@ -105,6 +105,8 @@ export function App() {
   const [okFlash, setOkFlash] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [composing, setComposing] = useState(false);
+  /** 从抽屉项目旁进入时预填；顶栏新建为 null */
+  const [composeProjectId, setComposeProjectId] = useState<string | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(
     () => localStorage.getItem(PUSH_ENABLED_KEY) === 'on'
@@ -420,7 +422,10 @@ export function App() {
         stateLabel={connectionLabel}
         banner={banner}
         onOpenDrawer={() => setDrawerOpen(true)}
-        onNewSession={() => setComposing(true)}
+        onNewSession={() => {
+          setComposeProjectId(null);
+          setComposing(true);
+        }}
         canCreate={state === 'online' && projects.length > 0}
         modelLabel={state === 'online' ? modelLabel : undefined}
         onOpenConfig={() => setConfigOpen(true)}
@@ -468,8 +473,9 @@ export function App() {
           setActiveId(id);
           setDrawerOpen(false);
         }}
-        onNewConversation={() => {
+        onNewConversation={(projectId) => {
           setDrawerOpen(false);
+          setComposeProjectId(projectId);
           setComposing(true);
         }}
         pushEnabled={pushEnabled}
@@ -491,12 +497,17 @@ export function App() {
         open={composing}
         projects={projects}
         providers={providers}
-        onClose={() => setComposing(false)}
+        preferredProjectId={composeProjectId}
+        onClose={() => {
+          setComposing(false);
+          setComposeProjectId(null);
+        }}
         onCreate={(req) => {
           const sessionId = crypto.randomUUID();
           send({ type: 'spawn', sessionId, ...req });
           freshIdsRef.current.add(sessionId);
           setComposing(false);
+          setComposeProjectId(null);
           setActiveId(sessionId);
         }}
       />

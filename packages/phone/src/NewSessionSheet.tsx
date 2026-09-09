@@ -31,8 +31,24 @@ interface Props {
   projects: ProjectEntry[];
   providers: ProviderEntry[];
   open: boolean;
+  /** 从项目旁「新会话」进入时预填；顶栏新建不传 */
+  preferredProjectId?: string | null;
   onClose(): void;
   onCreate(request: NewSessionRequest): void;
+}
+
+/** 手选 > 入口预填 > 列表第一项。列表异步到达时对当前项做校验回落。 */
+export function resolveNewSessionProjectId(
+  projects: readonly { id: string }[],
+  pickedId: string | null,
+  preferredId?: string | null
+): string {
+  return (
+    projects.find((p) => p.id === pickedId)?.id ??
+    projects.find((p) => p.id === preferredId)?.id ??
+    projects[0]?.id ??
+    ''
+  );
 }
 
 // 与桌面 ApprovalModePicker 同义（i18n 键 Supervised / Auto-accept edits / Full access）；
@@ -55,7 +71,14 @@ const LEVEL_LABELS: Record<ThinkingLevel, string> = {
 };
 
 /** 新建会话：只能选桌面已添加的项目（cwd 由 main 反查）与已启用的模型 */
-export function NewSessionSheet({ projects, providers, open, onClose, onCreate }: Props) {
+export function NewSessionSheet({
+  projects,
+  providers,
+  open,
+  preferredProjectId,
+  onClose,
+  onCreate,
+}: Props) {
   // 组件常驻挂载，目录是异步到达的：选中值存"用户是否显式选过"，
   // 实际取值再对当前列表做校验回落，避免初值算在空列表上而永远选不中。
   const [pickedProject, setPickedProject] = useState<string | null>(null);
@@ -64,8 +87,13 @@ export function NewSessionSheet({ projects, providers, open, onClose, onCreate }
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>('full');
   const [reasoningEnabled, setReasoningEnabled] = useState(false);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('medium');
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open) setPickedProject(null);
+  }
 
-  const projectId = projects.find((p) => p.id === pickedProject)?.id ?? projects[0]?.id ?? '';
+  const projectId = resolveNewSessionProjectId(projects, pickedProject, preferredProjectId);
   const provider = providers.find((p) => p.id === pickedProvider) ??
     providers[0] ?? { id: '', models: [] };
   const providerId = provider.id;
