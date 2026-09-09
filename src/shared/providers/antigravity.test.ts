@@ -948,39 +948,65 @@ describe('buildRequest 的 model 字段用解析后的 wire id', () => {
     const generationConfig = request.request.generationConfig as { maxOutputTokens: number };
     expect(generationConfig.maxOutputTokens).toBe(65_535);
   });
+
+  it('无 thinkingLevelMap 的 raw id 请求不改写成另一条模型', () => {
+    const raw = parseAvailableModels({
+      models: {
+        'gemini-3.8-flash-high': {
+          displayName: 'Gemini 3.8 Flash (High)',
+          supportsThinking: true,
+        },
+      },
+    })[0];
+    expect(raw?.id).toBe('gemini-3.8-flash-high');
+    expect(raw?.thinkingLevelMap).toBeUndefined();
+    if (!raw) throw new Error('parseAvailableModels 未产出 gemini-3.8-flash-high');
+    const request = buildRequest(
+      {
+        ...raw,
+        provider: ANTIGRAVITY_PROVIDER_ID,
+        api: raw.api ?? ('google-antigravity-cca' as const),
+        baseUrl: raw.baseUrl ?? 'https://daily-cloudcode-pa.googleapis.com',
+      },
+      { messages: [] },
+      'projects/p',
+      { reasoning: 'low' }
+    );
+    // 只锁 model 原 id；无 map 的 raw 不猜档位、不改写成 -low。
+    expect(request.model).toBe('gemini-3.8-flash-high');
+  });
 });
 
 describe('mergeAntigravityModels', () => {
-  it('已归属的 wire id 不重复暴露，陌生 id 独立暴露，tier 拿不到的不暴露', () => {
+  it('已归属的 raw id 仍保留，同 id 以逻辑表为准，陌生 id 独立暴露', () => {
+    // 旧契约把已归属 wire 折叠掉，目录里选不到原始 id，subagent 启动报 oauth model not found。
     const discovered = parseAvailableModels({
       models: {
         'gemini-3.5-flash-extra-low': { displayName: 'Gemini 3.5 Flash (Low)' },
-        'gemini-3-flash': { displayName: 'Gemini 3 Flash' },
+        'gemini-3-flash': { displayName: 'SHOULD NOT WIN' },
         'gemini-3.6-flash-tiered': {},
         'brand-new-model-x': { displayName: 'Brand New' },
         tab_flash_lite_preview: {},
       },
     });
-    const ids = mergeAntigravityModels(discovered).map((spec) => spec.id);
+    const merged = mergeAntigravityModels(discovered);
+    const ids = merged.map((spec) => spec.id);
 
-    // extra-low 同时是 gemini-3-flash 与 gemini-3.5-flash 的 wire id → 两条逻辑模型都可用
     expect(ids).toContain('gemini-3-flash');
     expect(ids).toContain('gemini-3.5-flash');
-    // 已归属的 wire id 不单独出现，逻辑 id 也只出现一次
-    expect(ids).not.toContain('gemini-3.5-flash-extra-low');
+    expect(ids).toContain('gemini-3.5-flash-extra-low');
     expect(ids.filter((id) => id === 'gemini-3-flash')).toHaveLength(1);
-    // 归不到逻辑表的后端 id 独立暴露
+    expect(merged.find((spec) => spec.id === 'gemini-3-flash')?.name).toBe('Gemini 3 Flash');
     expect(ids).toContain('brand-new-model-x');
     expect(ids).toContain('gemini-3.6-flash-tiered');
-    // 后端没返回 wire id 的逻辑条目不暴露
     expect(ids).not.toContain('gemini-2.5-pro');
     expect(ids).not.toContain('claude-opus-4-5');
     expect(ids).not.toContain('gemini-3.6-flash');
-    // 补全模型仍被过滤
     expect(ids).not.toContain('tab_flash_lite_preview');
   });
 
-  it('动态发现 gemini-3.8-flash-low/medium/high 时只暴露逻辑 gemini-3.8-flash，tiered 仍独立暴露', () => {
+  it('动态发现 gemini-3.8-flash-low/medium/high 时逻辑入口与 raw id 并存，不抄逻辑表 map', () => {
+    // 旧契约只暴露逻辑 gemini-3.8-flash，把 low/medium/high 从目录删除。
     const discovered = parseAvailableModels({
       models: {
         'gemini-3.8-flash-low': { displayName: 'Gemini 3.8 Flash (Low)' },
@@ -989,48 +1015,88 @@ describe('mergeAntigravityModels', () => {
         'gemini-3.8-flash-tiered': { displayName: 'Gemini 3.8 Flash Tiered' },
       },
     });
-    const ids = mergeAntigravityModels(discovered).map((spec) => spec.id);
+    const merged = mergeAntigravityModels(discovered);
+    const ids = merged.map((spec) => spec.id);
+    const high = merged.find((spec) => spec.id === 'gemini-3.8-flash-high');
 
-    // 暴露逻辑模型 gemini-3.8-flash
     expect(ids).toContain('gemini-3.8-flash');
-    // wire id low/medium/high 不再裸露
-    expect(ids).not.toContain('gemini-3.8-flash-low');
-    expect(ids).not.toContain('gemini-3.8-flash-medium');
-    expect(ids).not.toContain('gemini-3.8-flash-high');
-    // tiered 保持独立动态条目
+    expect(ids).toContain('gemini-3.8-flash-low');
+    expect(ids).toContain('gemini-3.8-flash-medium');
+    expect(ids).toContain('gemini-3.8-flash-high');
     expect(ids).toContain('gemini-3.8-flash-tiered');
+    expect(ids.filter((id) => id === 'gemini-3.8-flash')).toHaveLength(1);
+    expect(high).toBeDefined();
+    expect(high?.thinkingLevelMap).toBeUndefined();
   });
 
-  it('喂进后端真实的 31 个 id 时得到逻辑表可用项 + 未归属的新 id', () => {
+  it('喂进后端真实的 31 个 id 时逻辑入口与 raw id 并存（34 项）', () => {
+    // 旧期望 17 项是折叠契约；合法 discover 的 raw id 应原身份进入目录。
     const models: Record<string, unknown> = {};
     for (const id of REAL_BACKEND_MODEL_IDS) models[id] = {};
     const ids = mergeAntigravityModels(parseAvailableModels({ models })).map((spec) => spec.id);
 
     expect(ids.sort()).toEqual(
       [
-        // 逻辑条目（本账号可用的 15 条）
         'claude-opus-4-6',
+        'claude-opus-4-6-thinking',
         'claude-sonnet-4-6',
         'gemini-2.5-flash',
         'gemini-2.5-flash-lite',
+        'gemini-2.5-flash-thinking',
         'gemini-2.5-pro',
         'gemini-3-flash',
+        'gemini-3-flash-agent',
         'gemini-3.1-flash-image',
         'gemini-3.1-flash-lite',
         'gemini-3.1-pro',
+        'gemini-3.1-pro-high',
+        'gemini-3.1-pro-low',
         'gemini-3.5-flash',
+        'gemini-3.5-flash-extra-low',
+        'gemini-3.5-flash-low',
         'gemini-3.6-flash',
+        'gemini-3.6-flash-high',
+        'gemini-3.6-flash-low',
+        'gemini-3.6-flash-medium',
+        'gemini-3.6-flash-tiered',
         'gemini-3.7-flash',
+        'gemini-3.7-flash-high',
+        'gemini-3.7-flash-low',
+        'gemini-3.7-flash-medium',
         'gemini-3.7-flash-tiered',
         'gemini-3.8-flash',
+        'gemini-3.8-flash-high',
+        'gemini-3.8-flash-low',
+        'gemini-3.8-flash-medium',
+        'gemini-pro-agent',
         'gpt-oss-120b',
-        // 后端有、本地模型表没单独归属的：3.1-pro 的 high 走 gemini-pro-agent，
-        // 所以 gemini-3.1-pro-high 是一条独立可选模型
-        'gemini-3.1-pro-high',
-        'gemini-3.6-flash-tiered',
+        'gpt-oss-120b-medium',
       ].sort()
     );
     for (const gap of TIER_GAP_MODEL_IDS) expect(ids).not.toContain(gap);
+  });
+
+  it('不把未知 raw 后缀发明成新的逻辑入口', () => {
+    const ids = mergeAntigravityModels(
+      parseAvailableModels({ models: { 'gemini-9-flash-high': { displayName: 'Nine High' } } })
+    ).map((spec) => spec.id);
+    expect(ids).toContain('gemini-9-flash-high');
+    expect(ids).not.toContain('gemini-9-flash');
+  });
+
+  it('远端只发现与逻辑入口同名的 raw 时目录不能消失', () => {
+    // 本刀只保证目录保留：无 route wire → 逻辑未插入，按实际 insert id 去重并原样留 raw。
+    // 请求转换仍沿用既有 LOGICAL_BY_ID 规则，不在本用例锁定。
+    const merged = mergeAntigravityModels(
+      parseAvailableModels({
+        models: { 'gemini-3.8-flash': { displayName: 'Remote Gemini Flash' } },
+      })
+    );
+    const ids = merged.map((spec) => spec.id);
+    expect(ids).toContain('gemini-3.8-flash');
+    expect(ids.filter((id) => id === 'gemini-3.8-flash')).toHaveLength(1);
+    expect(ids).not.toContain('gemini-3.8-flash-low');
+    expect(merged.find((spec) => spec.id === 'gemini-3.8-flash')?.name).toBe('Remote Gemini Flash');
   });
 
   it('后端一条都没返回时合并结果为空（调用方回落兜底表）', () => {
