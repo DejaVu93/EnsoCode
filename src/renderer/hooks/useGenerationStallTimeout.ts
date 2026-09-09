@@ -57,10 +57,12 @@ export function useGenerationStallTimeout(): void {
           void window.electronAPI.agent.abort(conversation.id).finally(() => {
             aborting.delete(conversation.id);
           });
-          addToast({
-            type: 'warning',
-            title: t('No output for {{minutes}} minutes — retrying', { minutes }),
-          });
+          addToast(
+            stallWarningToast(
+              conversation,
+              t('No output for {{minutes}} minutes — retrying', { minutes })
+            )
+          );
           continue;
         }
         if (action === 'retry') {
@@ -72,13 +74,20 @@ export function useGenerationStallTimeout(): void {
         if (action === 'give-up') {
           pendingRetry.delete(conversation.id);
           attempts.delete(conversation.id);
-          addToast({
-            type: 'warning',
-            title: t('Stopped after repeated stalls'),
-          });
+          addToast(stallWarningToast(conversation, t('Stopped after repeated stalls')));
         }
       }
     }, 1000);
     return () => clearInterval(timer);
   }, [minutes, t]);
+}
+
+function stallWarningToast(
+  conversation: { title: string; coworkerName?: string },
+  message: string
+) {
+  const sessionTitle = (conversation.coworkerName || conversation.title).split('\n')[0].trim();
+  return sessionTitle
+    ? { type: 'warning' as const, title: sessionTitle, description: message }
+    : { type: 'warning' as const, title: message };
 }
