@@ -207,7 +207,7 @@ export function ChatScreen(props: Props) {
             <button
               key={child.id}
               type="button"
-              className={cn(tabClass(sessionId === child.id), 'shrink-0')}
+              className={tabClass(sessionId === child.id)}
               onClick={() => props.onSelectTab?.(child.id)}
             >
               <Bot className="h-3 w-3 shrink-0" />
@@ -311,7 +311,7 @@ export function ChatScreen(props: Props) {
 /** 与桌面 CoworkerTabs 的 tabClass 同款 */
 function tabClass(active: boolean): string {
   return cn(
-    'flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
+    'flex min-w-0 shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors',
     active ? 'bg-muted font-medium' : 'text-muted-foreground'
   );
 }
