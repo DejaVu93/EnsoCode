@@ -1,6 +1,7 @@
 import { sanitizeDefaultModel } from '@shared/defaultModel';
 import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
+import { applyProjectGroupPatch } from '@shared/projectGroups';
 import { projectNameFromPath } from '@shared/projectName';
 import { applyIncomingProviders } from '@shared/providerIdentity';
 import { normalizeProxyMode, type ProxyMode } from '@shared/proxy';
@@ -647,23 +648,9 @@ export const useSettingsStore = create<SettingsState>()(
       },
       updateProjectGroup: (id, patch) => {
         set((state) => ({
-          projectGroups: state.projectGroups.map((group) => {
-            if (group.id !== id) return group;
-            return {
-              ...group,
-              ...(patch.name !== undefined ? { name: patch.name.trim() || group.name } : {}),
-              ...(patch.emoji !== undefined
-                ? patch.emoji
-                  ? { emoji: patch.emoji }
-                  : { emoji: undefined }
-                : {}),
-              ...(patch.color !== undefined
-                ? patch.color
-                  ? { color: patch.color }
-                  : { color: undefined }
-                : {}),
-            };
-          }),
+          projectGroups: state.projectGroups.map((group) =>
+            group.id === id ? applyProjectGroupPatch(group, patch) : group
+          ),
         }));
       },
       removeProjectGroup: (id) => {

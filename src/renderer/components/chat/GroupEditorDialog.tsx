@@ -1,4 +1,5 @@
 import type { ProjectGroup } from '@shared/types';
+import { X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -105,6 +106,18 @@ export function GroupEditorDialog({
               <Input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
             </Field>
             <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                className="flex h-6 w-6 items-center justify-center rounded-full border border-border bg-background text-muted-foreground"
+                style={{
+                  outline: color == null ? '2px solid var(--color-ring)' : undefined,
+                  outlineOffset: 2,
+                }}
+                onClick={() => setColor(undefined)}
+                aria-label={t('No color')}
+              >
+                <X className="h-3 w-3" />
+              </button>
               {PRESET_COLORS.map((preset) => (
                 <button
                   key={preset}

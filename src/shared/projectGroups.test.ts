@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALL_GROUP_ID,
+  applyProjectGroupPatch,
   filterProjectsByGroup,
   type ProjectGroup,
   sectionsForAllView,
@@ -83,5 +84,26 @@ describe('sectionsForAllView', () => {
     expect(
       sections.find((s) => s.groupId === UNGROUPED_GROUP_ID)!.projects.map((x) => x.id)
     ).toEqual(['x']);
+  });
+});
+
+describe('applyProjectGroupPatch', () => {
+  const group: ProjectGroup = { id: 'g', name: 'Work', order: 1, color: '#3b82f6' };
+
+  it('只改名时保留颜色', () => {
+    expect(applyProjectGroupPatch(group, { name: 'Office' })).toEqual({
+      ...group,
+      name: 'Office',
+    });
+  });
+
+  it('color 键在但值为空则去掉颜色（编辑器点已选色取消）', () => {
+    expect(applyProjectGroupPatch(group, { name: 'Work', color: undefined }).color).toBeUndefined();
+    expect(applyProjectGroupPatch(group, { color: '' }).color).toBeUndefined();
+    expect('color' in applyProjectGroupPatch(group, { color: undefined })).toBe(false);
+  });
+
+  it('写入新颜色', () => {
+    expect(applyProjectGroupPatch(group, { color: '#22c55e' }).color).toBe('#22c55e');
   });
 });

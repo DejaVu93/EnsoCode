@@ -630,6 +630,7 @@ export const zhTranslations: Record<string, string> = {
   'New group': '新建分组',
   'Edit group': '编辑分组',
   'Delete group': '删除分组',
+  'No color': '无颜色',
   'Project group': '项目组',
   'Groups organize projects in the sidebar.': '用分组整理侧栏里的项目。',
   'Move projects into this group': '选择要移入的项目',

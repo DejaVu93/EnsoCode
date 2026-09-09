@@ -59,3 +59,29 @@ export function sectionsForAllView<T extends Project>(
   }
   return sections;
 }
+
+export type ProjectGroupPatch = {
+  name?: string;
+  emoji?: string;
+  color?: string;
+};
+
+/** 编辑器会把「取消颜色」写成 color: undefined；不能当成「不改这个字段」。 */
+export function applyProjectGroupPatch(
+  group: ProjectGroup,
+  patch: ProjectGroupPatch
+): ProjectGroup {
+  const next: ProjectGroup = {
+    ...group,
+    ...(patch.name !== undefined ? { name: patch.name.trim() || group.name } : {}),
+  };
+  if ('emoji' in patch) {
+    if (patch.emoji) next.emoji = patch.emoji;
+    else delete next.emoji;
+  }
+  if ('color' in patch) {
+    if (patch.color) next.color = patch.color;
+    else delete next.color;
+  }
+  return next;
+}
