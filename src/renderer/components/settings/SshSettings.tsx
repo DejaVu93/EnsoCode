@@ -1,6 +1,7 @@
-import type { SshAuth, SshConnection } from '@shared/types';
+import type { SshAuth, SshConnection, SshHostKeyChallenge } from '@shared/types';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import * as React from 'react';
+import { SshHostKeyDialog } from '@/components/chat/SshHostKeyDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -29,6 +30,11 @@ export function SshSettings() {
   const [testingId, setTestingId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [testHint, setTestHint] = React.useState<string | null>(null);
+  const [hostKey, setHostKey] = React.useState<{
+    id: string;
+    challenge: SshHostKeyChallenge;
+  } | null>(null);
+  const [trusting, setTrusting] = React.useState(false);
 
   const reload = React.useCallback(() => {
     void window.electronAPI.sshConnections.list().then(setConnections);
@@ -100,7 +106,26 @@ export function SshSettings() {
     setTestHint(null);
     const result = await window.electronAPI.sshConnections.test(id);
     setTestingId(null);
+    if (!result.ok && result.hostKey) {
+      setHostKey({ id, challenge: result.hostKey });
+      return;
+    }
     setTestHint(result.ok ? t('SSH connection succeeded') : result.error);
+  };
+
+  const trustHost = async () => {
+    if (!hostKey) return;
+    setTrusting(true);
+    const trusted = await window.electronAPI.sshConnections.trustHost(hostKey.id);
+    setTrusting(false);
+    if (!trusted.ok) {
+      setTestHint(trusted.error || t('Could not save host key.'));
+      setHostKey(null);
+      return;
+    }
+    const id = hostKey.id;
+    setHostKey(null);
+    await test(id);
   };
 
   return (
@@ -231,6 +256,12 @@ export function SshSettings() {
           </form>
         </DialogContent>
       </Dialog>
+      <SshHostKeyDialog
+        challenge={hostKey?.challenge ?? null}
+        busy={trusting}
+        onTrust={() => void trustHost()}
+        onDismiss={() => !trusting && setHostKey(null)}
+      />
     </div>
   );
 }

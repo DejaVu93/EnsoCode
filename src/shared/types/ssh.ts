@@ -2,6 +2,14 @@ import { isUuid } from '../builtinAgents';
 
 export type SshAuth = 'key' | 'password';
 
+/** 渲染层可见的未知主机密钥挑战；不含 known_hosts 整行 */
+export interface SshHostKeyChallenge {
+  host: string;
+  port: number;
+  fingerprint: string;
+  keyType: string;
+}
+
 /** 渲染层可见的连接投影；密码永不出现 */
 export interface SshConnection {
   id: string;
@@ -20,6 +28,7 @@ const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
 
 const allowed = ['id', 'name', 'host', 'user', 'port', 'auth', 'hasPassword'] as const;
+const hostKeyKeys = ['host', 'port', 'fingerprint', 'keyType'] as const;
 
 export function parseSshConnection(value: unknown): SshConnection | null {
   if (
@@ -41,4 +50,30 @@ export function parseSshConnection(value: unknown): SshConnection | null {
     return null;
   }
   return value as unknown as SshConnection;
+}
+
+export function parseSshHostKeyChallenge(value: unknown): SshHostKeyChallenge | null {
+  if (
+    !isRecord(value) ||
+    !Object.keys(value).every((key) => (hostKeyKeys as readonly string[]).includes(key))
+  ) {
+    return null;
+  }
+  if (!isNonEmptyString(value.host) || !isNonEmptyString(value.keyType)) return null;
+  if (!isNonEmptyString(value.fingerprint) || !value.fingerprint.startsWith('SHA256:')) {
+    return null;
+  }
+  if (
+    !Number.isInteger(value.port) ||
+    (value.port as number) < 1 ||
+    (value.port as number) > 65535
+  ) {
+    return null;
+  }
+  return {
+    host: value.host,
+    port: value.port as number,
+    fingerprint: value.fingerprint,
+    keyType: value.keyType,
+  };
 }

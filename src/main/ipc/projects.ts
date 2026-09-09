@@ -38,8 +38,9 @@ export function registerProjectHandlers(): void {
         auth: secret.auth,
         port: secret.port,
         password: secret.password,
+        keyscanHost: secret.host,
       });
-      if (failure) return { accepted: false, error: failure };
+      if (failure) return { accepted: false, error: failure.error };
     }
     return registry.createProject(parsed);
   });

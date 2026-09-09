@@ -497,6 +497,9 @@ export const IPC_PRODUCT_COVERAGE = {
   SSH_CONNECTIONS_LIST_DIRS: excluded(
     'Remote directory browsing helper for the add-project picker.'
   ),
+  SSH_CONNECTIONS_TRUST_HOST: excluded(
+    'Writes a user-confirmed SSH host key to ~/.ssh/known_hosts; Settings / add-project UI only.'
+  ),
   MCP_AUTHORIZE: excluded('Desktop-only MCP OAuth flow; needs system browser and keychain.'),
   MCP_REVOKE: excluded('Clears locally stored MCP OAuth credentials; Settings panel only.'),
   MCP_AUTH_STATE: excluded('Read-only MCP authorization flags for the Settings panel.'),

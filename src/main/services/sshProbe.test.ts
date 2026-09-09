@@ -72,6 +72,13 @@ describe('classifySshProbeFailure', () => {
     expect(classifySshProbeFailure(255, 'Permission denied (publickey)')).toMatch(
       /密钥|认证|auth/i
     );
+    expect(classifySshProbeFailure(255, 'Host key verification failed.')).toMatch(/主机密钥未信任/);
+    expect(
+      classifySshProbeFailure(
+        255,
+        'WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!\nHost key verification failed.'
+      )
+    ).toMatch(/主机密钥已变更/);
     expect(classifySshProbeFailure(255, 'Permission denied', 'password')).toMatch(/密码/);
     expect(classifySshProbeFailure(1, '')).toMatch(/目录|directory/i);
   });

@@ -26,10 +26,14 @@ describe.skipIf(!host)('ssh 真机 e2e', { timeout: 60_000 }, () => {
 
   it('探测:有效目录通过,无效路径/不可达 host 返回可读错误', async () => {
     await expect(sshProbeDirectory(host as string, cwd)).resolves.toBeNull();
-    await expect(sshProbeDirectory(host as string, '/definitely-not-a-dir-enso')).resolves.toMatch(
-      /不存在|不是目录/
-    );
-    await expect(sshProbeDirectory('no-such-enso-host.invalid', cwd)).resolves.toMatch(/无法连接/);
+    await expect(
+      sshProbeDirectory(host as string, '/definitely-not-a-dir-enso')
+    ).resolves.toMatchObject({
+      error: expect.stringMatching(/不存在|不是目录/),
+    });
+    await expect(sshProbeDirectory('no-such-enso-host.invalid', cwd)).resolves.toMatchObject({
+      error: expect.stringMatching(/无法连接/),
+    });
   });
 
   it('read/ls/find/grep/bash/write/edit 作用在远端,本机路径不受影响', async () => {

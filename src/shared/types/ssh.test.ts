@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSshConnection } from './ssh';
+import { parseSshConnection, parseSshHostKeyChallenge } from './ssh';
 
 const id = '11111111-1111-4111-8111-111111111111';
 
@@ -47,5 +47,23 @@ describe('parseSshConnection', () => {
       parseSshConnection({ id: 'bad', name: 'x', host: 'h', auth: 'key', hasPassword: false })
     ).toBeNull();
     expect(parseSshConnection(null)).toBeNull();
+  });
+});
+
+describe('parseSshHostKeyChallenge', () => {
+  it('收窄指纹挑战；脏输入拒绝', () => {
+    const challenge = {
+      host: 'dev.example',
+      port: 22,
+      fingerprint: 'SHA256:ungWv48Bz+pBQUDeXa4iI1FgZD5GJxuFFqiYsnECJFg',
+      keyType: 'ssh-ed25519',
+    };
+    expect(parseSshHostKeyChallenge(challenge)).toEqual(challenge);
+    expect(
+      parseSshHostKeyChallenge({ ...challenge, line: 'dev.example ssh-ed25519 AAAA' })
+    ).toBeNull();
+    expect(parseSshHostKeyChallenge({ ...challenge, fingerprint: 'md5:aa' })).toBeNull();
+    expect(parseSshHostKeyChallenge({ ...challenge, port: 0 })).toBeNull();
+    expect(parseSshHostKeyChallenge(null)).toBeNull();
   });
 });

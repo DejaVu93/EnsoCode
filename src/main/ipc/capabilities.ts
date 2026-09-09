@@ -171,7 +171,7 @@ export const capabilityGateway = new CapabilityGateway(
         port: secret.port,
         password: secret.password,
       });
-      return failure ? { ok: false, error: failure } : { ok: true };
+      return failure ? { ok: false, error: failure.error } : { ok: true };
     },
   },
   transport

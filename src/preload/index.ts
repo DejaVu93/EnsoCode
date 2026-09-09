@@ -47,6 +47,7 @@ import type {
   ProviderApiConfig,
   RecentProject,
   SshConnection,
+  SshHostKeyChallenge,
   TestProviderResult,
 } from '@shared/types';
 import { IPC_CHANNELS } from '@shared/types';
@@ -600,13 +601,19 @@ const electronAPI = {
       ipcRenderer.invoke(IPC_CHANNELS.SSH_CONNECTIONS_UPSERT, request),
     delete: (id: string): Promise<{ ok: true; value: null } | { ok: false; error: string }> =>
       ipcRenderer.invoke(IPC_CHANNELS.SSH_CONNECTIONS_DELETE, id),
-    test: (id: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+    test: (
+      id: string
+    ): Promise<{ ok: true } | { ok: false; error: string; hostKey?: SshHostKeyChallenge }> =>
       ipcRenderer.invoke(IPC_CHANNELS.SSH_CONNECTIONS_TEST, id),
     listDirs: (
       id: string,
       path?: string
-    ): Promise<{ ok: true; path: string; dirs: string[] } | { ok: false; error: string }> =>
-      ipcRenderer.invoke(IPC_CHANNELS.SSH_CONNECTIONS_LIST_DIRS, id, path),
+    ): Promise<
+      | { ok: true; path: string; dirs: string[] }
+      | { ok: false; error: string; hostKey?: SshHostKeyChallenge }
+    > => ipcRenderer.invoke(IPC_CHANNELS.SSH_CONNECTIONS_LIST_DIRS, id, path),
+    trustHost: (id: string): Promise<{ ok: true } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.SSH_CONNECTIONS_TRUST_HOST, id),
   },
   sourceAuthority: {
     read: (): Promise<SourceAuthorityProjection> =>
