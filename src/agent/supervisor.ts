@@ -1051,7 +1051,7 @@ export class SessionSupervisor {
       }
       case 'rewind': {
         const managed = this.must(command.identity);
-        if (managed.status !== 'idle') {
+        if (managed.status === 'running') {
           this.options.emit({
             type: 'rewind-done',
             identity: managed.identity,
@@ -2723,6 +2723,18 @@ export class SessionSupervisor {
     managed.status = 'failed';
     // 失败轮不总结，但下一轮的起点仍要往前推，否则失败轮的消息会混进下一轮摘要
     managed.turnStartIndex = managed.messages.length;
+    // 轮失败时放弃排队压缩（通常是 queued；running 压缩与 failTurn 时序上不可达）
+    // 不带 error：放弃排队 ≠ 压缩失败，避免假 toast
+    managed.pendingCompact = undefined;
+    if (managed.compaction) {
+      managed.compaction = undefined;
+      this.options.emit({
+        type: 'compaction',
+        identity: managed.identity,
+        seq: ++managed.seq,
+        state: 'end',
+      });
+    }
     this.emitStatus(managed, error);
     this.options.emit({
       type: 'turn-failed',

@@ -212,3 +212,206 @@ describe('SessionSupervisor compact failure', () => {
     await supervisor.shutdown();
   });
 });
+
+describe('SessionSupervisor failTurn compaction cleanup', () => {
+  beforeEach(() => {
+    mocks.sessions.length = 0;
+    mocks.managers.length = 0;
+    mocks.createAgentSession.mockReset();
+    rmSync(path.join(tmpdir(), 'enso-compact-sessions'), { recursive: true, force: true });
+    mocks.mcpToolsFor.mockReset().mockResolvedValue([]);
+    mocks.createAgentSession.mockImplementation(async (options: Record<string, unknown>) => ({
+      session: session(options),
+    }));
+  });
+
+  /**
+   * 模拟 pi 终态错误轮：agent_end 会用 session.messages 重建投影（reconcileMessages），
+   * 故把终态错误 assistant 塞进 session.messages，transcript 才保留它，
+   * lastAssistant.stopReason==='error' 才会走 failTurn（而非误报 turn-completed）。
+   */
+  function failTurnViaAgentEnd(parentSession: ReturnType<typeof session>): void {
+    parentSession.messages.push({
+      role: 'assistant',
+      content: [],
+      stopReason: 'error',
+      errorMessage: 'model down',
+    });
+    parentSession.emit({ type: 'agent_end', willRetry: false });
+  }
+
+  it('忙碌中 compact 进入 queued 后轮次失败：emit compaction end（无 error）并清掉 queued', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-compact-')),
+    });
+    supervisor.handleCommand({
+      type: 'spawn-parent',
+      identity: parent,
+      cwd: '/workspace',
+      model,
+    });
+    await waitFor(events, 'parent-ready');
+    const parentSession = mocks.sessions[0] as ReturnType<typeof session>;
+
+    // 进入 running
+    parentSession.emit({ type: 'agent_start' });
+    await settle();
+
+    // 忙碌中 compact 排队（不打断当前轮次）
+    supervisor.handleCommand({ type: 'compact', identity: parent });
+    await settle();
+    expect(events.some((event) => event.type === 'compaction' && event.state === 'queued')).toBe(
+      true
+    );
+
+    // 轮次失败：终态错误 assistant + agent_end(willRetry=false) 走 failTurn
+    failTurnViaAgentEnd(parentSession);
+    await settle();
+    await settle();
+    expect(events.some((event) => event.type === 'turn-failed')).toBe(true);
+    expect(
+      events.some((event) => event.type === 'status' && event.status === 'failed')
+    ).toBe(true);
+
+    // 失败应清掉 queued：emit compaction end，且不带 error（避免假「压缩失败」toast）
+    const ends = events.filter(
+      (event) => event.type === 'compaction' && event.state === 'end'
+    );
+    expect(ends).toHaveLength(1);
+    expect(ends[0]).toEqual(expect.objectContaining({ type: 'compaction', state: 'end' }));
+    expect(ends[0]).not.toHaveProperty('error');
+
+    await supervisor.shutdown();
+  });
+
+  it('failTurn 后快照投影不再卡 compaction=queued', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-compact-')),
+    });
+    supervisor.handleCommand({
+      type: 'spawn-parent',
+      identity: parent,
+      cwd: '/workspace',
+      model,
+    });
+    await waitFor(events, 'parent-ready');
+    const parentSession = mocks.sessions[0] as ReturnType<typeof session>;
+
+    parentSession.emit({ type: 'agent_start' });
+    await settle();
+    supervisor.handleCommand({ type: 'compact', identity: parent });
+    await settle();
+
+    failTurnViaAgentEnd(parentSession);
+    await settle();
+    await settle();
+
+    supervisor.handleCommand({ type: 'snapshot' });
+    await settle();
+    const snapshot = events.find(
+      (event) => event.type === 'snapshot'
+    ) as { sessions: { compaction?: string }[] } | undefined;
+    expect(snapshot?.sessions[0]?.compaction).toBeUndefined();
+
+    await supervisor.shutdown();
+  });
+
+  it('failTurn 后 pendingCompact 已清：下一轮成功结束不再自动跑 compact', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-compact-')),
+    });
+    supervisor.handleCommand({
+      type: 'spawn-parent',
+      identity: parent,
+      cwd: '/workspace',
+      model,
+    });
+    await waitFor(events, 'parent-ready');
+    const parentSession = mocks.sessions[0] as ReturnType<typeof session>;
+
+    // 第一轮：running + compact 排队，然后失败收口
+    parentSession.emit({ type: 'agent_start' });
+    await settle();
+    supervisor.handleCommand({ type: 'compact', identity: parent });
+    await settle();
+    failTurnViaAgentEnd(parentSession);
+    await settle();
+    await settle();
+    expect(parentSession.compact).not.toHaveBeenCalled();
+
+    // 第二轮：成功结束。failTurn 应已清掉 pendingCompact，故不再自动 compact。
+    // 用一条非错误 assistant 覆盖 session.messages 尾部，使 lastAssistant 非 error 走成功路径。
+    parentSession.emit({ type: 'agent_start' });
+    await settle();
+    parentSession.messages.push({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'ok' }],
+      stopReason: 'stop',
+    });
+    parentSession.emit({ type: 'agent_end', willRetry: false });
+    await settle();
+    await settle();
+    await settle();
+    expect(events.some((event) => event.type === 'turn-completed')).toBe(true);
+    expect(parentSession.compact).not.toHaveBeenCalled();
+
+    await supervisor.shutdown();
+  });
+
+  it('status=failed 时 rewind 不被 idle 守卫空操作：应尝试 navigateTree', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-compact-')),
+    });
+    supervisor.handleCommand({
+      type: 'spawn-parent',
+      identity: parent,
+      cwd: '/workspace',
+      model,
+    });
+    await waitFor(events, 'parent-ready');
+    const parentSession = mocks.sessions[0] as ReturnType<typeof session>;
+
+    // 给分支塞一条 user 消息，rewind 才有可回退目标
+    (mocks.managers[0] as { getBranch: () => unknown[] }).getBranch().push({
+      type: 'message',
+      message: { role: 'user' },
+      id: 'entry-user-1',
+      timestamp: 1,
+    });
+
+    // 进入 running 后失败收口 → status=failed
+    parentSession.emit({ type: 'agent_start' });
+    await settle();
+    failTurnViaAgentEnd(parentSession);
+    await settle();
+    await settle();
+    expect(
+      events.some((event) => event.type === 'status' && event.status === 'failed')
+    ).toBe(true);
+
+    supervisor.handleCommand({
+      type: 'rewind',
+      identity: parent,
+      userIndexFromEnd: 0,
+    });
+    await settle();
+    await settle();
+
+    // failed 不应被 idle 守卫早退空操作：应实际尝试 navigateTree 到那条 user 消息
+    expect(parentSession.navigateTree).toHaveBeenCalledWith('entry-user-1');
+
+    await supervisor.shutdown();
+  });
+});

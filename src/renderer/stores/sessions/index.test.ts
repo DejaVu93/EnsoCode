@@ -121,6 +121,7 @@ const hireCoworker = vi.fn(async (): Promise<{ ok: boolean; error?: string }> =>
 const summarizeTitle = vi.fn(async (): Promise<{ ok: boolean; error?: string }> => ({ ok: true }));
 const agentAbort = vi.fn(async (_id: string) => ({ ok: true }));
 const agentRelease = vi.fn(async (_id: string) => ({ ok: true }));
+const agentRewind = vi.fn(async () => ({ ok: true }));
 const requestSnapshot = vi.fn(async () => ({ ok: true }));
 
 vi.stubGlobal('navigator', { language: 'en-US' });
@@ -164,6 +165,7 @@ vi.stubGlobal('window', {
       hireCoworker,
       abort: agentAbort,
       release: agentRelease,
+      rewind: agentRewind,
       steer: vi.fn(async () => ({ ok: true })),
     },
     agentDispatch: {
@@ -264,6 +266,7 @@ describe('typed Agent child projection', () => {
       error: 'no',
     });
     agentSpawn.mockClear();
+    agentRewind.mockClear();
     requestSnapshot.mockClear();
     nextConversationId = 'parent';
     sourceProjection = {
@@ -2662,5 +2665,45 @@ describe('manual conversation reload', () => {
     const error = await sessionsModule.useSessionsStore.getState().reloadConversation('live');
     expect(error).toBe('ipc down');
     expect(sessionsModule.useSessionsStore.getState().conversations.live.reloading).toBeUndefined();
+  });
+});
+
+describe('rewind 在 failed 状态放行、running 仍拦截', () => {
+  beforeEach(() => {
+    agentRewind.mockClear();
+  });
+
+  it('status:failed 时调用 window.electronAPI.agent.rewind', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: true,
+          spawning: false,
+          status: 'failed' as const,
+          generation: 'g1',
+        },
+      },
+    }));
+    sessionsModule.useSessionsStore.getState().rewind('parent', 0, false);
+    expect(agentRewind).toHaveBeenCalledWith('parent', 0, false);
+  });
+
+  it('status:running 时不调用 window.electronAPI.agent.rewind', () => {
+    sessionsModule.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        parent: {
+          ...state.conversations.parent,
+          started: true,
+          spawning: false,
+          status: 'running' as const,
+          generation: 'g1',
+        },
+      },
+    }));
+    sessionsModule.useSessionsStore.getState().rewind('parent', 0, false);
+    expect(agentRewind).not.toHaveBeenCalled();
   });
 });

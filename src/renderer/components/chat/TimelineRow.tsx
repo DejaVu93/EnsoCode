@@ -661,13 +661,31 @@ function userIndexFromEndForTurn(
   return null;
 }
 
-function canBranchDisplayedSession(
+function canActOnDisplayedSession(
   state: ReturnType<typeof useSessionsStore.getState>,
-  host: ReturnType<typeof useChatHost>
+  host: ReturnType<typeof useChatHost>,
+  statusOk: (status: string) => boolean
 ) {
   if (host && !host.canRewind) return false;
   const conversation = displayedConversation(state);
-  return Boolean(conversation?.started && !conversation.spawning && conversation.status === 'idle');
+  return Boolean(
+    conversation?.started && !conversation.spawning && statusOk(conversation.status)
+  );
+}
+
+/** 回退：failed 也可（与 Retry 对齐）；分叉仍要 idle，worker fork 不接受非 idle 源 */
+function canRewindDisplayedSession(
+  state: ReturnType<typeof useSessionsStore.getState>,
+  host: ReturnType<typeof useChatHost>
+) {
+  return canActOnDisplayedSession(state, host, (status) => status !== 'running');
+}
+
+function canForkDisplayedSession(
+  state: ReturnType<typeof useSessionsStore.getState>,
+  host: ReturnType<typeof useChatHost>
+) {
+  return canActOnDisplayedSession(state, host, (status) => status === 'idle');
 }
 
 const userActionClass =
@@ -678,7 +696,7 @@ function ForkButton({ messageIndex }: { messageIndex: number }) {
   const { t } = useI18n();
   const host = useChatHost();
   const canFork = useSessionsStore((state) => {
-    if (!canBranchDisplayedSession(state, host)) return false;
+    if (!canForkDisplayedSession(state, host)) return false;
     const conversation = displayedConversation(state);
     return Boolean(conversation && !conversation.parentId && !conversation.historyOnly);
   });
@@ -710,7 +728,7 @@ function RewindButton({ messageIndex }: { messageIndex: number }) {
   /** 待确认的回退(值 = restoreFiles);null = 无 */
   const [pendingRestoreFiles, setPendingRestoreFiles] = useState<boolean | null>(null);
   const host = useChatHost();
-  const canRewind = useSessionsStore((state) => canBranchDisplayedSession(state, host));
+  const canRewind = useSessionsStore((state) => canRewindDisplayedSession(state, host));
   if (!canRewind) return null;
   const rewind = (restoreFiles: boolean) => {
     const state = useSessionsStore.getState();

@@ -1338,7 +1338,7 @@ export const useSessionsStore = create<SessionsState>()(
       function continueGoal(id: string): void {
         const conversation = get().conversations[id];
         const goal = conversation?.goal;
-        if (!conversation?.started || conversation.status !== 'idle') return;
+        if (!conversation?.started || conversation.status === 'running') return;
         if (goal?.status !== 'active') return;
         if ((conversation.queuedMessages ?? []).length > 0) return;
         if (
@@ -2717,7 +2717,7 @@ export const useSessionsStore = create<SessionsState>()(
 
         rewind(conversationId, userIndexFromEnd, restoreFiles) {
           const conversation = get().conversations[conversationId];
-          if (!conversation?.started || conversation.status !== 'idle') return;
+          if (!conversation?.started || conversation.status === 'running') return;
           void window.electronAPI.agent.rewind(conversationId, userIndexFromEnd, restoreFiles);
         },
 
