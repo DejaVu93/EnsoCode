@@ -517,7 +517,7 @@ describe('buildTimeline', () => {
     expect(timeline).toMatchObject([{ kind: 'thinking', text: '正在想', streaming: true }]);
   });
 
-  it('多 step 轮次：末 step 的 perf 带整轮总耗时 turnMs（首 step 开始→末 step 完成），中间 step 不带', () => {
+  it('多 step 轮次：末 step 的 turnMs 累计模型与工具活跃用时，中间 step 不带', () => {
     const timeline = buildTimeline(
       [
         user('改代码'),
@@ -535,6 +535,7 @@ describe('buildTimeline', () => {
           toolCallId: 't1',
           toolName: 'read',
           isError: false,
+          toolDurationMs: 30_000,
           content: [{ type: 'text', text: 'body' }],
         },
         {
@@ -550,7 +551,47 @@ describe('buildTimeline', () => {
     expect(texts).toHaveLength(2);
     expect(texts[0]).toMatchObject({ perf: { runMs: 2_000 } });
     expect(texts[0].kind === 'text' && texts[0].perf?.turnMs).toBeUndefined();
-    expect(texts[1]).toMatchObject({ perf: { runMs: 27_000, turnMs: 86_000 } });
+    // 模型 2s + 工具 30s + 模型 27s；中间 27s 空档不计。
+    expect(texts[1]).toMatchObject({ perf: { runMs: 27_000, turnMs: 59_000 } });
+  });
+
+  it('整轮总用时不包含等待 ask_user 回答的时间', () => {
+    const timeline = buildTimeline(
+      [
+        user('先问我再继续'),
+        {
+          role: 'assistant',
+          stopReason: 'toolUse',
+          duration: 2_000,
+          timing: { stepStartMs: 1_000, completedMs: 3_000 },
+          content: [
+            {
+              type: 'toolCall',
+              id: 'ask-1',
+              name: 'ask_user',
+              arguments: { question: '继续吗？' },
+            },
+          ],
+        },
+        {
+          role: 'toolResult',
+          toolCallId: 'ask-1',
+          toolName: 'ask_user',
+          toolDurationMs: 20 * 60_000,
+          content: [{ type: 'text', text: '继续' }],
+        },
+        {
+          role: 'assistant',
+          stopReason: 'stop',
+          duration: 3_000,
+          timing: { stepStartMs: 20 * 60_000 + 3_000, completedMs: 20 * 60_000 + 6_000 },
+          content: [{ type: 'text', text: '完成' }],
+        },
+      ],
+      false
+    );
+    const lastText = timeline.findLast((item) => item.kind === 'text');
+    expect(lastText).toMatchObject({ perf: { runMs: 3_000, turnMs: 5_000 } });
   });
 
   it('单 step 轮次不带 turnMs（与 runMs 重复）；新一轮 user 消息重置轮起点', () => {

@@ -691,7 +691,7 @@ export interface TurnPerf {
   /** 该 step 墙钟耗时（ms） */
   runMs: number;
   /**
-   * 整轮墙钟耗时（ms）：本轮首 step 开始→本 step 完成。
+   * 整轮活跃耗时（ms）：各模型请求 + 非交互工具执行，不含用户回答、审批及排队等待。
    * 仅多 step 轮次的末 step（已完结）带；单 step 轮次与 runMs 重复，不带。
    */
   turnMs?: number;

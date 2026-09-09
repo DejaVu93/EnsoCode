@@ -848,7 +848,7 @@ const secs = (ms: number): string => {
   const s = ms / 1000;
   return s < 10 ? String(Math.round(s * 10) / 10) : String(Math.round(s));
 };
-/** 末 step 读数：本 step 耗时 · TTFT · tok/s；多 step 轮次再附「总计 Xs」= 整轮墙钟（含工具执行） */
+/** 末 step 读数：本 step 耗时 · TTFT · tok/s；多 step 轮次再附「总计 Xs」= 整轮活跃用时 */
 function formatPerf(perf: TurnPerf, t: TFunction): string {
   const parts = [`${secs(perf.runMs)}s`];
   if (perf.ttftMs !== undefined) parts.push(`TTFT ${secs(perf.ttftMs)}s`);

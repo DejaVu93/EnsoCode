@@ -241,17 +241,23 @@ function findLastActivePartIndex(content: ProjectedMessage['content']): number {
   return -1;
 }
 
-/** 从该 step 的计时打点算 hover 操作条读数；打点不全则无对应字段。
- * turnStartMs 为本轮首 step 的起点，仅在「多 step 轮次的末 step」传入→ 附带整轮总耗时 turnMs */
-function perfFromTiming(message: ProjectedMessage, turnStartMs?: number): TurnPerf | undefined {
+/** 已完成 step 的模型活跃耗时；优先采用 pi 的整段请求 duration。 */
+function completedStepRunMs(message: ProjectedMessage): number | undefined {
   const timing = message.timing;
   if (!timing?.completedMs) return undefined;
-  const { stepStartMs, firstTokenMs, completedMs } = timing;
+  return typeof message.duration === 'number' && message.duration > 0
+    ? message.duration
+    : Math.max(0, timing.completedMs - timing.stepStartMs);
+}
+
+/** 从该 step 的计时打点算 hover 操作条读数；打点不全则无对应字段。
+ * turnActiveMs 仅在「多 step 轮次的末 step」传入，排除用户回答与审批等等待时间。 */
+function perfFromTiming(message: ProjectedMessage, turnActiveMs?: number): TurnPerf | undefined {
+  const timing = message.timing;
+  const runMs = completedStepRunMs(message);
+  if (!timing || runMs === undefined) return undefined;
+  const { stepStartMs, firstTokenMs } = timing;
   const out = message.usage?.output ?? 0;
-  const runMs =
-    typeof message.duration === 'number' && message.duration > 0
-      ? message.duration
-      : Math.max(0, completedMs - stepStartMs);
   const ttftMs =
     typeof message.ttft === 'number' && message.ttft > 0
       ? message.ttft
@@ -260,7 +266,7 @@ function perfFromTiming(message: ProjectedMessage, turnStartMs?: number): TurnPe
         : undefined;
   return {
     runMs,
-    ...(turnStartMs !== undefined ? { turnMs: Math.max(0, completedMs - turnStartMs) } : {}),
+    ...(turnActiveMs !== undefined ? { turnMs: turnActiveMs } : {}),
     ...(ttftMs !== undefined ? { ttftMs } : {}),
     ...(out > 0 && runMs > 0 ? { tps: out / (runMs / 1000) } : {}),
   };
@@ -363,14 +369,14 @@ function buildMessageTimeline(
     nextTurnRole[i] = seen;
     if (messages[i].role !== 'toolResult') seen = messages[i].role;
   }
-  // 整轮计时：首 step 起点与本轮已见 step 数；遇 user 消息重置
-  let turnStartMs: number | undefined;
+  // 整轮计时只累计模型请求与非交互工具的真实执行耗时；用户回答、审批、排队等空档不计。
+  let turnActiveMs = 0;
   let turnSteps = 0;
   messages.forEach((message, messageIndex) => {
     const isLastMessage = messageIndex === messages.length - 1;
     const absIndex = historyBaseIndex + messageIndex;
     if (message.role === 'user') {
-      turnStartMs = undefined;
+      turnActiveMs = 0;
       turnSteps = 0;
       const text = partText(message);
       const images = message.content.filter((part) => part.type === 'image');
@@ -402,15 +408,28 @@ function buildMessageTimeline(
       });
       return;
     }
-    if (message.role === 'toolResult') return;
+    if (message.role === 'toolResult') {
+      // ask_user 的执行期本质是等用户，不属于任务活跃用时；其余工具采用 worker 实测时长。
+      if (
+        turnSteps > 0 &&
+        message.toolName !== 'ask_user' &&
+        typeof message.toolDurationMs === 'number' &&
+        Number.isFinite(message.toolDurationMs) &&
+        message.toolDurationMs > 0
+      ) {
+        turnActiveMs += message.toolDurationMs;
+      }
+      return;
+    }
     if (message.role !== 'assistant') return;
 
-    // 本轮末 step（后面只剩 toolResult 或已到新一轮 user）且轮内有多个 step 时，正文读数附带整轮总耗时
+    // 本轮末 step（后面只剩 toolResult 或已到新一轮 user）且轮内有多个 step 时，正文读数附带活跃总耗时。
     turnSteps += 1;
-    if (turnStartMs === undefined && message.timing) turnStartMs = message.timing.stepStartMs;
+    const stepRunMs = completedStepRunMs(message);
+    if (stepRunMs !== undefined) turnActiveMs += stepRunMs;
     const isLastStepOfTurn =
       nextTurnRole[messageIndex] === undefined || nextTurnRole[messageIndex] === 'user';
-    const perfTurnStart = isLastStepOfTurn && turnSteps > 1 ? turnStartMs : undefined;
+    const perfTurnActive = isLastStepOfTurn && turnSteps > 1 ? turnActiveMs : undefined;
     // 「流式中」= 最后一个有内容的 part：pi 流式时 thinking/text 后面常已跟着
     // 空占位 part，按「最后一个 part」判会把正在生成的块误判为已完结
     const lastActiveIndex = findLastActivePartIndex(message.content);
@@ -434,7 +453,7 @@ function buildMessageTimeline(
               text: part.text,
               streaming,
               timestamp: message.timestamp,
-              perf: perfFromTiming(message, perfTurnStart),
+              perf: perfFromTiming(message, perfTurnActive),
               ...(isLastStepOfTurn && !streaming ? { turnEnd: true } : {}),
             });
             return;
@@ -458,7 +477,7 @@ function buildMessageTimeline(
               text: piece.text,
               streaming: pieceStreaming,
               timestamp: message.timestamp,
-              perf: perfFromTiming(message, perfTurnStart),
+              perf: perfFromTiming(message, perfTurnActive),
               ...(isLastStepOfTurn && !pieceStreaming && i === pieces.length - 1
                 ? { turnEnd: true }
                 : {}),
