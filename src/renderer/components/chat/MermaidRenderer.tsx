@@ -5,6 +5,7 @@ import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
 import { Z_INDEX } from '@/lib/z-index';
 import { useSettingsStore } from '@/stores/settings';
+import { decorateMermaidSvg, MERMAID_OFFSCREEN_HOST_STYLE } from './mermaidSvg';
 
 interface MermaidAPI {
   initialize: (config: Record<string, unknown>) => void;
@@ -57,12 +58,11 @@ async function renderMermaidSvg(code: string, theme: string): Promise<string> {
     const id = `ensoMermaid${++renderSeq}`;
     const host = document.createElement('div');
     host.setAttribute('aria-hidden', 'true');
-    host.style.cssText =
-      'position:absolute;left:-99999px;top:0;width:800px;height:600px;overflow:hidden;pointer-events:none;';
+    host.style.cssText = MERMAID_OFFSCREEN_HOST_STYLE;
     document.body.appendChild(host);
     try {
       const { svg } = await mermaid.render(id, code, host);
-      return svg;
+      return decorateMermaidSvg(svg);
     } finally {
       host.remove();
       document.getElementById(id)?.remove();
@@ -132,7 +132,7 @@ export function MermaidRenderer({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : t('Mermaid render failed'));
+          setError(err instanceof Error ? err.message : 'Mermaid render failed');
           setSvg(null);
         }
       }
@@ -142,7 +142,7 @@ export function MermaidRenderer({
     return () => {
       cancelled = true;
     };
-  }, [code, mermaidTheme, streaming, t]);
+  }, [code, mermaidTheme, streaming]);
 
   const handleZoomIn = useCallback(() => setZoom((prev) => prev + ZOOM_STEP), []);
   const handleZoomOut = useCallback(
@@ -337,7 +337,7 @@ export function MermaidRenderer({
       <div
         ref={containerRef}
         className={cn(
-          'overflow-hidden',
+          'max-h-[min(50vh,20rem)] overflow-hidden [overflow-anchor:none]',
           isFullscreen && (isDragging ? 'cursor-grabbing' : 'cursor-grab')
         )}
         onWheel={handleWheel}
