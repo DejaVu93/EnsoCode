@@ -9,7 +9,7 @@ import {
   shellQuote,
 } from '@shared/ssh';
 import type { SshHostKeyChallenge } from '@shared/types';
-import { classifySshHostKeyFailure, scanSshHostKey, toSshHostKeyChallenge } from './sshHostKey';
+import { challengeFromScan, classifySshHostKeyFailure, scanSshHostKey } from './sshHostKey';
 
 const CONNECT_TIMEOUT_SECONDS = 10;
 const PROBE_TIMEOUT_MS = 15_000;
@@ -66,14 +66,9 @@ async function attachHostKey(
     return { error };
   }
   const scanned = await scanSshHostKey(options.keyscanHost, options.port ?? 22);
-  if (!scanned) return { error };
   return {
     error,
-    hostKey: toSshHostKeyChallenge({
-      ...scanned,
-      host: options.keyscanHost,
-      port: options.port && options.port !== 22 ? options.port : 22,
-    }),
+    hostKey: challengeFromScan(options.keyscanHost, options.port ?? 22, scanned),
   };
 }
 

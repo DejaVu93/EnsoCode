@@ -7,6 +7,7 @@ import {
   appendKnownHostLine,
   classifySshHostKeyFailure,
   parseSshKeyscanOutput,
+  challengeFromScan,
   scanSshHostKey,
   sshKeyFingerprint,
   toSshHostKeyChallenge,
@@ -82,6 +83,23 @@ describe('scanSshHostKey', () => {
     });
     expect(captured).toEqual(['-T', '10', '-p', '2222', 'box']);
     expect(parsed?.keyType).toBe('ssh-ed25519');
+  });
+
+  it('stdout 为空时从 stderr 解析密钥行', async () => {
+    const parsed = await scanSshHostKey('box', 22, async () => ({
+      stdout: '',
+      stderr: '# comment\nbox ssh-ed25519 AAAA\n',
+    }));
+    expect(parsed?.key).toBe('AAAA');
+  });
+
+  it('keyscan 失败仍返回可弹窗的 host/port 挑战', () => {
+    expect(challengeFromScan('dev.example', 2222, null)).toEqual({
+      host: 'dev.example',
+      port: 2222,
+      fingerprint: '',
+      keyType: '',
+    });
   });
 });
 

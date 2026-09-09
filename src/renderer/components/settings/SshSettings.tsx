@@ -1,7 +1,7 @@
 import type { SshAuth, SshConnection, SshHostKeyChallenge } from '@shared/types';
 import { Loader2, Plus, Trash2 } from 'lucide-react';
 import * as React from 'react';
-import { SshHostKeyDialog } from '@/components/chat/SshHostKeyDialog';
+import { hostKeyFromSshFailure, SshHostKeyDialog } from '@/components/chat/SshHostKeyDialog';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -106,9 +106,13 @@ export function SshSettings() {
     setTestHint(null);
     const result = await window.electronAPI.sshConnections.test(id);
     setTestingId(null);
-    if (!result.ok && result.hostKey) {
-      setHostKey({ id, challenge: result.hostKey });
-      return;
+    if (!result.ok) {
+      const connection = connections.find((row) => row.id === id);
+      const challenge = hostKeyFromSshFailure(result, connection);
+      if (challenge) {
+        setHostKey({ id, challenge });
+        return;
+      }
     }
     setTestHint(result.ok ? t('SSH connection succeeded') : result.error);
   };

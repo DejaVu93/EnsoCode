@@ -1,7 +1,7 @@
 import type { ProjectGroup, RecentProject, SshHostKeyChallenge } from '@shared/types';
 import { Loader2 } from 'lucide-react';
 import * as React from 'react';
-import { SshHostKeyDialog } from '@/components/chat/SshHostKeyDialog';
+import { hostKeyFromSshFailure, SshHostKeyDialog } from '@/components/chat/SshHostKeyDialog';
 import {
   Autocomplete,
   AutocompleteEmpty,
@@ -39,6 +39,7 @@ function RemoteDirBrowser({
   connectionId,
   initialPath,
   hostKeyRetry = 0,
+  fallbackHost,
   onSelect,
   onClose,
   onHostKey,
@@ -46,6 +47,7 @@ function RemoteDirBrowser({
   connectionId: string;
   initialPath?: string;
   hostKeyRetry?: number;
+  fallbackHost?: { host: string; port?: number };
   onSelect: (path: string) => void;
   onClose: () => void;
   onHostKey: (challenge: SshHostKeyChallenge) => void;
@@ -69,11 +71,14 @@ function RemoteDirBrowser({
           if (result.ok) {
             setPath(result.path);
             setDirs(result.dirs);
-          } else if (result.hostKey) {
-            onHostKey(result.hostKey);
-          } else {
-            setError(result.error);
+            return;
           }
+          const challenge = hostKeyFromSshFailure(result, fallbackHost);
+          if (challenge) {
+            onHostKey(challenge);
+            return;
+          }
+          setError(result.error);
         })
         .catch(() => {
           if (seq === requestSeq.current) setError(t('Failed to list remote directory.'));
@@ -82,7 +87,7 @@ function RemoteDirBrowser({
           if (seq === requestSeq.current) setLoading(false);
         });
     },
-    [connectionId, onHostKey, t]
+    [connectionId, fallbackHost, onHostKey, t]
   );
 
   // 仅挂载/切换连接时以当前输入为起点；后续导航由 load 驱动，不跟随输入框变化
@@ -282,13 +287,15 @@ export function AddProjectDialog({
       return;
     }
     setFormError('');
+    const connection = connections.find((item) => item.id === sshConnectionId);
     void window.electronAPI.sshConnections.test(sshConnectionId).then((result) => {
-      if (!result.ok && result.hostKey) {
-        setAfterTrust('submit');
-        setHostKey(result.hostKey);
-        return;
-      }
       if (!result.ok) {
+        const challenge = hostKeyFromSshFailure(result, connection);
+        if (challenge) {
+          setAfterTrust('submit');
+          setHostKey(challenge);
+          return;
+        }
         setFormError(result.error);
         return;
       }
@@ -386,6 +393,7 @@ export function AddProjectDialog({
                     connectionId={sshConnectionId}
                     initialPath={sshPath.trim() || undefined}
                     hostKeyRetry={hostKeyRetry}
+                    fallbackHost={connections.find((item) => item.id === sshConnectionId)}
                     onSelect={(selected) => {
                       setSshPath(selected);
                       setBrowserOpen(false);

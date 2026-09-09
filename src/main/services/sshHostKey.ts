@@ -62,6 +62,18 @@ export function toSshHostKeyChallenge(
   };
 }
 
+export function challengeFromScan(
+  host: string,
+  port: number,
+  scanned: ParsedSshKeyscanKey | null
+): SshHostKeyChallenge {
+  const resolvedPort = port && port !== 22 ? port : 22;
+  if (!scanned) {
+    return { host, port: resolvedPort, fingerprint: '', keyType: '' };
+  }
+  return toSshHostKeyChallenge({ ...scanned, host, port: resolvedPort });
+}
+
 export function defaultKnownHostsPath(): string {
   return path.join(homedir(), '.ssh', 'known_hosts');
 }
@@ -88,12 +100,15 @@ export function appendKnownHostLine(file: string, line: string): boolean {
   return true;
 }
 
-export type KeyscanRunner = (file: string, args: string[]) => Promise<{ stdout: string }>;
+export type KeyscanRunner = (
+  file: string,
+  args: string[]
+) => Promise<{ stdout: string; stderr?: string }>;
 
-function runKeyscan(file: string, args: string[]): Promise<{ stdout: string }> {
+function runKeyscan(file: string, args: string[]): Promise<{ stdout: string; stderr?: string }> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: 12_000 }, (error, stdout) => {
-      const out = String(stdout ?? '');
+    execFile(file, args, { timeout: 12_000 }, (error, stdout, stderr) => {
+      const out = `${stdout ?? ''}\n${stderr ?? ''}`;
       if (out.trim()) return resolve({ stdout: out });
       reject(error ?? new Error('ssh-keyscan failed'));
     });
@@ -109,21 +124,46 @@ export async function scanSshHostKey(
   if (port && port !== 22) args.push('-p', String(port));
   args.push(host);
   try {
-    return parseSshKeyscanOutput((await run('ssh-keyscan', args)).stdout);
+    const result = await run('ssh-keyscan', args);
+    return parseSshKeyscanOutput(`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
   } catch (error) {
     const stdout = String((error as { stdout?: unknown }).stdout ?? '');
-    return parseSshKeyscanOutput(stdout);
+    const stderr = String((error as { stderr?: unknown }).stderr ?? '');
+    return parseSshKeyscanOutput(`${stdout}\n${stderr}`);
   }
+}
+
+function runAcceptNew(target: string, port: number): Promise<boolean> {
+  const args = [
+    '-o',
+    'StrictHostKeyChecking=accept-new',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=10',
+  ];
+  if (port && port !== 22) args.push('-p', String(port));
+  args.push('--', target, 'true');
+  return new Promise((resolve) => {
+    execFile('ssh', args, { timeout: 15_000 }, (error, _stdout, stderr) => {
+      if (!error) return resolve(true);
+      resolve(/permission denied|authentication/i.test(String(stderr ?? '')));
+    });
+  });
 }
 
 export async function trustSshHostKey(
   host: string,
   port = 22,
   file = defaultKnownHostsPath(),
-  run?: KeyscanRunner
+  run?: KeyscanRunner,
+  sshTarget?: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const scanned = await scanSshHostKey(host, port, run ?? runKeyscan);
-  if (!scanned) return { ok: false, error: '无法获取主机密钥。' };
-  appendKnownHostLine(file, scanned.line);
-  return { ok: true };
+  if (scanned) {
+    appendKnownHostLine(file, scanned.line);
+    return { ok: true };
+  }
+  if (await runAcceptNew(sshTarget ?? host, port)) return { ok: true };
+  return { ok: false, error: '无法获取主机密钥。' };
 }

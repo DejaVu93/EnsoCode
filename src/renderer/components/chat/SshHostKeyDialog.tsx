@@ -1,4 +1,19 @@
 import type { SshHostKeyChallenge } from '@shared/types';
+
+export function hostKeyFromSshFailure(
+  result: { error: string; hostKey?: SshHostKeyChallenge },
+  fallback?: { host: string; port?: number }
+): SshHostKeyChallenge | null {
+  if (result.hostKey) return result.hostKey;
+  if (!/主机密钥未信任/.test(result.error) || !fallback?.host) return null;
+  return {
+    host: fallback.host,
+    port: fallback.port && fallback.port !== 22 ? fallback.port : 22,
+    fingerprint: '',
+    keyType: '',
+  };
+}
+
 import {
   AlertDialog,
   AlertDialogClose,
@@ -38,9 +53,12 @@ export function SshHostKeyDialog({
           <div className="space-y-1 px-6 pb-2 font-mono text-xs">
             <p>
               {challenge.host}
-              {challenge.port !== 22 ? `:${challenge.port}` : ''} · {challenge.keyType}
+              {challenge.port !== 22 ? `:${challenge.port}` : ''}
+              {challenge.keyType ? ` · ${challenge.keyType}` : ''}
             </p>
-            <p className="break-all text-muted-foreground">{challenge.fingerprint}</p>
+            {challenge.fingerprint ? (
+              <p className="break-all text-muted-foreground">{challenge.fingerprint}</p>
+            ) : null}
           </div>
         )}
         <AlertDialogFooter variant="bare">
