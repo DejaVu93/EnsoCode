@@ -33,6 +33,7 @@ import {
   fromPreviewKey,
   type RelMutation,
   remapRelForRename,
+  renameDraftDecision,
   shouldCloseForDelete,
   toggleViewMode,
   toPreviewKey,
@@ -93,7 +94,11 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
   const [treeGen, setTreeGen] = useState(0);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(() => new Set());
   const [draft, setDraft] = useState<null | { parent: string; kind: 'file' | 'dir' }>(null);
-  const [renaming, setRenaming] = useState<null | { rel: string; name: string }>(null);
+  const [renaming, setRenaming] = useState<null | {
+    rel: string;
+    name: string;
+    at: 'tree' | 'tab';
+  }>(null);
   const [confirmDelete, setConfirmDelete] = useState<null | { rel: string; name: string }>(null);
   const project = useSettingsStore((s) => s.projects.find((p) => p.id === projectId));
   const local = project?.kind !== 'ssh';
@@ -556,6 +561,51 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
     [activeRel, t]
   );
 
+  const commitRename = useCallback(
+    async (rel: string, name: string) => {
+      const result = await window.electronAPI.workspaceFiles.rename({
+        ...req,
+        rel,
+        name,
+      });
+      if (!result.ok) {
+        failToast(result.error);
+        return;
+      }
+      setRenaming(null);
+      const toRel = result.rel;
+      if (toRel) {
+        recordMutation(rel);
+        for (const doc of openDocsRef.current) {
+          if (doc.preview || doc.tooLarge) continue;
+          const nextRel = remapRelForRename(doc.rel, rel, toRel);
+          if (nextRel == null) continue;
+          void window.electronAPI.workspaceFiles.watchStop({ ...req, rel: doc.rel });
+          void window.electronAPI.workspaceFiles.watchStart({ ...req, rel: nextRel });
+        }
+        setOpenDocs((docs) =>
+          docs.map((doc) => {
+            const nextRel = remapRelForRename(doc.rel, rel, toRel);
+            return nextRel == null ? doc : { ...doc, rel: nextRel };
+          })
+        );
+        setActiveRel((cur) => (cur == null ? cur : (remapRelForRename(cur, rel, toRel) ?? cur)));
+        setExpandedDirs((set) => {
+          let changed = false;
+          const next = new Set<string>();
+          for (const dirRel of set) {
+            const mapped = remapRelForRename(dirRel, rel, toRel) ?? dirRel;
+            if (mapped !== dirRel) changed = true;
+            next.add(mapped);
+          }
+          return changed ? next : set;
+        });
+      }
+      bumpTree();
+    },
+    [bumpTree, failToast, recordMutation, req]
+  );
+
   return (
     <EditProvider createEditor={createEditor}>
       <div className="flex h-full min-h-0 bg-background">
@@ -611,7 +661,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
                   onReveal={(rel) => void window.electronAPI.workspaceFiles.reveal({ ...req, rel })}
                   onNewFile={handleNewFile}
                   onNewFolder={handleNewFolder}
-                  onRenameStart={(rel, name) => setRenaming({ rel, name })}
+                  onRenameStart={(rel, name) => setRenaming({ rel, name, at: 'tree' })}
                   onDelete={(rel, name) => setConfirmDelete({ rel, name })}
                   onDraftCancel={() => setDraft(null)}
                   onRenameCancel={() => setRenaming(null)}
@@ -629,49 +679,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
                     bumpTree();
                     if (kind === 'file' && result.rel) void openFile(result.rel);
                   }}
-                  onRenameCommit={async (rel, name) => {
-                    const result = await window.electronAPI.workspaceFiles.rename({
-                      ...req,
-                      rel,
-                      name,
-                    });
-                    if (!result.ok) {
-                      failToast(result.error);
-                      return;
-                    }
-                    setRenaming(null);
-                    const toRel = result.rel;
-                    if (toRel) {
-                      recordMutation(rel);
-                      for (const doc of openDocsRef.current) {
-                        if (doc.preview || doc.tooLarge) continue;
-                        const nextRel = remapRelForRename(doc.rel, rel, toRel);
-                        if (nextRel == null) continue;
-                        void window.electronAPI.workspaceFiles.watchStop({ ...req, rel: doc.rel });
-                        void window.electronAPI.workspaceFiles.watchStart({ ...req, rel: nextRel });
-                      }
-                      setOpenDocs((docs) =>
-                        docs.map((doc) => {
-                          const nextRel = remapRelForRename(doc.rel, rel, toRel);
-                          return nextRel == null ? doc : { ...doc, rel: nextRel };
-                        })
-                      );
-                      setActiveRel((cur) =>
-                        cur == null ? cur : (remapRelForRename(cur, rel, toRel) ?? cur)
-                      );
-                      setExpandedDirs((set) => {
-                        let changed = false;
-                        const next = new Set<string>();
-                        for (const dirRel of set) {
-                          const mapped = remapRelForRename(dirRel, rel, toRel) ?? dirRel;
-                          if (mapped !== dirRel) changed = true;
-                          next.add(mapped);
-                        }
-                        return changed ? next : set;
-                      });
-                    }
-                    bumpTree();
-                  }}
+                  onRenameCommit={(rel, name) => void commitRename(rel, name)}
                 />
               </div>
             </FileTreeMenu>
@@ -684,6 +692,8 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
               className="flex shrink-0 gap-1 overflow-x-auto border-b px-2 py-1"
             >
               {openDocs.map((doc) => {
+                const renamingHere =
+                  renaming?.rel === doc.rel && renaming.at === 'tab' && !doc.preview;
                 const tab = (
                   <button
                     type="button"
@@ -694,13 +704,32 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
                         ? 'bg-muted font-medium'
                         : 'text-muted-foreground hover:bg-muted/50'
                     )}
-                    onClick={() => setActiveRel(doc.rel)}
+                    onClick={() => {
+                      if (!renamingHere) setActiveRel(doc.rel);
+                    }}
+                    onDoubleClick={(event) => {
+                      if (doc.preview) return;
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setRenaming({ rel: doc.rel, name: fileName(doc.rel), at: 'tab' });
+                    }}
                   >
-                    <span className="max-w-36 truncate">
-                      {fileName(doc.preview ? fromPreviewKey(doc.rel) : doc.rel)}
-                      {doc.preview ? ` ${t('Preview')}` : ''}
-                      {doc.dirty ? '*' : ''}
-                    </span>
+                    {renamingHere ? (
+                      <NameDraft
+                        depth={0}
+                        kind="file"
+                        variant="tab"
+                        initial={renaming.name}
+                        onCancel={() => setRenaming(null)}
+                        onCommit={(name) => void commitRename(doc.rel, name)}
+                      />
+                    ) : (
+                      <span className="max-w-36 truncate">
+                        {fileName(doc.preview ? fromPreviewKey(doc.rel) : doc.rel)}
+                        {doc.preview ? ` ${t('Preview')}` : ''}
+                        {doc.dirty ? '*' : ''}
+                      </span>
+                    )}
                     <button
                       type="button"
                       className="text-muted-foreground hover:text-destructive"
@@ -717,6 +746,15 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
                   <ContextMenu key={doc.rel}>
                     <ContextMenuTrigger render={tab as ReactElement<Record<string, unknown>>} />
                     <ContextMenuPopup className="min-w-40">
+                      {!doc.preview && (
+                        <ContextMenuItem
+                          onClick={() =>
+                            setRenaming({ rel: doc.rel, name: fileName(doc.rel), at: 'tab' })
+                          }
+                        >
+                          {t('Rename')}
+                        </ContextMenuItem>
+                      )}
                       <ContextMenuItem onClick={() => requestCloseFile(doc.rel)}>
                         {t('Close')}
                       </ContextMenuItem>
@@ -941,7 +979,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
 
 type TreeHandlers = {
   draft: { parent: string; kind: 'file' | 'dir' } | null;
-  renaming: { rel: string; name: string } | null;
+  renaming: { rel: string; name: string; at: 'tree' | 'tab' } | null;
   local: boolean;
   expandedDirs: Set<string>;
   onToggleDir: (rel: string) => void;
@@ -968,35 +1006,73 @@ function NameDraft({
   initial,
   onCancel,
   onCommit,
+  variant = 'tree',
 }: {
   depth: number;
   kind: 'file' | 'dir';
   initial: string;
   onCancel: () => void;
   onCommit: (name: string) => void;
+  variant?: 'tree' | 'tab';
 }) {
   const [value, setValue] = useState(initial);
   const inputRef = useRef<HTMLInputElement>(null);
+  const ignoreBlurRef = useRef(true);
+  const finishedRef = useRef(false);
   useEffect(() => {
-    inputRef.current?.focus();
+    const focusId = window.setTimeout(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    }, 0);
+    const armId = window.setTimeout(() => {
+      ignoreBlurRef.current = false;
+    }, 50);
+    return () => {
+      window.clearTimeout(focusId);
+      window.clearTimeout(armId);
+    };
   }, []);
+  const finish = (action: 'commit' | 'cancel') => {
+    if (finishedRef.current) return;
+    if (action === 'commit' && renameDraftDecision(value, initial) === 'commit') {
+      finishedRef.current = true;
+      onCommit(value.trim());
+      return;
+    }
+    finishedRef.current = true;
+    onCancel();
+  };
   return (
     <input
       ref={inputRef}
-      className="mx-1 my-0.5 w-[calc(100%-0.5rem)] rounded-sm border bg-background px-1 py-0.5 text-sm outline-none"
-      style={{ marginLeft: 8 + depth * 12 }}
+      className={
+        variant === 'tab'
+          ? 'max-w-36 rounded-sm border bg-background px-1 py-0 text-xs outline-none'
+          : 'mx-1 my-0.5 w-[calc(100%-0.5rem)] rounded-sm border bg-background px-1 py-0.5 text-sm outline-none'
+      }
+      style={variant === 'tree' ? { marginLeft: 8 + depth * 12 } : undefined}
       value={value}
       onChange={(event) => setValue(event.target.value)}
-      onBlur={onCancel}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onBlur={() => {
+        if (ignoreBlurRef.current) {
+          inputRef.current?.focus();
+          return;
+        }
+        finish('commit');
+      }}
       onKeyDown={(event) => {
+        if (event.nativeEvent.isComposing) return;
         if (event.key === 'Escape') {
           event.preventDefault();
-          onCancel();
+          finish('cancel');
         }
         if (event.key === 'Enter') {
           event.preventDefault();
-          const name = value.trim();
-          if (name) onCommit(name);
+          finish('commit');
         }
       }}
       aria-label={kind === 'dir' ? 'New Folder' : 'New File'}
@@ -1046,7 +1122,7 @@ function FileTree({
         const child = joinRel(rel, entry.name);
         const expanded = handlers.expandedDirs.has(child);
         if (entry.kind === 'dir') {
-          const renameHere = handlers.renaming?.rel === child;
+          const renameHere = handlers.renaming?.rel === child && handlers.renaming.at === 'tree';
           const row = renameHere ? (
             <NameDraft
               depth={depth}
@@ -1106,7 +1182,7 @@ function FileTree({
             rel={child}
             name={entry.name}
             depth={depth}
-            renaming={handlers.renaming?.rel === child}
+            renaming={handlers.renaming?.rel === child && handlers.renaming.at === 'tree'}
             handlers={handlers}
           />
         );
@@ -1141,18 +1217,15 @@ function FileRow({
     id: `workspace-file:${rel}`,
     data: { type: 'workspace-file', relativePath: rel, name } satisfies DragPayload,
   });
-  if (renaming) {
-    return (
-      <NameDraft
-        depth={depth}
-        kind="file"
-        initial={name}
-        onCancel={handlers.onRenameCancel}
-        onCommit={(next) => handlers.onRenameCommit(rel, next)}
-      />
-    );
-  }
-  const row = (
+  const row = renaming ? (
+    <NameDraft
+      depth={depth}
+      kind="file"
+      initial={name}
+      onCancel={handlers.onRenameCancel}
+      onCommit={(next) => handlers.onRenameCommit(rel, next)}
+    />
+  ) : (
     <button
       type="button"
       ref={setNodeRef}

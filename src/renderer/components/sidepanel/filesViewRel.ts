@@ -25,6 +25,13 @@ export function shouldCloseForDelete(tabRel: string, deletedRel: string): boolea
   return isRelOrDescendant(fromPreviewKey(tabRel), deletedRel);
 }
 
+/** 行内重命名：空/未改取消，去空白后的新名才提交。 */
+export function renameDraftDecision(next: string, initial: string): 'commit' | 'cancel' {
+  const name = next.trim();
+  if (!name || name === initial) return 'cancel';
+  return 'commit';
+}
+
 /**
  * `fromRel` 重命名/移动为 `toRel` 后，计算某个已打开 tab（含预览 key）的新 rel。
  * 不受影响返回 null。

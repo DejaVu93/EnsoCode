@@ -3,6 +3,7 @@ import {
   fromPreviewKey,
   isPreviewKey,
   remapRelForRename,
+  renameDraftDecision,
   shouldCloseForDelete,
   toggleViewMode,
   toPreviewKey,
@@ -109,5 +110,19 @@ describe('remapRelForRename', () => {
     const key = toPreviewKey('src/dir/a.md');
     const remapped = remapRelForRename(key, 'src/dir', 'src/renamed');
     expect(remapped).toBe(toPreviewKey('src/renamed/a.md'));
+  });
+});
+
+describe('renameDraftDecision', () => {
+  it('空名 / 只有空白 / 与原名相同 都取消', () => {
+    expect(renameDraftDecision('', 'a.ts')).toBe('cancel');
+    expect(renameDraftDecision('   ', 'a.ts')).toBe('cancel');
+    expect(renameDraftDecision('a.ts', 'a.ts')).toBe('cancel');
+    expect(renameDraftDecision('  a.ts  ', 'a.ts')).toBe('cancel');
+  });
+
+  it('去空后的新名才提交', () => {
+    expect(renameDraftDecision('b.ts', 'a.ts')).toBe('commit');
+    expect(renameDraftDecision('  b.ts  ', 'a.ts')).toBe('commit');
   });
 });
