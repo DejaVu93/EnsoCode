@@ -16,8 +16,22 @@ export interface SessionStats {
   cacheHitPercent: number | null;
   /** 首 token 平均延迟（ms）；无采样步时为 null */
   ttftAvgMs: number | null;
-  /** 解码吞吐（tok/s）；无采样或无输出时为 null */
+  /** 解码吞吐（tok/s）；按整段请求墙钟，与 OMP 同口径；无采样或无输出时为 null */
   tokensPerSecond: number | null;
+}
+
+function stepTtftMs(message: ProjectedMessage): number | undefined {
+  if (typeof message.ttft === 'number' && message.ttft > 0) return message.ttft;
+  const timing = message.timing;
+  if (!timing || timing.firstTokenMs === undefined) return undefined;
+  return Math.max(0, timing.firstTokenMs - timing.stepStartMs);
+}
+
+function stepGenMs(message: ProjectedMessage): number | undefined {
+  if (typeof message.duration === 'number' && message.duration > 0) return message.duration;
+  const timing = message.timing;
+  if (!timing || timing.completedMs === undefined) return undefined;
+  return Math.max(0, timing.completedMs - timing.stepStartMs);
 }
 
 /** 从消息投影累计会话统计。纯函数。 */
@@ -51,23 +65,23 @@ export function computeStats(messages: ProjectedMessage[]): SessionStats {
       cacheWrite += message.usage.cacheWrite;
     }
     const timing = message.timing;
+    const genMs = stepGenMs(message);
+    if (genMs !== undefined) llmMs += genMs;
+    const ttft = stepTtftMs(message);
+    if (ttft !== undefined) {
+      ttftMs += ttft;
+      ttftSteps += 1;
+    }
+    const out = message.usage?.output ?? 0;
+    if (genMs !== undefined && genMs > 0 && out > 0) {
+      decodeMs += genMs;
+      decodeTokens += out;
+    }
     if (timing) {
-      const { stepStartMs, firstTokenMs, completedMs } = timing;
-      if (completedMs !== undefined) llmMs += Math.max(0, completedMs - stepStartMs);
-      if (firstTokenMs !== undefined) {
-        ttftMs += Math.max(0, firstTokenMs - stepStartMs);
-        ttftSteps += 1;
-      }
-      const out = message.usage?.output ?? 0;
-      if (firstTokenMs !== undefined && completedMs !== undefined && out > 0) {
-        decodeMs += Math.max(0, completedMs - firstTokenMs);
-        decodeTokens += out;
-      }
-      // 与上一 step 的间隙 = 工具执行墙钟
       if (prevStepEndMs !== null) {
-        toolMs += Math.max(0, stepStartMs - prevStepEndMs);
+        toolMs += Math.max(0, timing.stepStartMs - prevStepEndMs);
       }
-      prevStepEndMs = completedMs ?? null;
+      prevStepEndMs = timing.completedMs ?? null;
     }
   }
 

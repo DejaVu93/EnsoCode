@@ -248,12 +248,21 @@ function perfFromTiming(message: ProjectedMessage, turnStartMs?: number): TurnPe
   if (!timing?.completedMs) return undefined;
   const { stepStartMs, firstTokenMs, completedMs } = timing;
   const out = message.usage?.output ?? 0;
-  const decodeMs = firstTokenMs !== undefined ? completedMs - firstTokenMs : 0;
+  const runMs =
+    typeof message.duration === 'number' && message.duration > 0
+      ? message.duration
+      : Math.max(0, completedMs - stepStartMs);
+  const ttftMs =
+    typeof message.ttft === 'number' && message.ttft > 0
+      ? message.ttft
+      : firstTokenMs !== undefined
+        ? Math.max(0, firstTokenMs - stepStartMs)
+        : undefined;
   return {
-    runMs: Math.max(0, completedMs - stepStartMs),
+    runMs,
     ...(turnStartMs !== undefined ? { turnMs: Math.max(0, completedMs - turnStartMs) } : {}),
-    ...(firstTokenMs !== undefined ? { ttftMs: Math.max(0, firstTokenMs - stepStartMs) } : {}),
-    ...(out > 0 && decodeMs > 0 ? { tps: out / (decodeMs / 1000) } : {}),
+    ...(ttftMs !== undefined ? { ttftMs } : {}),
+    ...(out > 0 && runMs > 0 ? { tps: out / (runMs / 1000) } : {}),
   };
 }
 

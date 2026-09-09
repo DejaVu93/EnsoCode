@@ -730,6 +730,10 @@ export interface ProjectedMessage {
   errorMessage?: string;
   timestamp?: number;
   usage?: TokenUsage;
+  /** pi-ai 在流上打的首 token 延迟（ms）；优先于本地 timing */
+  ttft?: number;
+  /** pi-ai 整次请求墙钟（ms，含 TTFT/思考） */
+  duration?: number;
   /** 该 step 的计时打点（仅 assistant 消息带） */
   timing?: MessageTiming;
   /** todo 工具 toolResult 的清单快照 */

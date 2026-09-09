@@ -53,8 +53,24 @@ describe('computeStats', () => {
     ]);
     expect(withTiming.llmMs).toBe(2000);
     expect(withTiming.ttftAvgMs).toBe(200);
-    // 10 tok / ((3000-1200)/1000)s = 5.56
-    expect(withTiming.tokensPerSecond).toBe(5.6);
+    // 吞吐按整段请求：10 tok / 2s = 5，不用解码窗 1.8s（会把思考算快）
+    expect(withTiming.tokensPerSecond).toBe(5);
+  });
+
+  it('优先用 pi 的 ttft/duration，吞吐分母是整段 duration', () => {
+    const stats = computeStats([
+      {
+        role: 'assistant',
+        content: [],
+        usage: { input: 1, output: 20, cacheRead: 0, cacheWrite: 0 },
+        ttft: 400,
+        duration: 2000,
+        timing: { stepStartMs: 0, firstTokenMs: 50, completedMs: 9999 },
+      },
+    ]);
+    expect(stats.ttftAvgMs).toBe(400);
+    expect(stats.llmMs).toBe(2000);
+    expect(stats.tokensPerSecond).toBe(10);
   });
 
   it('工具墙钟 = 同一轮内相邻 step 的间隙，跨轮尾不计', () => {

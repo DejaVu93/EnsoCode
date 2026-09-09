@@ -53,6 +53,8 @@ export function projectMessage(value: unknown): ProjectedMessage | null {
   }
   const usage = projectUsage(value.usage);
   if (usage) projected.usage = usage;
+  if (typeof value.ttft === 'number') projected.ttft = value.ttft;
+  if (typeof value.duration === 'number') projected.duration = value.duration;
   if (value.role === 'toolResult' && value.toolName === 'todo') {
     const todos = projectTodos(value.details);
     if (todos) projected.todos = todos;

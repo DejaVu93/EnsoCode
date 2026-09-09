@@ -24,6 +24,17 @@ describe('projectMessage', () => {
     expect(projected?.usage).not.toHaveProperty('cost');
   });
 
+  it('透出 pi 的 ttft/duration，供状态栏吞吐与 OMP 同口径', () => {
+    expect(
+      projectMessage({
+        role: 'assistant',
+        content: [],
+        ttft: 220,
+        duration: 1800,
+      })
+    ).toMatchObject({ ttft: 220, duration: 1800 });
+  });
+
   it('user 消息的字符串 content 归一为 text part', () => {
     expect(projectMessage({ role: 'user', content: '你好', timestamp: 1 })).toEqual({
       role: 'user',
