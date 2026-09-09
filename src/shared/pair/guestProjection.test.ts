@@ -318,14 +318,15 @@ describe('compaction 投影', () => {
     expect(done.compactionNoticeAt).toBe(3);
   });
 
-  it('尾窗快照重连不抹掉已有的压缩状态', () => {
+  it('尾窗快照未带压缩进度则清除，避免漏掉 end 后永远贴底「正在压缩」', () => {
     const sessions = new Map([
       ['s1', viewWith([[0, 'a']], { compaction: 'running', compactionNoticeAt: 5 })],
     ]);
     const out = applyGuestSnapshot(sessions, {
       sessions: [{ sessionId: 's1', baseIndex: 0, messages: [msg('a'), msg('b')] }],
     });
-    expect(out[0].view.compaction).toBe('running');
+    expect(out[0].view.compaction).toBeUndefined();
+    // 压完提示锚点仍沿用：host 只在有值时下发，旧快照不能把提示抹掉
     expect(out[0].view.compactionNoticeAt).toBe(5);
   });
 

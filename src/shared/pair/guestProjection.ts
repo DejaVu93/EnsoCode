@@ -171,8 +171,9 @@ export function applyGuestSnapshot(
         asks: snap.pendingAsks ?? [],
         tasks: snap.backgroundTasks ?? [],
         subagents: snap.subagents ?? [],
-        // 快照带了就以快照为准（手机刷新后无旧投影）；旧 host 不带则沿用，重连不抹掉进度/提示
-        compaction: snap.compaction ?? sessions.get(id)?.compaction,
+        // 压缩进度缺省 = 未在压缩。不能 ?? 沿用：compaction 事件不重放，漏掉 end 后再来无该字段的快照会永远贴底「正在压缩」。
+        compaction: snap.compaction,
+        // 压完提示锚点：host 有值才带；旧 host / 未压过则沿用，重连不丢提示
         compactionNoticeAt: snap.compactionNoticeAt ?? sessions.get(id)?.compactionNoticeAt,
       },
       lastIndex: base + incoming.length - 1,
