@@ -75,7 +75,7 @@ export function configureMemoryEmbedding(next: Partial<MemoryEmbeddingConfig>): 
   scheduleReembed();
 }
 
-/** settings.json 的 state 按 unknown 收窄；非法 id 回默认模型，凭证每次现取（API key 不离开 Main） */
+/** settings.json 的 state 按 unknown 收窄；非法 id 回默认模型，按实际凭证去重（API key 不离开 Main） */
 export function syncMemoryEmbeddingFromSettings(state: Record<string, unknown>): void {
   const rawModel = state.memoryEmbeddingModel;
   const modelId =
@@ -96,17 +96,19 @@ export function syncMemoryEmbeddingFromSettings(state: Record<string, unknown>):
     if (!p || typeof p.baseUrl !== 'string' || !hasProviderCredentials(p) || !p.apiKey) return null;
     return { baseUrl: p.baseUrl, apiKey: p.apiKey };
   };
-  if (
-    modelId === config.modelId &&
-    autoDownload === config.autoDownload &&
-    providerId === lastRemoteProviderId
-  ) {
+  const credentials = remoteCredentials();
+  const previous = config.remoteCredentials?.();
+  const sameCredentials =
+    resolveEmbeddingModelSpec(modelId)?.runtime !== 'openai-compatible' ||
+    (credentials?.baseUrl === previous?.baseUrl && credentials?.apiKey === previous?.apiKey);
+  // 保存值快照而非 providers 引用：原地编辑也能识别变更，且无关设置不释放本地大模型。
+  const next = { modelId, autoDownload, remoteCredentials: () => credentials };
+  if (modelId === config.modelId && autoDownload === config.autoDownload && sameCredentials) {
+    config = { ...config, ...next };
     return;
   }
-  lastRemoteProviderId = providerId;
-  configureMemoryEmbedding({ modelId, autoDownload, remoteCredentials });
+  configureMemoryEmbedding(next);
 }
-let lastRemoteProviderId: string | null = null;
 
 function memoryRoot(): string {
   return path.join(app.getPath('userData'), 'memory');

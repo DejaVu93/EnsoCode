@@ -9,14 +9,40 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { IPC_CHANNELS } from '@shared/types';
 import Database from 'better-sqlite3';
-import { afterAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { acquireModel, type LlamaModelLike } from './llama/runtime';
+import * as embeddingDownloads from './memory/embedding/downloader';
 import { writeTinyModel2Vec } from './memory/embedding/model2vec.fixture';
 import { embeddingModelDirName, resolveEmbeddingModelSpec } from './memory/embedding/registry';
 import type { EmbeddingModelSpec } from './memory/embedding/types';
 
 const userData = mkdtempSync(path.join(tmpdir(), 'enso-memory-host-'));
-vi.mock('electron', () => ({ app: { getPath: () => userData } }));
+const ipcHandlers = vi.hoisted(
+  () => new Map<string, (event: { sender: { id: number } }, ...args: unknown[]) => unknown>()
+);
+vi.mock('electron', () => ({
+  app: { getPath: () => userData },
+  BrowserWindow: { getAllWindows: () => [] },
+  ipcMain: {
+    handle: (
+      channel: string,
+      handler: (event: { sender: { id: number } }, ...args: unknown[]) => unknown
+    ) => ipcHandlers.set(channel, handler),
+  },
+}));
+vi.mock('../windows/MainWindow', () => ({ isMainWebContents: (id: number) => id === 1 }));
+vi.mock('../windows/SettingsWindow', () => ({ isSettingsWebContents: () => false }));
+vi.mock('../ipc/settings', () => ({ readSettings: () => null }));
+vi.mock('./chatModels', () => ({
+  setChatModelProgressSink: vi.fn(),
+  listChatModels: vi.fn(() => []),
+  startChatModelDownload: vi.fn(async () => false),
+  cancelChatModelDownload: vi.fn(() => false),
+  deleteChatModel: vi.fn(() => false),
+}));
+vi.mock('./llama/runtime', () => ({ acquireModel: vi.fn() }));
 
 import {
   awaitMemoryDistill,
@@ -30,17 +56,30 @@ import {
   configureMemoryWorkingFile,
   distillSessionNow,
   getMemoryDistillJobs,
+  getMemoryEmbedder,
+  getMemoryEmbeddingError,
   getMemoryKgJobs,
   getMemoryReembedProgress,
   getWorkingMemoryPath,
   invokeMemory,
+  memoryDatabase,
+  refreshMemoryEmbedding,
   rootSessionId,
   scheduleMemoryDistill,
   setMemoryChangeListener,
   syncMemoryDistillFromSettings,
+  syncMemoryEmbeddingFromSettings,
   syncMemoryKgFromSettings,
   syncMemoryWorkingFileFromSettings,
 } from './memoryHost';
+
+import {
+  cancelEmbeddingModelDownload,
+  deleteEmbeddingModel,
+  listEmbeddingModels,
+  setEmbeddingProgressSink,
+  startEmbeddingModelDownload,
+} from './memoryModels';
 
 afterAll(() => {
   closeMemoryDb();
@@ -712,6 +751,143 @@ function countEntities(): number {
     ro.close();
   }
 }
+
+describe('memoryHost embedding 配置与生命周期', () => {
+  const remoteSettings = (baseUrl = 'https://old.invalid', apiKey = 'old-key') => ({
+    memoryEmbeddingModel: 'remote:openai-compatible',
+    memoryEmbeddingRemoteProviderId: 'p',
+    providers: [{ id: 'p', baseUrl, apiKey }],
+  });
+  const fetchSpy = vi.fn<typeof fetch>(
+    async () => new Response(JSON.stringify({ data: [{ index: 0, embedding: [1, 0] }] }))
+  );
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  };
+  const loadGguf = (modelId = 'local:bge-m3-gguf') => {
+    const spec = resolveEmbeddingModelSpec(modelId)!;
+    const dir = path.join(userData, 'memory', 'models', embeddingModelDirName(spec));
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, spec.gguf!.file), 'fixture: runtime is mocked');
+    writeFileSync(path.join(dir, '.ready'), '{}');
+    const loading = deferred<LlamaModelLike>();
+    const context = {
+      getEmbeddingFor: vi.fn(async () => ({ vector: [1, 0] })),
+      dispose: vi.fn(async () => {}),
+    };
+    const model = {
+      trainContextSize: 512,
+      tokenizer: (text: string) => Array.from(text, (_, index) => index + 1),
+      tokens: { shouldPrependBosToken: false, shouldAppendEosToken: false },
+      vocabularyType: 'bpe',
+      createEmbeddingContext: vi.fn(async () => context),
+      createContext: vi.fn(),
+      dispose: vi.fn(async () => {}),
+    };
+    vi.mocked(acquireModel).mockReturnValueOnce(loading.promise);
+    return { ...loading, model, context, modelId };
+  };
+
+  beforeEach(async () => {
+    closeMemoryDb();
+    await awaitMemoryReembed();
+    configureMemoryEmbedding({
+      modelId: 'none',
+      autoDownload: false,
+      remoteCredentials: undefined,
+    });
+    configureMemoryDistill({ enabled: false });
+    configureMemoryKg({ enabled: false });
+    await awaitMemoryReembed();
+    fetchSpy.mockClear();
+    vi.mocked(acquireModel).mockReset();
+    vi.stubGlobal('fetch', fetchSpy);
+  });
+
+  afterEach(async () => {
+    closeMemoryDb();
+    await awaitMemoryReembed();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each([
+    ['https://new.invalid', 'old-key'],
+    ['https://old.invalid', 'new-key'],
+    ['https://new.invalid', 'new-key'],
+  ])('同 providerId 改端点或凭证：后续请求使用 %s / %s', async (baseUrl, apiKey) => {
+    syncMemoryEmbeddingFromSettings(remoteSettings());
+    await (await getMemoryEmbedder())!.embed('before edit', 'query');
+    syncMemoryEmbeddingFromSettings(remoteSettings(baseUrl, apiKey));
+    await (await getMemoryEmbedder())!.embed('private after edit', 'query');
+    expect(fetchSpy.mock.calls.at(-1)).toEqual([
+      `${baseUrl}/v1/embeddings`,
+      expect.objectContaining({
+        headers: expect.objectContaining({ authorization: `Bearer ${apiKey}` }),
+        body: JSON.stringify({ model: 'openai-compatible', input: ['private after edit'] }),
+      }),
+    ]);
+  });
+
+  it.each([
+    { providers: [] },
+    { providers: [{ id: 'p', baseUrl: 'https://old.invalid', apiKey: '' }] },
+  ])('删除服务或清空凭证后不再向旧服务发送私密文本：%j', async ({ providers }) => {
+    syncMemoryEmbeddingFromSettings(remoteSettings());
+    await (await getMemoryEmbedder())!.embed('before removal', 'query');
+    syncMemoryEmbeddingFromSettings({ ...remoteSettings(), providers });
+    const after = await getMemoryEmbedder();
+    if (after) await after.embed('private after removal', 'query');
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(after).toBeNull();
+  });
+
+  it('无关设置与未选中的服务变更不清缓存、不释放已加载 GGUF', async () => {
+    const gguf = loadGguf();
+    const settings = { ...remoteSettings(), memoryEmbeddingModel: gguf.modelId };
+    syncMemoryEmbeddingFromSettings(settings);
+    const pending = getMemoryEmbedder();
+    gguf.resolve(gguf.model);
+    const first = await pending;
+    await first!.embed('cached query', 'query');
+    syncMemoryEmbeddingFromSettings({ ...settings, theme: 'dark' });
+    syncMemoryEmbeddingFromSettings({
+      ...settings,
+      memoryEmbeddingRemoteProviderId: 'other',
+      providers: [{ id: 'other', baseUrl: 'https://new.invalid', apiKey: 'new-key' }],
+    });
+    const second = await getMemoryEmbedder();
+    await second?.embed('cached query', 'query');
+    expect(second).toBe(first);
+    expect(gguf.context.getEmbeddingFor).toHaveBeenCalledTimes(1);
+    expect(gguf.context.dispose).not.toHaveBeenCalled();
+    expect(acquireModel).toHaveBeenCalledTimes(1);
+  });
+
+  it('原地修改 provider 后采用新凭证，随后无关设置保存仍复用远程查询缓存', async () => {
+    const settings = remoteSettings();
+    syncMemoryEmbeddingFromSettings(settings);
+    await (await getMemoryEmbedder())!.embed('before mutation', 'query');
+    settings.providers[0].apiKey = 'rotated-key';
+    syncMemoryEmbeddingFromSettings(settings);
+    const current = await getMemoryEmbedder();
+    await current!.embed('cached private query', 'query');
+    syncMemoryEmbeddingFromSettings({ ...settings, theme: 'dark' });
+    expect(await getMemoryEmbedder()).toBe(current);
+    await (await getMemoryEmbedder())!.embed('cached private query', 'query');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls.at(-1)?.[1]?.headers).toMatchObject({
+      authorization: 'Bearer rotated-key',
+    });
+  });
+
+});
 
 describe('rootSessionId', () => {
   const gen = '11111111-1111-4111-8111-111111111111';
