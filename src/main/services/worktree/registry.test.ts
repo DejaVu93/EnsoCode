@@ -29,6 +29,23 @@ afterEach(() => {
 });
 
 describe('WorktreeRegistry', () => {
+  it('patches only branch on each supplied binding and retains disk-mutation truth if persistence fails', () => {
+    const reg = new WorktreeRegistry(file);
+    reg.set(record('c1'));
+    reg.set({ ...record('c2'), baseBranch: 'different', baseCommit: 'different', createdAt: 2 });
+    reg.updateBranches(['c1', 'c2'], 'feature');
+    expect(new WorktreeRegistry(file).get('c2')).toMatchObject({
+      branch: 'feature',
+      baseBranch: 'different',
+      baseCommit: 'different',
+      createdAt: 2,
+    });
+    rmSync(dir, { recursive: true, force: true });
+    writeFileSync(dir, 'blocked directory');
+    expect(() => reg.updateBranches(['c1', 'c2'], 'next')).toThrow();
+    expect(reg.get('c1')?.branch).toBe('next');
+    expect(reg.get('c2')?.branch).toBe('next');
+  });
   it('a failed persisted deletion restores shared references and can be retried', () => {
     const reg = new WorktreeRegistry(file);
     reg.set(record('c1'));

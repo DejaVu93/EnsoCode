@@ -25,7 +25,11 @@ import type {
 } from '@shared/types/agent';
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
 import type { PairCreatedSession } from '@shared/types/pair';
-import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import type {
+  SessionWorktree,
+  WorkspaceBranchSwitchResult,
+  WorktreeStatus,
+} from '@shared/types/worktree';
 // 纯逻辑模块(仅类型级依赖),store 引用不破坏 node 环境测试
 import {
   cleanTitleSummarySource,
@@ -87,7 +91,12 @@ import {
 } from './reducer';
 import { applyConversationReload } from './reload';
 import { isPairViewed, nextUnread } from './unread';
-import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
+import {
+  DIRTY_MAIN_TREE,
+  workspaceBranchChangedNote,
+  workspaceFallbackNote,
+  workspaceMigratedNote,
+} from './worktree';
 
 /** 离开时盖章；正在看的会话由 viewedId 保热，TTL 从离开起算 */
 const lastViewedAt: Record<string, number> = {};
@@ -97,6 +106,14 @@ const olderHistoryInFlight = new Set<string>();
  * 手动重读在途：同会话合并为一次 IPC；缓冲期间到达的实时事件，快照落地后按 seq 水位重放，
  * 防止 IPC reply 晚于实时事件时旧快照把新消息抹掉。实时事件本身仍照常即时上屏。
  */
+const branchSwitchesInFlight = new Set<string>();
+const consumedBranchContexts = new Map<string, string>();
+const withoutBranchNote = (
+  note: string | undefined,
+  branch: string | undefined
+): string | undefined =>
+  branch ? note?.replace(workspaceBranchChangedNote(branch), '').trim() || undefined : note;
+
 const reloadInFlight = new Map<
   string,
   { promise: Promise<string | null>; buffered: RendererAgentEvent[] }
@@ -226,6 +243,7 @@ export interface Conversation extends SessionProjection {
   worktree?: SessionWorktree;
   /** 工作区迁移/回退提醒，随下一条用户消息前置注入后清除；持久化 */
   pendingWorkspaceNote?: string;
+  pendingWorkspaceBranch?: { requestId: string; branch: string };
   /** resume 时发现 worktree 丢失（驱动重建/回退选择 UI）；不持久化 */
   worktreeMissing?: boolean;
   /** 用户点了停止：抑制这一轮收束触发的排队投递/目标续跑（否则停完立刻自己跑起来）。不持久化 */
@@ -248,6 +266,12 @@ interface SessionsState {
   activeId: string | null;
   /** 隔离会话的 worktree 状态快照（侧边栏徽标）；不持久化 */
   worktreeStatuses: Record<string, WorktreeStatus>;
+  workspaceRevisionByConversation: Record<string, number>;
+  switchWorkspaceBranch(
+    id: string,
+    branch: string,
+    create?: boolean
+  ): Promise<WorkspaceBranchSwitchResult>;
   /** 无 project 时保留的一次性 summon；下一条普通 draft 消费。 */
   pendingAgentPrefill?: AgentTypeKey;
 
@@ -947,6 +971,30 @@ export const useSessionsStore = create<SessionsState>()(
         const id = identity.sessionId;
         reloadInFlight.get(id)?.buffered.push(event);
 
+        if (event.type === 'workspace-branch-context-consumed') {
+          set((state) => {
+            const current = state.conversations[id];
+            if (!current) return state;
+            const next = applyAgentEvent(current, id, event);
+            if (next === current) return state;
+            if (branchSwitchesInFlight.size)
+              consumedBranchContexts.set(`${event.requestId}:${id}`, identity.generation);
+            return patch(state, id, {
+              ...next,
+              ...(current.pendingWorkspaceBranch?.requestId === event.requestId
+                ? {
+                    pendingWorkspaceNote: withoutBranchNote(
+                      current.pendingWorkspaceNote,
+                      current.pendingWorkspaceBranch.branch
+                    ),
+                    pendingWorkspaceBranch: undefined,
+                  }
+                : {}),
+            });
+          });
+          return;
+        }
+
         if (event.type === 'coworker-update') {
           set((state) => {
             const parent = state.conversations[id];
@@ -1361,7 +1409,12 @@ export const useSessionsStore = create<SessionsState>()(
       function continueGoal(id: string): void {
         const conversation = get().conversations[id];
         const goal = conversation?.goal;
-        if (!conversation?.started || conversation.status === 'running') return;
+        if (
+          !conversation?.started ||
+          conversation.workspaceMigrating ||
+          conversation.status === 'running'
+        )
+          return;
         if (goal?.status !== 'active') return;
         if ((conversation.queuedMessages ?? []).length > 0) return;
         if (
@@ -1435,7 +1488,12 @@ export const useSessionsStore = create<SessionsState>()(
       /** 逐条投递排队消息:每次轮次收束只发队首一条(每条获得完整一轮),下轮结束再发下一条 */
       function flushQueue(id: string): void {
         const conversation = get().conversations[id];
-        if (!conversation?.started || conversation.status !== 'idle') return;
+        if (
+          !conversation?.started ||
+          conversation.workspaceMigrating ||
+          conversation.status !== 'idle'
+        )
+          return;
         // 压缩排队/进行中先等压完：上下文还没换形就发下一条会打在旧占用上
         if (conversation.compaction) return;
         const [next, ...rest] = conversation.queuedMessages ?? [];
@@ -1469,6 +1527,139 @@ export const useSessionsStore = create<SessionsState>()(
         activeId: null,
         pendingAgentPrefill: undefined,
         worktreeStatuses: {},
+        workspaceRevisionByConversation: {},
+
+        async switchWorkspaceBranch(id, branch, create = false) {
+          const conversation = get().conversations[id];
+          const project = useSettingsStore
+            .getState()
+            .projects.find((item) => item.id === conversation?.projectId);
+          if (
+            !conversation ||
+            conversation.parentId ||
+            conversation.historyOnly ||
+            conversation.archived ||
+            !project ||
+            project.kind === 'ssh'
+          ) {
+            return {
+              ok: false,
+              code: 'unavailable',
+              error: 'Local root workspace is unavailable.',
+            };
+          }
+          const cwd = conversation.worktree?.path ?? project.path;
+          const roots = new Set(
+            Object.values(get().conversations)
+              .filter(
+                (current) =>
+                  !current.parentId &&
+                  current.projectId === conversation.projectId &&
+                  (current.worktree?.path ?? project.path) === cwd
+              )
+              .map((current) => current.id)
+          );
+          const targets = Object.values(get().conversations).filter(
+            (current) =>
+              roots.has(current.id) || Boolean(current.parentId && roots.has(current.parentId))
+          );
+          if (targets.some((current) => current.workspaceMigrating))
+            return { ok: false, code: 'busy', error: 'Workspace operation in progress.' };
+          if (
+            targets.some(
+              (current) => current.status === 'running' || current.spawning || current.compaction
+            )
+          )
+            return {
+              ok: false,
+              code: 'running',
+              error: 'A session using this workspace is running.',
+            };
+          set((state) => ({
+            conversations: Object.fromEntries(
+              Object.entries(state.conversations).map(([key, current]) => [
+                key,
+                targets.some((target) => target.id === key)
+                  ? { ...current, workspaceMigrating: true }
+                  : current,
+              ])
+            ),
+          }));
+          branchSwitchesInFlight.add(id);
+          let remainsBlocked = false;
+          try {
+            const result = await window.electronAPI.worktree.switchBranch({
+              conversationId: id,
+              branch,
+              create,
+            });
+            const projection = result.ok ? result.value : result.changed;
+            remainsBlocked =
+              !result.ok &&
+              (result.workspaceBlocked === true || projection?.blockedReason === 'busy');
+            if (!projection) return result;
+            const affected = new Set(projection.affectedConversationIds);
+            const records = new Map(
+              projection.worktrees.map((record) => [record.conversationId, record])
+            );
+            set((state) => {
+              const conversations = { ...state.conversations };
+              const workspaceRevisionByConversation = { ...state.workspaceRevisionByConversation };
+              for (const [key, current] of Object.entries(conversations)) {
+                if (!affected.has(key) && !(current.parentId && affected.has(current.parentId)))
+                  continue;
+                const nextBranch = projection.currentBranch ?? branch;
+                const consumed =
+                  consumedBranchContexts.get(`${projection.requestId}:${key}`) ===
+                    current.generation && current.generation !== undefined;
+                conversations[key] = {
+                  ...current,
+                  ...(remainsBlocked ? { workspaceMigrating: true } : {}),
+                  pendingWorkspaceBranch: consumed
+                    ? undefined
+                    : { requestId: projection.requestId, branch: nextBranch },
+                  ...(records.has(key) ? { worktree: records.get(key) } : {}),
+                  pendingWorkspaceNote:
+                    [
+                      withoutBranchNote(
+                        current.pendingWorkspaceNote,
+                        current.pendingWorkspaceBranch?.branch
+                      ),
+                      consumed ? undefined : workspaceBranchChangedNote(nextBranch),
+                    ]
+                      .filter(Boolean)
+                      .join('\n\n') || undefined,
+                };
+                workspaceRevisionByConversation[key] =
+                  (workspaceRevisionByConversation[key] ?? 0) + 1;
+              }
+              return { conversations, workspaceRevisionByConversation };
+            });
+            void get()
+              .refreshWorktreeStatuses()
+              .catch(() => {});
+            return result;
+          } catch (error) {
+            return {
+              ok: false,
+              code: 'git-error',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          } finally {
+            branchSwitchesInFlight.delete(id);
+            if (!branchSwitchesInFlight.size) consumedBranchContexts.clear();
+            set((state) => ({
+              conversations: Object.fromEntries(
+                Object.entries(state.conversations).map(([key, current]) => [
+                  key,
+                  !remainsBlocked && targets.some((target) => target.id === key)
+                    ? { ...current, workspaceMigrating: undefined }
+                    : current,
+                ])
+              ),
+            }));
+          }
+        },
 
         async attachConversationToWorktree(id, sourceConversationId) {
           const conversation = get().conversations[id];
@@ -2146,7 +2337,7 @@ export const useSessionsStore = create<SessionsState>()(
           const requestId = crypto.randomUUID();
           const parentId = get().activeId;
           const parent = parentId ? get().conversations[parentId] : undefined;
-          if (!parentId || !parent || parent.parentId) {
+          if (!parentId || !parent || parent.parentId || parent.workspaceMigrating) {
             return {
               accepted: false,
               requestId,
@@ -2749,7 +2940,7 @@ export const useSessionsStore = create<SessionsState>()(
 
         setGoal(conversationId, text) {
           const conversation = get().conversations[conversationId];
-          if (!conversation || !text.trim()) return;
+          if (!conversation || conversation.workspaceMigrating || !text.trim()) return;
           set((state) =>
             patch(state, conversationId, {
               goal: {
@@ -2788,6 +2979,7 @@ export const useSessionsStore = create<SessionsState>()(
         },
 
         resumeGoal(conversationId) {
+          if (get().conversations[conversationId]?.workspaceMigrating) return;
           const goal = get().conversations[conversationId]?.goal;
           if (!goal) return;
           // 恢复即重置安全计数(与 pi-goal 的 guided review 语义一致:人已过目)
@@ -2892,7 +3084,8 @@ export const useSessionsStore = create<SessionsState>()(
 
         compact(conversationId, instructions) {
           const conversation = get().conversations[conversationId];
-          if (!conversation?.started || conversation.compaction) return;
+          if (!conversation?.started || conversation.workspaceMigrating || conversation.compaction)
+            return;
           void window.electronAPI.agent.compact(conversationId, instructions);
         },
 
@@ -2903,7 +3096,12 @@ export const useSessionsStore = create<SessionsState>()(
 
         rewind(conversationId, userIndexFromEnd, restoreFiles) {
           const conversation = get().conversations[conversationId];
-          if (!conversation?.started || conversation.status === 'running') return;
+          if (
+            !conversation?.started ||
+            conversation.workspaceMigrating ||
+            conversation.status === 'running'
+          )
+            return;
           void window.electronAPI.agent.rewind(conversationId, userIndexFromEnd, restoreFiles);
         },
 
@@ -2920,6 +3118,7 @@ export const useSessionsStore = create<SessionsState>()(
           if (
             !conversation?.started ||
             conversation.spawning ||
+            conversation.workspaceMigrating ||
             conversation.status === 'running'
           ) {
             return;
@@ -2935,7 +3134,7 @@ export const useSessionsStore = create<SessionsState>()(
         sendQueuedNow(conversationId, messageId) {
           const conversation = get().conversations[conversationId];
           const item = conversation?.queuedMessages?.find((message) => message.id === messageId);
-          if (!conversation || !item) return;
+          if (!conversation || conversation.workspaceMigrating || !item) return;
           if (conversation.compaction) return;
           const running = conversation.status === 'running';
           // 出队并乐观回显。optimistic 标记使其浮在权威消息之后：running 时 steer
@@ -2963,7 +3162,7 @@ export const useSessionsStore = create<SessionsState>()(
         async interruptAndSendQueued(conversationId, messageId) {
           const conversation = get().conversations[conversationId];
           const item = conversation?.queuedMessages?.find((message) => message.id === messageId);
-          if (!conversation?.started || !item) return;
+          if (!conversation?.started || conversation.workspaceMigrating || !item) return;
           if (conversation.status !== 'running') {
             get().sendQueuedNow(conversationId, messageId);
             return;
@@ -2992,7 +3191,11 @@ export const useSessionsStore = create<SessionsState>()(
             });
             const timer = setTimeout(done, 10_000);
           });
-          if (!get().conversations[conversationId]?.started) return;
+          if (
+            !get().conversations[conversationId]?.started ||
+            get().conversations[conversationId]?.workspaceMigrating
+          )
+            return;
           const deliveryId = crypto.randomUUID();
           set((state) =>
             patch(state, conversationId, {

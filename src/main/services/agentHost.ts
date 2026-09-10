@@ -70,6 +70,8 @@ import { resolveGlobalInstruction } from './instructionStore';
 import { getMcpOAuthStore } from './mcpOAuthStore';
 import { PendingReloadRegistry } from './pendingReloads';
 import { pickSubagentModelRefs } from './subagentModels';
+import { workspaceCommandBlocked } from './workspaceCommandGate';
+import { WorkspaceLockRequests } from './workspaceLockRequests';
 
 export interface ResolvedModelSelection {
   ref: ModelRef;
@@ -167,7 +169,7 @@ export function startAgentWorker(): void {
       resolveReleaseWaiters(event);
       // 手动重读结果只回给发起 invoke 的等待者，不进普通事件流（renderer 的通用
       // snapshot 分支会顺手改 started / 清 asks，手动刷新不能有这些副作用）
-      if (pendingReloads.settle(event)) return;
+      if (pendingReloads.settle(event) || workspaceLocks.settle(event)) return;
       onEvent?.(event);
     }
   });
@@ -178,11 +180,13 @@ export function startAgentWorker(): void {
       workerExited = true;
     }
     pendingReloads.failAll('agent worker exited');
+    workspaceLocks.failAll('agent worker exited');
     onEvent?.({ type: 'worker-exited' });
   });
 }
 
 export function stopAgentWorker(): void {
+  workspaceLocks.failAll('agent worker stopped');
   worker?.kill();
   worker = null;
   workerReady = false;
@@ -208,7 +212,69 @@ export function isAgentWorkerRunning(): boolean {
   return worker !== null;
 }
 
+let workspaceBusy: (id: string) => boolean = () => false;
+
+const workspaceLocks = new WorkspaceLockRequests(sendAgentCommand);
+const workspaceWorkers = new Map<string, UtilityProcess | null>();
+
+export async function freezeWorkspace(
+  requestId: string,
+  conversationIds: string[]
+): Promise<{ ok: boolean; error?: string; needsThaw?: boolean }> {
+  const expectedWorker = worker;
+  if (!worker) {
+    if (commandsPending.some((command) => workspaceCommandBlocked(command, workspaceBusy)))
+      return { ok: false, error: 'A workspace command is pending.' };
+    workspaceWorkers.set(requestId, null);
+    return { ok: true };
+  }
+  const result = await workspaceLocks.request({
+    type: 'lock-workspace',
+    requestId,
+    conversationIds,
+  });
+  if (!result.ok && worker === expectedWorker) {
+    const cleanup = await workspaceLocks.request({
+      type: 'unlock-workspace',
+      requestId,
+      conversationIds,
+    });
+    if (!cleanup.ok && worker === expectedWorker) {
+      workspaceWorkers.set(requestId, expectedWorker);
+      return { ...result, needsThaw: true };
+    }
+  }
+  if (result.ok) workspaceWorkers.set(requestId, expectedWorker);
+  return result;
+}
+
+export async function thawWorkspace(
+  requestId: string,
+  conversationIds: string[],
+  branch?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const expectedWorker = workspaceWorkers.get(requestId);
+  if (!worker || expectedWorker !== worker) {
+    workspaceWorkers.delete(requestId);
+    return { ok: true };
+  }
+  const result = await workspaceLocks.request({
+    type: 'unlock-workspace',
+    requestId,
+    conversationIds,
+    ...(branch ? { branch } : {}),
+  });
+  if (result.ok || worker !== expectedWorker) workspaceWorkers.delete(requestId);
+  return worker !== expectedWorker ? { ok: true } : result;
+}
+
+export function setWorkspaceBusyResolver(resolver: (id: string) => boolean): void {
+  workspaceBusy = resolver;
+}
+
 export function sendAgentCommand(command: AgentCommand): { ok: boolean; error?: string } {
+  if (workspaceCommandBlocked(command, workspaceBusy))
+    return { ok: false, error: 'Workspace operation in progress.' };
   const action = agentCommandDispatch({
     hasWorker: worker !== null,
     workerReady,

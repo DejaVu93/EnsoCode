@@ -10,7 +10,7 @@ export interface SessionWorktree {
   repoPath: string;
   /** worktree 目录（托管在 userData 下，项目外） */
   path: string;
-  /** 为该会话创建的分支 */
+  /** 当前隔离工作树分支；切换后同步所有共享绑定。 */
   branch: string;
   /** 创建时主工作树所在分支；detached HEAD 时为 null */
   baseBranch: string | null;
@@ -28,3 +28,58 @@ export interface WorktreeStatus {
   /** 领先 base 的提交数（>0 即「未合并」） */
   ahead: number;
 }
+
+export interface WorkspaceBranch {
+  name: string;
+  occupied: boolean;
+  worktreeConversationId?: string;
+}
+
+export interface WorkspaceBranches {
+  currentBranch: string | null;
+  defaultBranch?: string | null;
+  headCommit: string | null;
+  branches: WorkspaceBranch[];
+  affectedConversationIds: string[];
+  blockedReason?: 'busy' | 'running' | 'dirty';
+}
+
+export type WorkspaceBranchErrorCode =
+  | 'unavailable'
+  | 'invalid-branch'
+  | 'busy'
+  | 'running'
+  | 'dirty'
+  | 'same-branch'
+  | 'occupied'
+  | 'branch-exists'
+  | 'branch-not-found'
+  | 'git-error';
+
+export type WorkspaceBranchChange = WorkspaceBranches & {
+  worktrees: SessionWorktree[];
+  requestId: string;
+};
+
+export interface WorkspaceBranchFailure {
+  ok: false;
+  code: WorkspaceBranchErrorCode;
+  changed?: WorkspaceBranchChange;
+  workspaceBlocked?: boolean;
+  error: string;
+  worktreeConversationId?: string;
+}
+
+export type WorkspaceBranchesResult =
+  | { ok: true; value: WorkspaceBranches }
+  | WorkspaceBranchFailure;
+
+export interface WorkspaceBranchSwitchRequest {
+  conversationId: string;
+  branch: string;
+  create?: boolean;
+}
+
+export type WorkspaceBranchSwitchResult =
+  | { ok: true; value: WorkspaceBranchChange }
+  | WorkspaceBranchFailure;

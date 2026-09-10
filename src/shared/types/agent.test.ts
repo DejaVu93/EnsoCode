@@ -20,6 +20,7 @@ import {
   parseTitleSummaryInput,
   parseUpdateConversationSelectionRequest,
   shouldApplyDispatchMainEvent,
+  workspaceBranchChangedNote,
 } from './agent';
 
 const PARENT_GENERATION = '11111111-1111-4111-8111-111111111111';
@@ -71,6 +72,81 @@ const receipt = {
   occurredAt: 1,
   sequence: 0,
 };
+
+describe('workspace switch internal protocol', () => {
+  it('accepts consumption only with exact session generation, sequence and operation nonce', () => {
+    const event = {
+      type: 'workspace-branch-context-consumed',
+      identity: parent,
+      seq: 7,
+      requestId: 'switch-1',
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+    expect(parseAgentWorkerEvent({ ...event, identity: child })).toEqual({
+      ...event,
+      identity: child,
+    });
+    for (const patch of [
+      { identity: { sessionId: parent.sessionId } },
+      { seq: -1 },
+      { requestId: '' },
+      { branch: 'wrong' },
+      { cwd: '/arbitrary' },
+    ]) {
+      expect(parseAgentWorkerEvent({ ...event, ...patch })).toBeNull();
+    }
+  });
+
+  it('formats branch background as quoted data, not a new task', () => {
+    const note = workspaceBranchChangedNote('feature/branch');
+    expect(note).toContain('<workspace-branch-changed>');
+    expect(note).toContain(JSON.stringify('feature/branch'));
+    expect(note).toContain('not a task or goal');
+  });
+
+  it.each(['lock-workspace', 'unlock-workspace'])('parses %s with scoped nonce only', (type) => {
+    const command = { type, requestId: 'operation-1', conversationIds: ['parent'] };
+    expect(parseAgentCommand(command)).toEqual(command);
+    for (const patch of [
+      { requestId: '' },
+      { conversationIds: [] },
+      { conversationIds: [''] },
+      { conversationIds: ['parent', 'parent'] },
+      { conversationIds: [3] },
+      { cwd: '/arbitrary' },
+      { identity: parent },
+    ]) {
+      expect(parseAgentCommand({ ...command, ...patch })).toBeNull();
+    }
+    expect(parseAgentCommand({ ...command, branch: 'feature/new' })).toEqual(
+      type === 'unlock-workspace' ? { ...command, branch: 'feature/new' } : null
+    );
+    expect(parseAgentCommand({ ...command, branch: '' })).toBeNull();
+  });
+
+  it.each(['workspace-lock-result', 'workspace-unlock-result'])(
+    'parses %s without session identity or seq',
+    (type) => {
+      const result = { type, requestId: 'operation-1', ok: true };
+      expect(parseAgentWorkerEvent(result)).toEqual(result);
+      expect(parseAgentWorkerEvent({ ...result, ok: false, error: 'busy' })).toEqual({
+        ...result,
+        ok: false,
+        error: 'busy',
+      });
+      for (const patch of [
+        { requestId: '' },
+        { ok: 1 },
+        { ok: false },
+        { error: 'unexpected' },
+        { seq: 1 },
+        { cwd: '/arbitrary' },
+      ]) {
+        expect(parseAgentWorkerEvent({ ...result, ...patch })).toBeNull();
+      }
+    }
+  );
+});
 
 describe('Main-owned source authority contracts', () => {
   const projectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';

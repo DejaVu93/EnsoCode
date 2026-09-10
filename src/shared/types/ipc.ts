@@ -111,6 +111,8 @@ export const IPC_CHANNELS = {
 
   WORKTREE_CREATE: 'worktree:create',
   WORKTREE_BIND: 'worktree:bind',
+  WORKTREE_BRANCHES: 'worktree:branches',
+  WORKTREE_SWITCH_BRANCH: 'worktree:switch-branch',
   WORKTREE_RENAME: 'worktree:rename',
   WORKTREE_GET: 'worktree:get',
   WORKTREE_LIST: 'worktree:list',

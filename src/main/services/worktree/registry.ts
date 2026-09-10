@@ -73,6 +73,17 @@ export class WorktreeRegistry {
     return updated;
   }
 
+  /** Git 已切换：落盘失败也保留内存中的真实分支，不回滚文件系统事实。 */
+  updateBranches(conversationIds: string[], branch: string): SessionWorktree[] {
+    const updated = conversationIds.flatMap((id) => {
+      const record = this.records.get(id);
+      return record ? [{ ...record, branch }] : [];
+    });
+    for (const record of updated) this.records.set(record.conversationId, record);
+    if (updated.length) this.flush();
+    return updated;
+  }
+
   rename(conversationId: string, value: string): SessionWorktree[] {
     const record = this.get(conversationId);
     if (!record) throw new Error('no worktree for conversation');

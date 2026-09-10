@@ -4,7 +4,11 @@
  */
 
 import type { RendererAgentEvent, SourceAuthorityProjection } from '@shared/types/agent';
-import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import type {
+  SessionWorktree,
+  WorkspaceBranchSwitchResult,
+  WorktreeStatus,
+} from '@shared/types/worktree';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SettingsModule from '../settings';
 import type * as SessionsModule from './index';
@@ -71,6 +75,7 @@ const wtRename = vi.fn(async (_id: string, _name: string) => ({
   ok: true as const,
   value: [] as SessionWorktree[],
 }));
+const wtSwitch = vi.fn<(...args: unknown[]) => Promise<WorkspaceBranchSwitchResult>>();
 const removeAuthority = vi.fn(async () => ({ accepted: true as const }));
 const createConversation = vi.fn(async () => {
   const value = {
@@ -149,6 +154,7 @@ vi.stubGlobal('window', {
       updateConversationSelection: vi.fn(),
     },
     worktree: {
+      switchBranch: wtSwitch,
       create: wtCreate,
       bind: wtBind,
       rename: wtRename,
@@ -181,9 +187,277 @@ beforeEach(() => {
     order: [],
     activeId: null,
     worktreeStatuses: {},
+    workspaceRevisionByConversation: {},
   });
   settings.useSettingsStore.setState({
     projects: [{ id: 'project', name: 'Project', path: '/workspace' }],
+  });
+});
+
+describe('workspace branch switching', () => {
+  async function seedShared() {
+    const id = await seedLocalConversation();
+    sessions.useSessionsStore.setState((state) => {
+      const base = { ...state.conversations[id], started: true, sessionFile: '/tmp/session.jsonl' };
+      return {
+        conversations: {
+          [id]: base,
+          sibling: { ...base, id: 'sibling' },
+          child: { ...base, id: 'child', parentId: id },
+          unrelated: { ...base, id: 'unrelated', worktree: record('unrelated') },
+        },
+      };
+    });
+    return id;
+  }
+  it('gates every shared root and child, keeps idle workers and refreshes only the affected scope', async () => {
+    const id = await seedShared();
+    wtSwitch.mockImplementationOnce(async () => {
+      const state = sessions.useSessionsStore.getState();
+      expect(state.conversations[id].workspaceMigrating).toBe(true);
+      expect(state.conversations.sibling.workspaceMigrating).toBe(true);
+      expect(state.conversations.child.workspaceMigrating).toBe(true);
+      const before = state.conversations[id].messages.length;
+      expect(
+        await state.send('blocked', { providerId: 'p', modelId: 'm', cwd: '/workspace' })
+      ).toContain('progress');
+      expect(sessions.useSessionsStore.getState().conversations[id].messages).toHaveLength(before);
+      return {
+        ok: true,
+        value: {
+          requestId: 'switch',
+          currentBranch: 'feature',
+          headCommit: 'abc',
+          branches: [],
+          affectedConversationIds: [id, 'sibling'],
+          worktrees: [],
+        },
+      };
+    });
+    expect(
+      (await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature')).ok
+    ).toBe(true);
+    const state = sessions.useSessionsStore.getState();
+    expect(agentRelease).not.toHaveBeenCalled();
+    for (const key of [id, 'sibling', 'child']) {
+      expect(state.conversations[key].started).toBe(true);
+      expect(state.conversations[key].workspaceMigrating).toBeUndefined();
+      expect(state.conversations[key].pendingWorkspaceNote).toContain('feature');
+      expect(state.workspaceRevisionByConversation[key]).toBe(1);
+    }
+    expect(state.workspaceRevisionByConversation.unrelated).toBeUndefined();
+    expect(state.conversations.unrelated.pendingWorkspaceNote).toBeUndefined();
+    await state.send('root message', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
+    expect(agentPrompt).toHaveBeenLastCalledWith(id, expect.stringContaining('feature'), undefined);
+    sessions.useSessionsStore.setState((current) => ({
+      conversations: {
+        ...current.conversations,
+        [id]: { ...current.conversations[id], activeTabId: 'child' },
+      },
+    }));
+    await sessions.useSessionsStore
+      .getState()
+      .send('child message', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
+    expect(agentPrompt).toHaveBeenLastCalledWith(
+      'child',
+      expect.stringContaining('feature'),
+      undefined
+    );
+    expect(
+      sessions.useSessionsStore.getState().conversations.child.pendingWorkspaceNote
+    ).toBeUndefined();
+  });
+  it('refreshes real changed state even when post-switch synchronization fails', async () => {
+    const id = await seedShared();
+    wtSwitch.mockResolvedValueOnce({
+      ok: false,
+      code: 'git-error',
+      error: 'resume failed',
+      changed: {
+        requestId: 'partial',
+        currentBranch: 'feature',
+        headCommit: 'abc',
+        branches: [],
+        affectedConversationIds: [id, 'sibling'],
+        worktrees: [],
+      },
+    });
+    expect(
+      (await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature')).ok
+    ).toBe(false);
+    expect(sessions.useSessionsStore.getState().workspaceRevisionByConversation.child).toBe(1);
+    expect(sessions.useSessionsStore.getState().conversations[id].pendingWorkspaceNote).toContain(
+      'feature'
+    );
+  });
+  it('keeps only the prelocked scope blocked after uncertain freeze cleanup without a changed projection', async () => {
+    const id = await seedShared();
+    wtSwitch.mockResolvedValueOnce({
+      ok: false,
+      code: 'busy',
+      workspaceBlocked: true,
+      error: 'Restart EnsoCode to recover',
+    });
+    await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature');
+    const state = sessions.useSessionsStore.getState();
+    expect(state.conversations[id].workspaceMigrating).toBe(true);
+    expect(state.conversations.sibling.workspaceMigrating).toBe(true);
+    expect(state.conversations.child.workspaceMigrating).toBe(true);
+    expect(state.conversations.unrelated.workspaceMigrating).toBeUndefined();
+    expect(state.conversations[id].pendingWorkspaceNote).toBeUndefined();
+    expect(state.workspaceRevisionByConversation[id]).toBeUndefined();
+    expect(
+      await state.send('blocked', { providerId: 'p', modelId: 'm', cwd: '/workspace' })
+    ).toContain('progress');
+    expect(agentPrompt).not.toHaveBeenCalled();
+    expect(sessions.useSessionsStore.getState().conversations[id].messages).toEqual([]);
+  });
+  it('keeps the local send gate when worker thaw remains uncertain', async () => {
+    const id = await seedShared();
+    wtSwitch.mockResolvedValueOnce({
+      ok: false,
+      code: 'git-error',
+      error: 'restart required',
+      changed: {
+        requestId: 'stuck',
+        currentBranch: 'feature',
+        headCommit: 'abc',
+        branches: [],
+        affectedConversationIds: [id, 'sibling'],
+        worktrees: [],
+        blockedReason: 'busy',
+      },
+    });
+    await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature');
+    expect(sessions.useSessionsStore.getState().conversations[id].workspaceMigrating).toBe(true);
+    expect(
+      await sessions.useSessionsStore
+        .getState()
+        .send('blocked', { providerId: 'p', modelId: 'm', cwd: '/workspace' })
+    ).toContain('progress');
+    expect(agentPrompt).not.toHaveBeenCalled();
+  });
+  it('clears only the consumed branch nonce and replaces older branch reminders', async () => {
+    const id = await seedShared();
+    sessions.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        [id]: { ...state.conversations[id], pendingWorkspaceNote: 'keep migration' },
+      },
+    }));
+    for (const [requestId, branch] of [
+      ['one', 'feature'],
+      ['two', 'next'],
+    ]) {
+      wtSwitch.mockResolvedValueOnce({
+        ok: true,
+        value: {
+          requestId,
+          currentBranch: branch,
+          headCommit: 'abc',
+          branches: [],
+          affectedConversationIds: [id],
+          worktrees: [],
+        },
+      });
+      await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, branch);
+    }
+    expect(
+      sessions.useSessionsStore.getState().conversations[id].pendingWorkspaceNote
+    ).not.toContain('feature');
+    onAgentEvent({
+      type: 'workspace-branch-context-consumed',
+      identity: { sessionId: id, generation: 'g' },
+      seq: 1,
+      requestId: 'one',
+    });
+    expect(sessions.useSessionsStore.getState().conversations[id].pendingWorkspaceNote).toContain(
+      'next'
+    );
+    onAgentEvent({
+      type: 'workspace-branch-context-consumed',
+      identity: { sessionId: id, generation: 'g' },
+      seq: 2,
+      requestId: 'two',
+    });
+    expect(sessions.useSessionsStore.getState().conversations[id].pendingWorkspaceNote).toBe(
+      'keep migration'
+    );
+  });
+  it('does not reinstall a branch reminder consumed before the switch IPC returns', async () => {
+    const id = await seedShared();
+    wtSwitch.mockImplementationOnce(async () => {
+      onAgentEvent({
+        type: 'workspace-branch-context-consumed',
+        identity: { sessionId: id, generation: 'g' },
+        seq: 1,
+        requestId: 'early',
+      });
+      return {
+        ok: true,
+        value: {
+          requestId: 'early',
+          currentBranch: 'feature',
+          headCommit: 'abc',
+          branches: [],
+          affectedConversationIds: [id],
+          worktrees: [],
+        },
+      };
+    });
+    expect(
+      (await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature')).ok
+    ).toBe(true);
+    expect(
+      sessions.useSessionsStore.getState().conversations[id].pendingWorkspaceNote
+    ).toBeUndefined();
+    expect(sessions.useSessionsStore.getState().workspaceRevisionByConversation[id]).toBe(1);
+  });
+  it('blocks queued sends and goal kickoff before optimistic echo during switching', async () => {
+    const id = await seedShared();
+    sessions.useSessionsStore.getState().enqueueMessage(id, 'queued');
+    wtSwitch.mockImplementationOnce(async () => {
+      const state = sessions.useSessionsStore.getState();
+      const messageId = state.conversations[id].queuedMessages![0].id;
+      state.sendQueuedNow(id, messageId);
+      state.setGoal(id, 'must not start');
+      expect(agentPrompt).not.toHaveBeenCalled();
+      expect(sessions.useSessionsStore.getState().conversations[id].messages).toEqual([]);
+      expect(sessions.useSessionsStore.getState().conversations[id].queuedMessages).toHaveLength(1);
+      return { ok: false, code: 'dirty', error: 'dirty' };
+    });
+    expect(await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature')).toEqual(
+      { ok: false, code: 'dirty', error: 'dirty' }
+    );
+  });
+  it('does not change branches, reminders or revisions on Main refusal', async () => {
+    const id = await seedShared();
+    wtSwitch.mockResolvedValueOnce({
+      ok: false,
+      code: 'occupied',
+      error: 'occupied',
+      worktreeConversationId: 'other',
+    });
+    expect(
+      await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature')
+    ).toMatchObject({ ok: false, code: 'occupied', worktreeConversationId: 'other' });
+    const state = sessions.useSessionsStore.getState();
+    expect(state.workspaceRevisionByConversation).toEqual({});
+    expect(state.conversations[id].pendingWorkspaceNote).toBeUndefined();
+    expect(state.conversations[id].workspaceMigrating).toBeUndefined();
+  });
+  it('rejects a running child before IPC and before optimistic echo', async () => {
+    const id = await seedShared();
+    sessions.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        child: { ...state.conversations.child, status: 'running' },
+      },
+    }));
+    expect(
+      (await sessions.useSessionsStore.getState().switchWorkspaceBranch(id, 'feature')).ok
+    ).toBe(false);
+    expect(wtSwitch).not.toHaveBeenCalled();
   });
 });
 

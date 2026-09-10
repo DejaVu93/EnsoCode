@@ -460,7 +460,12 @@ export function registerAgentHandlers(): void {
     }
     // 手动重读结果按 requestId 在 agentHost 结算给 invoke 等待者；无主的迟到结果直接丢弃，
     // 绝不进普通事件流（renderer 的 snapshot 分支有 started / 审批副作用）
-    if (workerEvent.type === 'session-reloaded') return;
+    if (
+      workerEvent.type === 'session-reloaded' ||
+      workerEvent.type === 'workspace-lock-result' ||
+      workerEvent.type === 'workspace-unlock-result'
+    )
+      return;
     dispatchService?.observe(workerEvent);
     if (workerEvent.type === 'turn-completed' || workerEvent.type === 'turn-failed') {
       const file = agentSessionIndex.sessionFile(workerEvent.identity);

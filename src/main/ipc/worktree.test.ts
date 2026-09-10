@@ -25,13 +25,20 @@ vi.mock('electron', () => ({
       mocks.handlers.set(channel, handler),
   },
 }));
-vi.mock('../services/agentHost', () => ({ readSettingsState: () => ({}) }));
+vi.mock('../services/agentHost', () => ({
+  readSettingsState: () => ({}),
+  setWorkspaceBusyResolver: vi.fn(),
+}));
 vi.mock('../windows/MainWindow', () => ({ isMainWebContents: (id: number) => id === 1 }));
 vi.mock('./agent', () => ({
   getSourceAuthorityRegistry: () => ({ project: mocks.project, conversation: mocks.conversation }),
 }));
 vi.mock('./capabilities', () => ({
-  agentSessionIndex: { currentIdentity: mocks.currentIdentity, isAlive: mocks.isAlive },
+  agentSessionIndex: {
+    currentIdentity: mocks.currentIdentity,
+    isAlive: mocks.isAlive,
+    workspaceRoot: (id: string) => id,
+  },
 }));
 vi.mock('../services/worktree/service', () => ({
   createSessionWorktree: mocks.create,

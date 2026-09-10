@@ -12,6 +12,8 @@ import type { WorktreeStatus } from '@shared/types/worktree';
  */
 export const DIRTY_MAIN_TREE = 'dirty-main-tree';
 
+export { workspaceBranchChangedNote } from '@shared/types/agent';
+
 /** worktree 有未落地成果（未提交或领先未合并），清理/归档/删除前需要确认 */
 export function worktreeHasPendingWork(status: WorktreeStatus | undefined): boolean {
   if (!status) return false;
