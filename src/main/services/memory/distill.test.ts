@@ -22,7 +22,7 @@ import {
   runDistillJob,
   toCreateInput,
 } from './distill';
-import { createMemory } from './store';
+import { createMemory, listMemories } from './store';
 import type { Embedder } from './types';
 
 let dir: string;
@@ -96,6 +96,15 @@ describe('redactSecrets（蒸馏前的安全边界）', () => {
     expect(out).toContain('We decided to use PostgreSQL; version 16.2 on port 5432.');
     expect(out).toContain('postgres://');
   });
+  it.each([{ token: false }, { auth: { token: null } }])(
+    '非秘密 JSON 值 %j 保持原样且保留闭合结构',
+    (config) => {
+      const text = JSON.stringify(config);
+      const redacted = redactSecrets(text);
+      expect(redacted).toBe(text);
+      expect(JSON.parse(redacted)).toEqual(config);
+    }
+  );
 });
 
 describe('buildTranscript / chunkTranscript（分块）', () => {
@@ -286,6 +295,123 @@ describe('蒸馏任务（memory_jobs kind=distill）', () => {
     { role: 'user', text: 'which db?' },
     { role: 'assistant', text: 'PostgreSQL, team knows it.' },
   ]);
+
+  it.each(['"', "'"])(
+    '引号 %s 配置与自由文本密钥在 complete 前打码，保留非敏感配置',
+    async (quote) => {
+      const text = `Production config: {${quote}password${quote}:${quote}secret${quote},${quote}apiKey${quote}:${quote}generic_token${quote},${quote}port${quote}:5432} password=Sup3rS3cret!`;
+      const safe = `Production config: {${quote}password${quote}:${quote}[REDACTED]${quote},${quote}apiKey${quote}:${quote}[REDACTED]${quote},${quote}port${quote}:5432} password=[REDACTED]`;
+      const transcript = buildTranscript([{ role: 'user', text }]);
+      const job = ensureDistillJob(db, payload, distillFingerprint('s1', transcript))!;
+      const sent: string[] = [];
+      const done = await runDistillJob(db, job, {
+        transcript,
+        complete: async (_system, user) => {
+          sent.push(user);
+          return json([mem()]);
+        },
+      });
+      expect(done).toMatchObject({ status: 'done', done: 1 });
+      expect(sent).toEqual([`User: ${safe}`]);
+      expect(listMemories(db, { spaceIds: ['global'] })).toHaveLength(1);
+    }
+  );
+
+  it.each(
+    ['"', "'"].flatMap((quote) =>
+      [
+        'short secret',
+        'secret phrase',
+        'short,secret',
+        'secret"suffix',
+        "secret'suffix",
+        'secret\\suffix',
+        'tiny',
+      ].map((secret) => [quote, secret])
+    )
+  )('引号 %s 密钥 %s 在输入、合并及落库时整体替换且保留配置结构', async (quote, secret) => {
+    const escaped = secret.replaceAll('\\', '\\\\').replaceAll(quote, `\\${quote}`);
+    const config = `{${quote}password${quote}:${quote}${escaped}${quote},${quote}port${quote}:5432}`;
+    const safe = `{${quote}password${quote}:${quote}[REDACTED]${quote},${quote}port${quote}:5432}`;
+    const transcript = buildTranscript([
+      { role: 'user', text: config },
+      { role: 'assistant', text: 'x'.repeat(DISTILL_MAX_CHUNK_CHARS * 2) },
+    ]);
+    const job = ensureDistillJob(db, payload, distillFingerprint('s1', transcript))!;
+    const sent: string[] = [];
+    const done = await runDistillJob(db, job, {
+      transcript,
+      complete: async (_system, user) => {
+        sent.push(user);
+        const output = mem({ content: config, title: config });
+        return json(user.startsWith('Consolidate these') ? [output] : [output, output]);
+      },
+    });
+    expect(done).toMatchObject({ status: 'done', done: 1 });
+    const inputConfig = sent[0].split('User: ')[1].split('\n')[0];
+    expect(inputConfig).toBe(safe);
+    const consolidation = sent.filter((user) => user.startsWith('Consolidate these'));
+    expect(consolidation).toHaveLength(1);
+    expect(consolidation[0]).toContain(safe);
+    expect(consolidation[0]).not.toContain(config);
+    const stored = listMemories(db, { spaceIds: ['global'] });
+    expect(stored).toEqual([expect.objectContaining({ content: safe, title: safe })]);
+    if (quote === '"') {
+      expect(JSON.parse(inputConfig)).toEqual({ password: '[REDACTED]', port: 5432 });
+      expect(JSON.parse(stored[0].content)).toEqual({ password: '[REDACTED]', port: 5432 });
+    }
+  });
+
+  it('模型输出中的密钥在正文、标题和被丢弃条目的任务 notes 落库前打码', async () => {
+    const content = 'Keep port 5432; {"password":"secret","apiKey":"generic_token"}';
+    const title = "Config {'client_secret':'title_secret'}";
+    const job = ensureDistillJob(db, payload, distillFingerprint('s1', transcript))!;
+    const done = await runDistillJob(db, job, {
+      transcript,
+      complete: async () =>
+        json([
+          mem({ content, title }),
+          mem({ content: 'password=discarded_secret', title: null, importance: 0.2 }),
+        ]),
+    });
+    expect(done).toMatchObject({ status: 'done', done: 1, failed: 1 });
+    expect(listMemories(db, { spaceIds: ['global'] })).toEqual([
+      expect.objectContaining({
+        content: 'Keep port 5432; {"password":"[REDACTED]","apiKey":"[REDACTED]"}',
+        title: "Config {'client_secret':'[REDACTED]'}",
+      }),
+    ]);
+    expect(listDistillJobs(db)[0].notes).toEqual([
+      expect.objectContaining({ title: 'password=[REDACTED]' }),
+    ]);
+  });
+
+  it('分块输出的密钥不能进入合并 complete，合并结果也须打码后落库', async () => {
+    const transcript = buildTranscript([
+      { role: 'user', text: 'x'.repeat(DISTILL_MAX_CHUNK_CHARS * 2) },
+    ]);
+    const job = ensureDistillJob(db, payload, distillFingerprint('s1', transcript))!;
+    const sent: string[] = [];
+    const done = await runDistillJob(db, job, {
+      transcript,
+      complete: async (_system, user) => {
+        sent.push(user);
+        return user.startsWith('Consolidate these')
+          ? json([mem({ content: 'Config {"password":"merged_secret"}' })])
+          : json([
+              mem({ content: 'Config {"apiKey":"chunk_secret"}' }),
+              mem({ title: 'password=chunk_title_secret' }),
+            ]);
+      },
+    });
+    expect(done).toMatchObject({ status: 'done', done: 1 });
+    const consolidation = sent.filter((user) => user.startsWith('Consolidate these'));
+    expect(consolidation).toHaveLength(1);
+    expect(consolidation[0]).not.toContain('chunk_secret');
+    expect(consolidation[0]).not.toContain('chunk_title_secret');
+    expect(consolidation[0]).toContain('Config {"apiKey":"[REDACTED]"}');
+    expect(rows()[0].content).toBe('Config {"password":"[REDACTED]"}');
+  });
 
   it('幂等：同会话同内容只建一个任务；内容变了才建新任务；跑完写入 source=distill 且过闭集校验', async () => {
     const fp = distillFingerprint(payload.sessionId, transcript);

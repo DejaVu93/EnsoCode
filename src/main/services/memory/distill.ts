@@ -69,9 +69,9 @@ const SECRET_PATTERNS: RegExp[] = [
   // URL 里的 user:pass@
   /(\w+:\/\/[^\s/:@]+:)[^\s/@]+@/g,
 ];
-// key[:=]value 形态：键名保留，值打码（值至少 6 个非空白非引号字符，避免把 `token: null` 之类误伤）
+// 引号值按完整字符串（含转义）打码；裸值至少 6 字符且不吞 JSON 边界，保留 null / false。
 const KV_PATTERN =
-  /\b((?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|refresh[_-]?token|token|passwd|password|pwd|authorization|client[_-]?secret|private[_-]?key)\s*[:=]\s*["']?)([^\s"',;]{6,})/gi;
+  /\b((?:api[_-]?key|secret(?:[_-]?key)?|access[_-]?token|refresh[_-]?token|token|passwd|password|pwd|authorization|client[_-]?secret|private[_-]?key)["']?\s*[:=]\s*)("(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|[^\s"',;{}[\]]{6,})/gi;
 
 export function redactSecrets(text: string): string {
   let out = text;
@@ -80,7 +80,10 @@ export function redactSecrets(text: string): string {
       typeof group === 'string' && m.includes('://') ? `${group}${REDACTED}@` : REDACTED
     );
   }
-  out = out.replace(KV_PATTERN, (_m, key: string) => `${key}${REDACTED}`);
+  out = out.replace(KV_PATTERN, (_m, key: string, value: string) => {
+    const quote = value[0] === '"' || value[0] === "'" ? value[0] : '';
+    return `${key}${quote}${REDACTED}${quote}`;
+  });
   return out;
 }
 
@@ -206,9 +209,10 @@ export function parseDistillResponse(raw: string): DistilledMemory[] | null {
     if (!content || importance === null) continue;
     const t =
       o.temporal && typeof o.temporal === 'object' ? (o.temporal as Record<string, unknown>) : null;
+    const title = str(o.title);
     out.push({
-      title: str(o.title),
-      content,
+      title: title === null ? null : redactSecrets(title),
+      content: redactSecrets(content),
       importance,
       confidence: num(o.confidence),
       unitType: str(o.unit_type) ?? str(o.unitType),
