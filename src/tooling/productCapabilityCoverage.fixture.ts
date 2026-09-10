@@ -221,6 +221,7 @@ export const SETTINGS_ACTION_COVERAGE = {
   removeProjectGroup: surfaces('projects.list'),
   reorderProjectGroups: surfaces('projects.list'),
   setProjectGroupId: surfaces('projects.list'),
+  setProjectAlias: surfaces('projects.list'),
   setProjectDefaultModel: surfaces('projects.list'),
   removeProject: surfaces('projects.remove'),
   setUsageModelPricing: excluded(
@@ -400,6 +401,7 @@ export const IPC_PRODUCT_COVERAGE = {
   ),
   DIALOG_SELECT_DIRECTORY: surfaces('projects.add'),
   PROJECTS_GET_RECENT: surfaces('projects.recent'),
+  PROJECTS_REVEAL: surfaces('projects.list'),
   FILES_SEARCH: surfaces('conversations.file-mention.attach'),
   FILES_READ: excluded('Internal bounded file reader used by reviewed UI flows.'),
   GIT_DIFF_HEAD: excluded('Internal git working-tree reader for the Changes panel.'),

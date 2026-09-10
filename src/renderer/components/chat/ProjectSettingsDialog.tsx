@@ -1,7 +1,9 @@
 import { type DefaultModelRef, resolveChatReasoning } from '@shared/defaultModel';
 import { projectDisplayName } from '@shared/projectName';
 import type { Project, ThinkingLevel } from '@shared/types';
+import { FolderOpen } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { CopyButton } from '@/components/chat/CopyButton';
 import { ScopedDefaultModelField } from '@/components/chat/ScopedDefaultModelField';
 import { Button } from '@/components/ui/button';
 import {
@@ -13,7 +15,8 @@ import {
   DialogPanel,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Field, FieldLabel } from '@/components/ui/field';
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectItem,
@@ -40,6 +43,8 @@ export function ProjectSettingsDialog({
   const defaultThinkingLevel = useSettingsStore((state) => state.defaultThinkingLevel);
   const setProjectDefaultModel = useSettingsStore((state) => state.setProjectDefaultModel);
   const setProjectGroupId = useSettingsStore((state) => state.setProjectGroupId);
+  const setProjectAlias = useSettingsStore((state) => state.setProjectAlias);
+  const [alias, setAlias] = useState('');
   const [defaultModel, setDefaultModel] = useState<DefaultModelRef | null>(null);
   const [reasoningEnabled, setReasoningEnabled] = useState(true);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel>('medium');
@@ -49,6 +54,7 @@ export function ProjectSettingsDialog({
     if (!open) return;
     setDefaultModel(project?.defaultModel ?? null);
     setGroupId(project?.groupId ?? '');
+    setAlias(project?.alias ?? '');
     const group = project?.groupId
       ? groups.find((entry) => entry.id === project.groupId)
       : undefined;
@@ -91,6 +97,7 @@ export function ProjectSettingsDialog({
               defaultModel ? { reasoningEnabled, thinkingLevel } : null
             );
             setProjectGroupId(project.id, groupId || null);
+            setProjectAlias(project.id, alias);
             onOpenChange(false);
           }}
         >
@@ -102,10 +109,37 @@ export function ProjectSettingsDialog({
           </DialogHeader>
           <DialogPanel className="space-y-4">
             <Field className="w-full items-stretch">
+              <FieldLabel>{t('Alias')}</FieldLabel>
+              <Input
+                value={alias}
+                onChange={(event) => setAlias(event.target.value)}
+                placeholder={project ? projectDisplayName({ ...project, alias: undefined }) : ''}
+              />
+              <FieldDescription>
+                {t('Shown in the sidebar instead of the folder name. Leave blank to reset.')}
+              </FieldDescription>
+            </Field>
+            <Field className="w-full items-stretch">
               <FieldLabel>{t('Path')}</FieldLabel>
-              <p className="truncate font-mono text-muted-foreground text-xs" title={pathLabel}>
-                {pathLabel}
-              </p>
+              <div className="flex items-center gap-1.5 text-muted-foreground">
+                <p className="min-w-0 flex-1 truncate font-mono text-xs" title={pathLabel}>
+                  {pathLabel}
+                </p>
+                <CopyButton text={pathLabel} className="shrink-0" />
+                {/* ssh 项目路径在远端，本机打不开 */}
+                {project && project.kind !== 'ssh' && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void window.electronAPI.projects.reveal({ projectId: project.id })
+                    }
+                    className="shrink-0 transition-colors hover:text-foreground"
+                    title={t('Open folder')}
+                  >
+                    <FolderOpen className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
             </Field>
             {groups.length > 0 && (
               <Field className="w-full items-stretch">
