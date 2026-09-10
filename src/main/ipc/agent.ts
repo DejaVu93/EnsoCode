@@ -99,7 +99,25 @@ import { sendToAllWindows } from '../windows/createAppWindow';
 import { isMainWebContents } from '../windows/MainWindow';
 import { agentSessionIndex, capabilityGateway, handleCapabilityInvoke } from './capabilities';
 import { readSettings } from './settings';
-import { sessionWorktree, shareSessionWorktree } from './worktree';
+import {
+  removeRegisteredWorktree,
+  sessionWorktree,
+  sessionWorktreeBusy,
+  shareSessionWorktree,
+} from './worktree';
+
+const pendingWorktreeForks = new Map<
+  string,
+  { identity: SessionIdentity; worktree: ReturnType<typeof sessionWorktree> }
+>();
+function discardForkWorktree(conversationId: string): void {
+  const pending = pendingWorktreeForks.get(conversationId);
+  pendingWorktreeForks.delete(conversationId);
+  if (!pending?.worktree) return;
+  void removeRegisteredWorktree(conversationId, pending.worktree).catch((error) => {
+    console.warn('[worktree] failed to remove fork binding', error);
+  });
+}
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
@@ -430,6 +448,7 @@ export function registerAgentHandlers(): void {
       return;
     }
     if (workerEvent.type === 'worker-exited') {
+      for (const targetId of pendingWorktreeForks.keys()) discardForkWorktree(targetId);
       // worker 死后连接全部失效：清掉残留状态，避免设置页长期显示假 ready
       clearMcpStatuses();
       pushMcpStatus({ type: 'mcp-status-cleared' });
@@ -441,7 +460,12 @@ export function registerAgentHandlers(): void {
     }
     // 手动重读结果按 requestId 在 agentHost 结算给 invoke 等待者；无主的迟到结果直接丢弃，
     // 绝不进普通事件流（renderer 的 snapshot 分支有 started / 审批副作用）
-    if (workerEvent.type === 'session-reloaded') return;
+    if (
+      workerEvent.type === 'session-reloaded' ||
+      workerEvent.type === 'workspace-lock-result' ||
+      workerEvent.type === 'workspace-unlock-result'
+    )
+      return;
     dispatchService?.observe(workerEvent);
     if (workerEvent.type === 'turn-completed' || workerEvent.type === 'turn-failed') {
       const file = agentSessionIndex.sessionFile(workerEvent.identity);
@@ -461,8 +485,22 @@ export function registerAgentHandlers(): void {
       sourceBindings?.invalidateBindingsForConversation(workerEvent.identity.sessionId);
     }
     if (workerEvent.type === 'fork-done') {
+      const pending = pendingWorktreeForks.get(workerEvent.targetConversationId);
+      if (
+        !pending ||
+        pending.identity.sessionId !== workerEvent.identity.sessionId ||
+        pending.identity.generation !== workerEvent.identity.generation
+      )
+        return;
       const target = sourceAuthority?.conversation(workerEvent.targetConversationId);
-      if (workerEvent.sessionFile && target) {
+      if (
+        workerEvent.sessionFile &&
+        !workerEvent.error &&
+        target &&
+        target.lifecycle !== 'ended' &&
+        (!pending.worktree || sessionWorktree(workerEvent.targetConversationId))
+      ) {
+        pendingWorktreeForks.delete(workerEvent.targetConversationId);
         sourceAuthority?.markReady(
           workerEvent.targetConversationId,
           workerEvent.sessionFile,
@@ -471,13 +509,27 @@ export function registerAgentHandlers(): void {
             ? { conversationId: workerEvent.identity.sessionId, entryId: workerEvent.entryId }
             : target.forkedFrom
         );
-        shareSessionWorktree(workerEvent.identity.sessionId, workerEvent.targetConversationId);
-      } else if (target) {
-        sourceAuthority?.removeConversation({
-          requestId: randomUUID(),
-          conversationId: target.conversationId,
-          version: target.version,
+      } else {
+        discardForkWorktree(workerEvent.targetConversationId);
+        if (workerEvent.sessionFile)
+          removeConversationSessionFiles({
+            sessionDir: path.join(app.getPath('userData'), 'agent', 'sessions'),
+            conversationId: workerEvent.targetConversationId,
+            sessionFile: workerEvent.sessionFile,
+          });
+        if (target) {
+          sourceAuthority?.removeConversation({
+            requestId: randomUUID(),
+            conversationId: target.conversationId,
+            version: target.version,
+          });
+        }
+        broadcastAgentEvent({
+          ...workerEvent,
+          sessionFile: undefined,
+          error: workerEvent.error ?? 'Fork target is unavailable.',
         });
+        return;
       }
     }
     if (workerEvent.type === 'capability-invoke') {
@@ -717,6 +769,9 @@ export function registerAgentHandlers(): void {
 
   ipcMain.handle(IPC_CHANNELS.AGENT_SPAWN, async (event, request: unknown) => {
     const parsedRaw = parseSpawnRequest(request);
+    if (parsedRaw && sessionWorktreeBusy(parsedRaw.sessionId)) {
+      return { ok: false, error: 'worktree operation in progress' };
+    }
     // 隔离会话的 cwd 以 main 登记的 worktree 为准，无条件覆写：
     // 渲染层的自动 resume 可能携陈旧 cwd 抢先 spawn（Move to worktree 竞态，CDP 实测），
     // 在权威侧收口后整类问题消失。
@@ -737,7 +792,20 @@ export function registerAgentHandlers(): void {
     } catch {
       return { ok: false, error: 'model credentials unavailable' };
     }
-    return spawnSession(identity, parsed, credentialKeys, remoteConfigFor(parsed.sessionId));
+    if (sessionWorktreeBusy(parsed.sessionId)) {
+      return { ok: false, error: 'worktree operation in progress' };
+    }
+    const currentWorktree = sessionWorktree(parsed.sessionId);
+    const currentRequest = currentWorktree ? { ...parsed, cwd: currentWorktree.path } : parsed;
+    if (!persistedRootSpawn(currentRequest, event.sender.id)) {
+      return { ok: false, error: 'conversation authority changed' };
+    }
+    return spawnSession(
+      identity,
+      currentRequest,
+      credentialKeys,
+      remoteConfigFor(parsed.sessionId)
+    );
   });
 
   ipcMain.handle(
@@ -982,7 +1050,7 @@ export function registerAgentHandlers(): void {
   ipcMain.handle(
     IPC_CHANNELS.AGENT_FORK,
     (
-      _event,
+      event,
       sessionId: unknown,
       targetConversationId: unknown,
       anchor: unknown
@@ -993,7 +1061,9 @@ export function registerAgentHandlers(): void {
       const userIndexFromEnd =
         typeof record?.userIndexFromEnd === 'number' ? record.userIndexFromEnd : undefined;
       if (
+        !isMainWebContents(event.sender.id) ||
         !identity ||
+        'parent' in identity ||
         typeof targetConversationId !== 'string' ||
         !/^[0-9a-f-]{36}$/i.test(targetConversationId) ||
         (entryId
@@ -1002,11 +1072,39 @@ export function registerAgentHandlers(): void {
       ) {
         return { ok: false, error: 'invalid fork or stale generation' };
       }
-      return forkSession(
-        identity,
-        targetConversationId,
-        entryId ? { entryId } : { userIndexFromEnd: userIndexFromEnd as number }
-      );
+      const source = sourceAuthority?.conversation(identity.sessionId);
+      const target = sourceAuthority?.conversation(targetConversationId);
+      if (
+        !source ||
+        source.lifecycle === 'ended' ||
+        !target ||
+        target.kind !== 'root' ||
+        target.lifecycle !== 'draft' ||
+        target.sessionFile ||
+        target.projectId !== source.projectId ||
+        target.forkedFrom?.conversationId !== identity.sessionId ||
+        pendingWorktreeForks.has(targetConversationId)
+      ) {
+        return { ok: false, error: 'invalid fork target authority' };
+      }
+      try {
+        shareSessionWorktree(identity.sessionId, targetConversationId);
+        pendingWorktreeForks.set(targetConversationId, {
+          identity,
+          worktree: sessionWorktree(targetConversationId),
+        });
+        const result = forkSession(
+          identity,
+          targetConversationId,
+          entryId ? { entryId } : { userIndexFromEnd: userIndexFromEnd as number }
+        );
+        if (!result.ok) discardForkWorktree(targetConversationId);
+        return result;
+      } catch (error) {
+        if (pendingWorktreeForks.has(targetConversationId))
+          discardForkWorktree(targetConversationId);
+        return { ok: false, error: error instanceof Error ? error.message : String(error) };
+      }
     }
   );
 

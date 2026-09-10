@@ -238,6 +238,14 @@ export class BackgroundTaskManager {
     return [...this.tasks.keys()];
   }
 
+  hasRunningInWorkspace(rootIds: readonly string[]): boolean {
+    return [...this.tasks.values()].some(
+      (task) =>
+        task.info.status === 'running' &&
+        rootIds.some((id) => task.sessionId === id || task.sessionId.startsWith(`${id}::`))
+    );
+  }
+
   snapshot(sessionId: string): BackgroundTaskInfo[] {
     return [...this.tasks.values()]
       .filter((task) => task.sessionId === sessionId)

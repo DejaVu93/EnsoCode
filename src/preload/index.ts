@@ -107,7 +107,13 @@ import type {
   TerminalExitEvent,
 } from '@shared/types/sidePanel';
 import type { UpdateStatus } from '@shared/types/updater';
-import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import type {
+  SessionWorktree,
+  WorkspaceBranchesResult,
+  WorkspaceBranchSwitchRequest,
+  WorkspaceBranchSwitchResult,
+  WorktreeStatus,
+} from '@shared/types/worktree';
 import type { UsageRangeDays, UsageSummaryResult } from '@shared/usage/types';
 import type {
   WorkspaceSearchQueryRequest,
@@ -549,6 +555,20 @@ const electronAPI = {
   },
 
   worktree: {
+    branches: (conversationId: string): Promise<WorkspaceBranchesResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_BRANCHES, conversationId),
+    switchBranch: (request: WorkspaceBranchSwitchRequest): Promise<WorkspaceBranchSwitchResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_SWITCH_BRANCH, request),
+    bind: (
+      conversationId: string,
+      sourceConversationId: string
+    ): Promise<{ ok: true; value: SessionWorktree } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_BIND, conversationId, sourceConversationId),
+    rename: (
+      conversationId: string,
+      name: string
+    ): Promise<{ ok: true; value: SessionWorktree[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_RENAME, conversationId, name),
     create: (
       conversationId: string,
       projectId: string

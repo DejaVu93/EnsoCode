@@ -4,6 +4,23 @@ import { OperationGate } from './gate';
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('OperationGate', () => {
+  it('reports queued and running operations synchronously and clears after failures', async () => {
+    const gate = new OperationGate();
+    const blocker = Promise.withResolvers<void>();
+    const first = gate.run('root', () => blocker.promise);
+    const second = gate.run('root', async () => {
+      throw new Error('failed');
+    });
+    const rejected = expect(second).rejects.toThrow('failed');
+    expect(gate.hasPending('root')).toBe(true);
+    expect(gate.hasPending('other')).toBe(false);
+    blocker.resolve();
+    await first;
+    expect(gate.hasPending('root')).toBe(true);
+    await rejected;
+    expect(gate.hasPending('root')).toBe(false);
+  });
+
   it('同一 key 的任务串行执行', async () => {
     const gate = new OperationGate();
     const order: string[] = [];

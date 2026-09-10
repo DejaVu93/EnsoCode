@@ -4,10 +4,20 @@
  */
 export class OperationGate {
   private chains = new Map<string, Promise<unknown>>();
+  private readonly pending = new Map<string, number>();
+
+  hasPending(key: string): boolean {
+    return this.pending.has(key);
+  }
 
   run<T>(key: string, task: () => Promise<T>): Promise<T> {
     const prev = this.chains.get(key) ?? Promise.resolve();
-    const next = prev.then(task, task);
+    this.pending.set(key, (this.pending.get(key) ?? 0) + 1);
+    const next = prev.then(task, task).finally(() => {
+      const count = (this.pending.get(key) ?? 1) - 1;
+      if (count) this.pending.set(key, count);
+      else this.pending.delete(key);
+    });
     // 链上只挂「已吞错」的尾巴，避免 unhandled rejection；错误仍从 next 抛给调用方
     this.chains.set(
       key,

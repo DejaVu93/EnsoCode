@@ -57,6 +57,10 @@ export function ChangesView({
   const loadSnapshots = useSidePanelStore((s) => s.loadSnapshots);
 
   const conversation = useSessionsStore((s) => s.conversations[conversationId]);
+  const workspaceRevision = useSessionsStore(
+    (s) => s.workspaceRevisionByConversation[conversationId] ?? 0
+  );
+  const workspaceMigrating = Boolean(conversation?.workspaceMigrating);
   const project = useSettingsStore((s) => s.projects.find((item) => item.id === projectId));
   const ssh = project?.kind === 'ssh';
   const root = conversation?.worktree?.path ?? project?.path;
@@ -106,7 +110,8 @@ export function ChangesView({
   }, [conversationId, loadSnapshots, mode]);
 
   useEffect(() => {
-    if (mode !== 'all') return;
+    void workspaceRevision;
+    if (mode !== 'all' || workspaceMigrating) return;
     const paths = [...new Set(tools.map((tool) => tool.path))];
     let alive = true;
     void Promise.all(
@@ -123,7 +128,7 @@ export function ChangesView({
     return () => {
       alive = false;
     };
-  }, [mode, root, tools]);
+  }, [mode, root, tools, workspaceMigrating, workspaceRevision]);
 
   const allResult = useMemo(
     () => (snapshots ? aggregateSessionChanges({ tools, snapshots, currentByPath }) : NO_FILES),
@@ -144,7 +149,12 @@ export function ChangesView({
   }, [allResult.snapshots, conversationId, mode, saveSnapshots, snapshots]);
 
   useEffect(() => {
+    void workspaceRevision;
     if (mode !== 'git') return;
+    if (workspaceMigrating) {
+      setGitLoading(true);
+      return;
+    }
     if (ssh) {
       setGitError('unavailable');
       setGitFiles([]);
@@ -152,27 +162,35 @@ export function ChangesView({
     }
     let alive = true;
     setGitLoading(true);
-    void window.electronAPI.git.diffHead({ conversationId, projectId }).then((result) => {
-      if (!alive) return;
-      setGitLoading(false);
-      if (!result.ok) {
-        setGitError(result.error);
+    void window.electronAPI.git
+      .diffHead({ conversationId, projectId })
+      .then((result) => {
+        if (!alive) return;
+        setGitLoading(false);
+        if (!result.ok) {
+          setGitError(result.error);
+          setGitFiles([]);
+          return;
+        }
+        setGitError(null);
+        setGitFiles(
+          result.files.map((file) => ({
+            path: file.path,
+            oldText: file.oldText,
+            newText: file.newText,
+          }))
+        );
+      })
+      .catch(() => {
+        if (!alive) return;
+        setGitLoading(false);
+        setGitError('unavailable');
         setGitFiles([]);
-        return;
-      }
-      setGitError(null);
-      setGitFiles(
-        result.files.map((file) => ({
-          path: file.path,
-          oldText: file.oldText,
-          newText: file.newText,
-        }))
-      );
-    });
+      });
     return () => {
       alive = false;
     };
-  }, [conversationId, mode, projectId, ssh]);
+  }, [conversationId, mode, projectId, ssh, workspaceMigrating, workspaceRevision]);
 
   const files = mode === 'git' ? gitFiles : allResult.files;
   // 折叠态按 item id 记；折叠的文件 CodeView 只渲 header，不解析不高亮

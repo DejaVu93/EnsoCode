@@ -13,6 +13,7 @@ import type {
   McpWorkerEvent,
   ModelRef,
   NodeStatus,
+  WorkspaceLockEvent,
 } from '@shared/types/agent';
 import { type AgentTypeEntry, BUILTIN_AGENT_TYPES } from '@shared/types/assets';
 
@@ -102,6 +103,7 @@ function identityOf(
     | { type: 'title-generated' }
     | { type: 'title-failed' }
     | McpWorkerEvent
+    | WorkspaceLockEvent
   >
 ): SessionIdentity {
   return 'child' in event ? event.child : event.identity;
@@ -151,6 +153,38 @@ export class AgentSessionIndex {
 
   currentIdentity(sessionId: string): SessionIdentity | ChildSessionIdentity | undefined {
     return this.sessions.get(sessionId)?.identity;
+  }
+
+  isAlive(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.alive === true;
+  }
+
+  workspaceRoot(sessionId: string): string {
+    const identity = this.currentIdentity(sessionId);
+    if (identity && 'parent' in identity) return this.workspaceRoot(identity.parent.sessionId);
+    for (const session of this.sessions.values()) {
+      if (session.coworkers.has(sessionId)) return this.workspaceRoot(session.identity.sessionId);
+    }
+    const persisted = this.persistedConversation(sessionId);
+    return typeof persisted?.parentId === 'string' && persisted.parentId !== sessionId
+      ? persisted.parentId
+      : sessionId;
+  }
+
+  workspaceTreeRunning(rootId: string): boolean {
+    if (
+      [...this.reservations.values()].some(
+        ({ child }) => this.workspaceRoot(child.parent.sessionId) === rootId
+      )
+    )
+      return true;
+    for (const [id, session] of this.sessions) {
+      if (this.workspaceRoot(id) !== rootId || !session.alive) continue;
+      if (!session.ready || session.status === 'running') return true;
+      if ([...session.coworkers.values()].some((coworker) => coworker.status === 'running'))
+        return true;
+    }
+    return false;
   }
 
   isCurrent(identity: SessionIdentity): boolean {
@@ -333,7 +367,12 @@ export class AgentSessionIndex {
     }
 
     // 手动读取结果不改变会话生命周期或 seq 权威。
-    if (event.type === 'session-reloaded') return false;
+    if (
+      event.type === 'session-reloaded' ||
+      event.type === 'workspace-lock-result' ||
+      event.type === 'workspace-unlock-result'
+    )
+      return false;
     // 标题总结与 MCP 旁路事件不属于任何 worker 会话（无 identity/seq），不进会话索引
     if (event.type === 'title-generated' || event.type === 'title-failed') return false;
     if (event.type === 'mcp-status' || event.type === 'mcp-tokens-refreshed') return false;

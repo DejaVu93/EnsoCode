@@ -29,6 +29,83 @@ afterEach(() => {
 });
 
 describe('WorktreeRegistry', () => {
+  it('patches only branch on each supplied binding and retains disk-mutation truth if persistence fails', () => {
+    const reg = new WorktreeRegistry(file);
+    reg.set(record('c1'));
+    reg.set({ ...record('c2'), baseBranch: 'different', baseCommit: 'different', createdAt: 2 });
+    reg.updateBranches(['c1', 'c2'], 'feature');
+    expect(new WorktreeRegistry(file).get('c2')).toMatchObject({
+      branch: 'feature',
+      baseBranch: 'different',
+      baseCommit: 'different',
+      createdAt: 2,
+    });
+    rmSync(dir, { recursive: true, force: true });
+    writeFileSync(dir, 'blocked directory');
+    expect(() => reg.updateBranches(['c1', 'c2'], 'next')).toThrow();
+    expect(reg.get('c1')?.branch).toBe('next');
+    expect(reg.get('c2')?.branch).toBe('next');
+  });
+  it('a failed persisted deletion restores shared references and can be retried', () => {
+    const reg = new WorktreeRegistry(file);
+    reg.set(record('c1'));
+    reg.share('c1', 'c2');
+    rmSync(dir, { recursive: true, force: true });
+    writeFileSync(dir, 'blocked parent directory');
+    expect(() => reg.delete('c1')).toThrow();
+    expect(reg.get('c1')).toEqual(record('c1'));
+    expect(reg.bindings(record('c1'))).toHaveLength(2);
+    rmSync(dir);
+    reg.delete('c1');
+    expect(reg.get('c1')).toBeUndefined();
+    expect(new WorktreeRegistry(file).get('c2')?.path).toBe(record('c1').path);
+  });
+
+  it('a failed persisted share leaves no in-memory target binding', () => {
+    const reg = new WorktreeRegistry(file);
+    reg.set(record('c1'));
+    rmSync(dir, { recursive: true, force: true });
+    writeFileSync(dir, 'blocked parent directory');
+    expect(() => reg.share('c1', 'c2')).toThrow();
+    expect(reg.get('c2')).toBeUndefined();
+    expect(reg.get('c1')).toEqual(record('c1'));
+  });
+  it('共享绑定按物理工作区计数，删除一个引用不影响其他记录', () => {
+    const reg = new WorktreeRegistry(file);
+    reg.set(record('c1'));
+    reg.share('c1', 'c2');
+    reg.set(record('c3'));
+    expect(reg.bindings(record('c1')).map((r) => r.conversationId)).toEqual(['c1', 'c2']);
+    reg.delete('c1');
+    expect(new WorktreeRegistry(file).get('c2')?.path).toBe(record('c1').path);
+    expect(reg.bindings(record('c1'))).toHaveLength(1);
+  });
+
+  it('命名 trim 并更新全部共享绑定，空名称恢复默认且兼容旧记录', () => {
+    const reg = new WorktreeRegistry(file);
+    reg.set(record('c1'));
+    reg.share('c1', 'c2');
+    reg.set(record('c3'));
+    expect(reg.rename('c1', '  Feature  ').map((r) => r.name)).toEqual(['Feature', 'Feature']);
+    const reloaded = new WorktreeRegistry(file);
+    expect(reloaded.get('c2')).toEqual({ ...record('c1'), conversationId: 'c2', name: 'Feature' });
+    expect(reloaded.get('c3')?.name).toBeUndefined();
+    expect(reloaded.rename('c2', '  ').every((r) => r.name === undefined)).toBe(true);
+    expect(() => reg.rename('c1', 'x'.repeat(81))).toThrow();
+  });
+
+  it('重建同步全部共享绑定的路径但保留各会话身份', () => {
+    const reg = new WorktreeRegistry(file);
+    const old = record('c1');
+    reg.set(old);
+    reg.share('c1', 'c2');
+    reg.replaceBindings(old, { ...old, path: '/new/path' });
+    expect(new WorktreeRegistry(file).get('c2')).toEqual({
+      ...old,
+      conversationId: 'c2',
+      path: '/new/path',
+    });
+  });
   it('set/get/delete 并持久化到磁盘', () => {
     const reg = new WorktreeRegistry(file);
     expect(reg.get('c1')).toBeUndefined();
@@ -42,6 +119,14 @@ describe('WorktreeRegistry', () => {
     reg.delete('c1');
     expect(reg.get('c1')).toBeUndefined();
     expect(new WorktreeRegistry(file).get('c1')).toBeUndefined();
+  });
+
+  it('ignores malformed optional names in persisted records', () => {
+    writeFileSync(file, JSON.stringify({ c1: { ...record('c1'), name: 42 }, c2: record('c2') }));
+    const reg = new WorktreeRegistry(file);
+    expect(reg.get('c1')?.name).toBeUndefined();
+    expect(reg.get('c2')?.name).toBeUndefined();
+    expect(reg.list()).toHaveLength(2);
   });
 
   it('list 按 projectId 过滤', () => {
