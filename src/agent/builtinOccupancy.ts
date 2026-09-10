@@ -8,6 +8,7 @@ import { createIsolatedSandboxTool } from './isolatedSandbox';
 import { createSubagentTool } from './subagent';
 import { createTodoTool } from './todo';
 import { BrowserInvoker, createBrowserTools } from './tools/browser';
+import { createMemoryTools, MemoryInvoker } from './tools/memory';
 
 function fields(tool: { name: string; description?: string; parameters?: unknown }): OccupancyTool {
   return {
@@ -76,6 +77,7 @@ export function snapshotBuiltinOccupancyTools(input?: {
     todo: [fields(createTodoTool())],
     ask_user: [fields(createAskTool(ask))],
     browser: createBrowserTools(browser).map(fields),
+    memory: createMemoryTools(new MemoryInvoker(noopIdentity, () => {})).map(fields),
     background_tasks: createTaskTools({
       read: async () => undefined,
       stop: () => false,

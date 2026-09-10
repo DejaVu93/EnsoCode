@@ -131,6 +131,12 @@ const initialState = {
   smartCompactEnabled: false,
   smartCompactModel: null as import('@shared/defaultModel').DefaultModelRef | null,
   smartCompactMode: 'auto' as import('@shared/smartCompactMode').SmartCompactMode,
+  memoryEmbeddingModel: 'local:potion-multilingual-128M',
+  memoryEmbeddingAutoDownload: false,
+  memoryEmbeddingRemoteProviderId: null as string | null,
+  memoryDistillEnabled: false,
+  memoryKgEnabled: false,
+  memoryWorkingFileEnabled: false,
   autoUpdate: true,
   proxyMode: 'system' as ProxyMode,
   customProxyUrl: '',
@@ -163,6 +169,9 @@ const initialState = {
   defaultModel: null,
   titleSummaryEnabled: false,
   titleSummaryModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  memoryDistillModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  memoryChatModel: 'remote',
+  memoryLanguage: 'en',
   approvalReviewer: null as import('@shared/defaultModel').DefaultModelRef | null,
   lastApprovalMode: null as import('@shared/types/agent').ApprovalMode | null,
   defaultReasoningEnabled: true,
@@ -252,6 +261,14 @@ export const useSettingsStore = create<SettingsState>()(
       setWindowsLocalShell: (windowsLocalShell) =>
         set({ windowsLocalShell: parseWindowsLocalShell(windowsLocalShell) }),
       setExploreFoldEnabled: (exploreFoldEnabled) => set({ exploreFoldEnabled }),
+      setMemoryEmbeddingModel: (memoryEmbeddingModel) => set({ memoryEmbeddingModel }),
+      setMemoryEmbeddingAutoDownload: (memoryEmbeddingAutoDownload) =>
+        set({ memoryEmbeddingAutoDownload }),
+      setMemoryEmbeddingRemoteProviderId: (memoryEmbeddingRemoteProviderId) =>
+        set({ memoryEmbeddingRemoteProviderId }),
+      setMemoryDistillEnabled: (memoryDistillEnabled) => set({ memoryDistillEnabled }),
+      setMemoryKgEnabled: (memoryKgEnabled) => set({ memoryKgEnabled }),
+      setMemoryWorkingFileEnabled: (memoryWorkingFileEnabled) => set({ memoryWorkingFileEnabled }),
       setBashInterceptEnabled: (bashInterceptEnabled) => set({ bashInterceptEnabled }),
       setHashlineEditEnabled: (hashlineEditEnabled) => set({ hashlineEditEnabled }),
       setSmartCompactEnabled: (smartCompactEnabled) => set({ smartCompactEnabled }),
@@ -348,6 +365,9 @@ export const useSettingsStore = create<SettingsState>()(
 
       setTitleSummaryEnabled: (titleSummaryEnabled) => set({ titleSummaryEnabled }),
       setTitleSummaryModel: (titleSummaryModel) => set({ titleSummaryModel }),
+      setMemoryDistillModel: (memoryDistillModel) => set({ memoryDistillModel }),
+      setMemoryChatModel: (memoryChatModel) => set({ memoryChatModel }),
+      setMemoryLanguage: (memoryLanguage) => set({ memoryLanguage }),
       setApprovalReviewer: (approvalReviewer) => set({ approvalReviewer }),
       setLastApprovalMode: (lastApprovalMode) => set({ lastApprovalMode }),
 

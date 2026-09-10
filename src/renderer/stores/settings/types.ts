@@ -121,6 +121,19 @@ export interface SettingsState {
   /** 验证式压缩档位；缺省 auto */
   smartCompactMode: import('@shared/smartCompactMode').SmartCompactMode;
 
+  /** 记忆向量模型注册表 id（none / local:* / remote:*）；模型文件在 userData，这里只存 id */
+  memoryEmbeddingModel: string;
+  /** 本地模型未就绪时是否后台下载；设备本地，缺省关 */
+  memoryEmbeddingAutoDownload: boolean;
+  /** remote:* 模型使用哪个已配置 provider 的 baseUrl/apiKey；设备本地 */
+  memoryEmbeddingRemoteProviderId: string | null;
+  /** 会话结束后是否用 LLM 自动蒸馏长期记忆；缺省关（只想手动记忆的用户保持关闭） */
+  memoryDistillEnabled: boolean;
+  /** 记忆创建后是否用 LLM 异步抽取实体图谱；缺省关 */
+  memoryKgEnabled: boolean;
+  /** 是否维护 userData/memory/working-memory.md 投影文件；缺省关 */
+  memoryWorkingFileEnabled: boolean;
+
   /** 是否自动检查并下载应用更新；缺省 true */
   autoUpdate: boolean;
 
@@ -191,6 +204,12 @@ export interface SettingsState {
   titleSummaryEnabled: boolean;
   /** 标题总结独立模型；null = 跟随全局默认模型 */
   titleSummaryModel: DefaultModelRef | null;
+  /** 记忆提炼模型；null = 跟随标题模型 → 全局默认的既有回退链 */
+  memoryDistillModel: DefaultModelRef | null;
+  /** 记忆补全走远程还是本地 GGUF；`remote` 或 `local:*` 注册表 id */
+  memoryChatModel: string;
+  /** 提炼出的记忆用什么语言写；缺省英文（检索与去重都对英文更稳） */
+  memoryLanguage: string;
   /** 助手代审模型；null = 该档不可用 */
   approvalReviewer: DefaultModelRef | null;
   /** 上次选的审批档；null = 新会话仍按代审可用性默认 */
@@ -248,6 +267,12 @@ export interface SettingsState {
   setLoadHarnessAssets: (value: boolean) => void;
   setWindowsLocalShell: (value: WindowsLocalShell) => void;
   setExploreFoldEnabled: (value: boolean) => void;
+  setMemoryEmbeddingModel: (value: string) => void;
+  setMemoryEmbeddingAutoDownload: (value: boolean) => void;
+  setMemoryEmbeddingRemoteProviderId: (value: string | null) => void;
+  setMemoryDistillEnabled: (value: boolean) => void;
+  setMemoryKgEnabled: (value: boolean) => void;
+  setMemoryWorkingFileEnabled: (value: boolean) => void;
   setBashInterceptEnabled: (value: boolean) => void;
   setHashlineEditEnabled: (value: boolean) => void;
   setSmartCompactEnabled: (value: boolean) => void;
@@ -303,6 +328,10 @@ export interface SettingsState {
   setTitleSummaryEnabled: (value: boolean) => void;
   /** 设置标题总结独立模型；null = 回到跟随全局默认 */
   setTitleSummaryModel: (model: DefaultModelRef | null) => void;
+  /** 记忆提炼独立模型；null = 回落到标题模型 → 全局默认 */
+  setMemoryDistillModel: (model: DefaultModelRef | null) => void;
+  setMemoryChatModel: (modelId: string) => void;
+  setMemoryLanguage: (language: string) => void;
   setApprovalReviewer: (model: DefaultModelRef | null) => void;
   setLastApprovalMode: (mode: ApprovalMode) => void;
   // Skill actions

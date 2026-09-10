@@ -33,6 +33,7 @@ import {
 } from '@shared/types/mentions';
 import { app, ipcMain, webContents } from 'electron';
 import { EnsoSafeJournal } from '../../agent/ensoSafeJournal';
+import { titleSummaryTimeoutMs } from '../../agent/titleSummary';
 import { ActiveConversationRegistry } from '../services/activeConversationRegistry';
 import { AgentDispatchService } from '../services/agentDispatchService';
 import {
@@ -41,9 +42,11 @@ import {
   agentTypeRegistrySnapshot,
   appendSessionCustomEntry,
   compactSession,
+  completeText,
   dismissChildSession,
   dismissCoworkerSession,
   forkSession,
+  isAgentWorkerReady,
   promptChildSession,
   promptSession,
   releaseParentSession,
@@ -57,6 +60,7 @@ import {
   retrySession,
   rewindSession,
   sendBrowserResultToSession,
+  sendMemoryResultToSession,
   setAgentEventListener,
   setPinnedSessions,
   setSessionApprovalMode,
@@ -72,11 +76,19 @@ import {
 } from '../services/agentHost';
 import { pickBrowserFileRoot, setBrowserFileRootResolver } from '../services/browserFileRoot';
 import { browserHost } from '../services/browserHost';
+import { chatModelsRoot } from '../services/chatModels';
 import { reloadConversation } from '../services/conversationReload';
 import { searchFiles } from '../services/fileSearch';
+import { memoryCompleteFromSettings } from '../services/llama/chat';
 import { toStoredTokens } from '../services/mcpOAuth';
 import { getMcpOAuthStore } from '../services/mcpOAuthStore';
 import { clearMcpStatuses, recordMcpStatus } from '../services/mcpStatusCache';
+import {
+  configureMemoryDistill,
+  invokeMemory,
+  rootSessionId,
+  scheduleMemoryDistill,
+} from '../services/memoryHost';
 import { maybeNotify, setViewedSession } from '../services/notifications';
 import { readStoredOauthCredentialKeys } from '../services/oauthProviders';
 import { forwardAgentEvent, setPairAgentBridge } from '../services/pairHost';
@@ -284,6 +296,46 @@ async function readChildHistory(conversationId: string): Promise<ChildHistoryRes
   return { ok: true, projection: await EnsoSafeJournal.restore(resolved) };
 }
 
+/**
+ * 记忆蒸馏的 LLM 入口。设置为本地 GGUF 时走 llama.cpp；否则复用标题总结的远程回退链。
+ * worker 不在线 / 本地权重未就绪返 null，让任务保留 pending 到下次开库续跑。
+ */
+async function distillCompletion(): Promise<
+  ((system: string, user: string) => Promise<string>) | null
+> {
+  const state = (
+    readSettings()?.['enso-settings'] as { state?: Record<string, unknown> } | undefined
+  )?.state;
+  return memoryCompleteFromSettings(state, {
+    modelsRoot: chatModelsRoot(),
+    remoteComplete: () => remoteDistillCompletion(state),
+  });
+}
+
+async function remoteDistillCompletion(
+  state: Record<string, unknown> | undefined
+): Promise<((system: string, user: string) => Promise<string>) | null> {
+  if (!isAgentWorkerReady() || !state) return null;
+  const credentialKeys = await readStoredOauthCredentialKeys();
+  const candidates: SpawnModelConfig[] = [];
+  // 记忆提炼有自己的模型时排在最前；未设则完全走标题模型的既有回退链
+  // （标题总结要快而便宜，提炼要质量，两者诉求不同）
+  const memoryModel = state.memoryDistillModel;
+  const chain = [
+    ...(memoryModel && typeof memoryModel === 'object'
+      ? [memoryModel as { providerId: string; modelId: string }]
+      : []),
+    ...titleModelCandidates(state),
+  ];
+  for (const candidate of chain) {
+    const resolved = resolveModelSelection(candidate.providerId, candidate.modelId, credentialKeys);
+    if (resolved.ok && resolved.selection) candidates.push(resolved.selection.config);
+  }
+  if (candidates.length === 0) return null;
+  return (systemPrompt, userText) =>
+    completeText({ systemPrompt, userText, candidates, timeoutMs: titleSummaryTimeoutMs(1) });
+}
+
 async function readParentHistoryTail(
   conversationId: string,
   beforeIndex?: number
@@ -372,6 +424,7 @@ function wirePairAgentBridge(): void {
 
 export function registerAgentHandlers(): void {
   wirePairAgentBridge();
+  configureMemoryDistill({ complete: distillCompletion });
   const agentDataDir = path.join(app.getPath('userData'), 'agent');
   sourceAuthority = new SourceAuthorityRegistry({
     registryFile: path.join(agentDataDir, 'source-registry.json'),
@@ -542,6 +595,17 @@ export function registerAgentHandlers(): void {
     }
     if (workerEvent.type === 'parent-ended') {
       void browserHost.closeForSession(workerEvent.identity.sessionId, { force: true });
+      // 会话结束 / 闲置回收：从权威 jsonl 异步蒸馏长期记忆（开关、幂等、失败全部在 memoryHost 内收口）
+      const sessionFile = agentSessionIndex.sessionFile(workerEvent.identity);
+      if (sessionFile) {
+        const conversation = sourceAuthority?.conversation(workerEvent.identity.sessionId);
+        const project = conversation ? sourceAuthority?.project(conversation.projectId) : undefined;
+        void scheduleMemoryDistill({
+          sessionId: workerEvent.identity.sessionId,
+          sessionFile,
+          projectId: project?.state === 'active' ? project.projectId : null,
+        });
+      }
     }
     if (workerEvent.type === 'browser-invoke') {
       const { identity, requestId, op, params } = workerEvent;
@@ -549,6 +613,21 @@ export function registerAgentHandlers(): void {
         (result) => sendBrowserResultToSession(identity, requestId, { ok: true, result }),
         (error: unknown) =>
           sendBrowserResultToSession(identity, requestId, {
+            ok: false,
+            error: error instanceof Error ? error.message : String(error),
+          })
+      );
+      return;
+    }
+    if (workerEvent.type === 'memory-invoke') {
+      const { identity, requestId, op, params } = workerEvent;
+      // 项目 space 只认 Main 权威：worker 不上报 projectId，也不上报路径
+      const conversation = sourceAuthority?.conversation(rootSessionId(identity));
+      const project = conversation ? sourceAuthority?.project(conversation.projectId) : undefined;
+      void invokeMemory(op, params, project?.state === 'active' ? project.projectId : null).then(
+        (result) => sendMemoryResultToSession(identity, requestId, { ok: true, result }),
+        (error: unknown) =>
+          sendMemoryResultToSession(identity, requestId, {
             ok: false,
             error: error instanceof Error ? error.message : String(error),
           })

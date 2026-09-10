@@ -966,6 +966,8 @@ export const useSessionsStore = create<SessionsState>()(
           failTitleSummary(event.conversationId, event.error);
           return;
         }
+        // 通用补全结果在 Main 就已结算，不应到达渲染层；到了也与会话无关
+        if (event.type === 'text-completed' || event.type === 'text-failed') return;
 
         const identity = event.type === 'capability-invoke' ? event.child : event.identity;
         const id = identity.sessionId;

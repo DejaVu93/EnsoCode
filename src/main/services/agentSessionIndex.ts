@@ -106,6 +106,8 @@ function identityOf(
     | { type: 'snapshot' | 'session-reloaded' }
     | { type: 'title-generated' }
     | { type: 'title-failed' }
+    | { type: 'text-completed' }
+    | { type: 'text-failed' }
     | McpWorkerEvent
     | WorkspaceLockEvent
   >
@@ -386,6 +388,7 @@ export class AgentSessionIndex {
       return false;
     // 标题总结与 MCP 旁路事件不属于任何 worker 会话（无 identity/seq），不进会话索引
     if (event.type === 'title-generated' || event.type === 'title-failed') return false;
+    if (event.type === 'text-completed' || event.type === 'text-failed') return false;
     if (event.type === 'mcp-status' || event.type === 'mcp-tokens-refreshed') return false;
 
     const identity = identityOf(event);

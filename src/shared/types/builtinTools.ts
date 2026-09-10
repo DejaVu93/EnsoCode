@@ -1,4 +1,4 @@
-/** 内置工具:设置页可开关;禁用后不下发给会话(模型看不到)。默认全开,见 DEFAULT_DISABLED_BUILTIN_TOOLS。 */
+/** 内置工具:设置页可开关;禁用后不下发给会话(模型看不到)。默认开关见 DEFAULT_DISABLED_BUILTIN_TOOLS。 */
 export interface BuiltinToolInfo {
   /** 稳定 id,用于开关持久化与下发过滤 */
   id: string;
@@ -39,6 +39,12 @@ export const BUILTIN_TOOLS: BuiltinToolInfo[] = [
       'Background shell task: run long commands in the background and notify on completion',
   },
   {
+    id: 'memory',
+    name: 'Memory',
+    description:
+      'Long-term memory: the agent can search, capture and consolidate durable decisions, preferences and lessons across sessions',
+  },
+  {
     id: 'isolated_sandbox',
     name: 'Isolated sandbox',
     description:
@@ -46,8 +52,12 @@ export const BUILTIN_TOOLS: BuiltinToolInfo[] = [
   },
 ];
 
-/** 新会话/新安装默认关闭的内置工具。用户打开后从 disabledBuiltinTools 里去掉。 */
-export const DEFAULT_DISABLED_BUILTIN_TOOLS = [] as const;
+/**
+ * 新会话/新安装默认关闭的内置工具。用户打开后从 disabledBuiltinTools 里去掉。
+ * memory 默认关闭是产品决策：它依赖的 embedding 模型不随安装包内置，用户启用后才按需下载；
+ * 未启用时也不创建 memory.db（见 main/services/memoryHost.ts 的懒开）。
+ */
+export const DEFAULT_DISABLED_BUILTIN_TOOLS = ['memory'] as const;
 
 /** Main 直读磁盘时把未知形状收成 string[]；缺字段走默认关闭列表（空 = 全开）。 */
 export function effectiveDisabledBuiltinTools(disabled: unknown): string[] {

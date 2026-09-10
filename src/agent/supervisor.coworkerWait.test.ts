@@ -981,6 +981,32 @@ describe('SessionSupervisor coworker wait/report', () => {
     expect(childFactories?.some((factory) => factory.name === 'explore-fold')).toBe(true);
   });
 
+  it('memory 开关：默认下发 memory_search/memory_capture，关掉后不下发', async () => {
+    const tools = async (disabledTools: string[]) => {
+      const supervisor = new SessionSupervisor({
+        emit: () => {},
+        agentDir: '/tmp/agent',
+        sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-cw-')),
+      });
+      const calls = mocks.createAgentSession.mock.calls.length;
+      supervisor.handleCommand({
+        type: 'spawn-parent',
+        identity: parent,
+        cwd: '/workspace',
+        model,
+        disabledTools,
+      });
+      await settleUntil(() => mocks.createAgentSession.mock.calls.length > calls);
+      return (
+        mocks.createAgentSession.mock.calls[calls][0] as { customTools: Array<{ name: string }> }
+      ).customTools.map((tool) => tool.name);
+    };
+    expect(await tools([])).toEqual(expect.arrayContaining(['memory_search', 'memory_capture']));
+    const disabled = await tools(['memory']);
+    expect(disabled).not.toContain('memory_search');
+    expect(disabled).not.toContain('memory_capture');
+  });
+
   it('父关掉 isolated_sandbox / explore-fold 时子也不下发', async () => {
     const events: AgentWorkerEvent[] = [];
     const supervisor = new SessionSupervisor({

@@ -115,6 +115,10 @@ export const BROWSER_OPS = [
 ] as const;
 export type BrowserOp = (typeof BROWSER_OPS)[number];
 
+/** 记忆库活在 Main（better-sqlite3），worker 只发 memory-invoke 事件；op 闭集在这里冻结 */
+export const MEMORY_OPS = ['search', 'capture', 'crystallize'] as const;
+export type MemoryOp = (typeof MEMORY_OPS)[number];
+
 /** 待审批请求（worker → 渲染层） */
 export interface ApprovalRequestInfo {
   requestId: string;
@@ -537,6 +541,8 @@ export type AgentCommand =
       smartCompactSummaryModel?: SpawnModelConfig;
       /** 验证式压缩档位；缺省 auto（按占用跳档） */
       smartCompactMode?: import('../smartCompactMode').SmartCompactMode;
+      /** 记忆存储语言（settings.memoryLanguage）；写进 memory_search 描述，让模型用对语言查 */
+      memoryLanguage?: string;
       skillPaths?: string[];
       mcpServers?: McpServerSpawnConfig[];
       instruction?: { path: string; content: string };
@@ -624,6 +630,14 @@ export type AgentCommand =
       result?: unknown;
       error?: string;
     }
+  | {
+      type: 'memory-result';
+      identity: SessionIdentity | ChildSessionIdentity;
+      requestId: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }
   | { type: 'task-stop'; identity: SessionIdentity; taskId: string }
   | { type: 'subagent-stop'; identity: SessionIdentity; agentId: string }
   | {
@@ -648,6 +662,15 @@ export type AgentCommand =
       input: TitleSummaryInput;
       /** 回退链上全部可解析候选，按优先级排序；1–3 项 */
       candidates: SpawnModelConfig[];
+    }
+  | {
+      /** 通用一次性文本补全（记忆蒸馏用）：同 summarize-title 的候选链语义，结果经 text-completed / text-failed 按 requestId 回流 */
+      type: 'complete-text';
+      requestId: string;
+      systemPrompt: string;
+      userText: string;
+      candidates: SpawnModelConfig[];
+      timeoutMs: number;
     }
   | { type: 'abort-retry'; identity: SessionIdentity }
   | { type: 'retry'; identity: SessionIdentity }
@@ -1021,6 +1044,14 @@ export type AgentWorkerEvent =
       params: unknown;
     }
   | {
+      type: 'memory-invoke';
+      identity: SessionIdentity | ChildSessionIdentity;
+      seq: number;
+      requestId: string;
+      op: MemoryOp;
+      params: unknown;
+    }
+  | {
       type: 'goal-signal';
       identity: SessionIdentity;
       seq: number;
@@ -1040,6 +1071,8 @@ export type AgentWorkerEvent =
       conversationId: string;
       error: string;
     }
+  | { type: 'text-completed'; requestId: string; text: string }
+  | { type: 'text-failed'; requestId: string; error: string }
   | {
       type: 'task-output';
       identity: SessionIdentity;
@@ -1859,6 +1892,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           'smartCompactEnabled',
           'smartCompactSummaryModel',
           'smartCompactMode',
+          'memoryLanguage',
           'skillPaths',
           'mcpServers',
           'instruction',
@@ -1890,6 +1924,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           parseSpawnModelConfig(value.smartCompactSummaryModel) === null) ||
         (value.smartCompactMode !== undefined &&
           parseSmartCompactMode(value.smartCompactMode) === null) ||
+        (value.memoryLanguage !== undefined && typeof value.memoryLanguage !== 'string') ||
         (value.remote !== undefined && parseAgentRemoteConfig(value.remote) === null) ||
         (value.subagentModels !== undefined &&
           (!Array.isArray(value.subagentModels) ||
@@ -1958,6 +1993,27 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         ? (value as unknown as AgentCommand)
         : null;
     }
+    case 'complete-text':
+      return hasExactKeys(value, [
+        'type',
+        'requestId',
+        'systemPrompt',
+        'userText',
+        'candidates',
+        'timeoutMs',
+      ]) &&
+        isNonEmptyString(value.requestId) &&
+        typeof value.systemPrompt === 'string' &&
+        typeof value.userText === 'string' &&
+        typeof value.timeoutMs === 'number' &&
+        Number.isFinite(value.timeoutMs) &&
+        value.timeoutMs > 0 &&
+        Array.isArray(value.candidates) &&
+        value.candidates.length >= 1 &&
+        value.candidates.length <= TITLE_SUMMARY_MAX_CANDIDATES &&
+        value.candidates.every((candidate) => parseSpawnModelConfig(candidate))
+        ? (value as unknown as AgentCommand)
+        : null;
     case 'summarize-title':
       return hasExactKeys(value, ['type', 'conversationId', 'input', 'candidates']) &&
         isNonEmptyString(value.conversationId) &&
@@ -2037,7 +2093,8 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         parseCapabilityExecutionEnvelope(value.envelope)
         ? (value as unknown as AgentCommand)
         : null;
-    case 'browser-result': {
+    case 'browser-result':
+    case 'memory-result': {
       if (
         !hasOnlyKeys(value, ['type', 'identity', 'requestId', 'ok', 'result', 'error']) ||
         !parseAnySessionIdentity(value.identity) ||
@@ -2273,6 +2330,20 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
       ? (value as unknown as AgentWorkerEvent)
       : null;
   }
+  if (value.type === 'text-completed') {
+    return hasExactKeys(value, ['type', 'requestId', 'text']) &&
+      isNonEmptyString(value.requestId) &&
+      typeof value.text === 'string'
+      ? (value as unknown as AgentWorkerEvent)
+      : null;
+  }
+  if (value.type === 'text-failed') {
+    return hasExactKeys(value, ['type', 'requestId', 'error']) &&
+      isNonEmptyString(value.requestId) &&
+      isNonEmptyString(value.error)
+      ? (value as unknown as AgentWorkerEvent)
+      : null;
+  }
   const identity = parseAnySessionIdentity(value.identity);
   if (!identity || !isSequence(value.seq)) return null;
   switch (value.type) {
@@ -2280,6 +2351,12 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
       return hasExactKeys(value, ['type', 'identity', 'seq', 'requestId', 'op', 'params']) &&
         isNonEmptyString(value.requestId) &&
         BROWSER_OPS.includes(value.op as BrowserOp)
+        ? (value as unknown as AgentWorkerEvent)
+        : null;
+    case 'memory-invoke':
+      return hasExactKeys(value, ['type', 'identity', 'seq', 'requestId', 'op', 'params']) &&
+        isNonEmptyString(value.requestId) &&
+        MEMORY_OPS.includes(value.op as MemoryOp)
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'workspace-branch-context-consumed':

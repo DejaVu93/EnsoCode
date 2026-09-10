@@ -108,6 +108,7 @@ afterEach(() => { fs.rmSync(tmp, { recursive: true, force: true }); });
 - 真机验收这类功能时，至少跑两个不同厂商的模型（如 xAI + Anthropic）
 - 工具参数 schema **必须写 `type`**，不能只给 description 让模型自己猜
 - 形态归一放 `prepareArguments`（schema 校验**之前**），放 `execute` 里就晚了
+- 归一产物必须能通过工具自己的 schema：不得追加未声明的键（见 [big-question/tool-prepare-arguments-schema-drift.md](big-question/tool-prepare-arguments-schema-drift.md)）
 - 面向模型的 list 类能力开出什么标识，写入类能力就要能收什么标识
 
 ## 修 bug 时

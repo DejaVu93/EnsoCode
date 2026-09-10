@@ -9,6 +9,7 @@ import { registerFileHandlers } from './files';
 import { registerFilesWorkspaceHandlers } from './filesWorkspace';
 import { registerGitHandlers } from './git';
 import { registerMcpHandlers } from './mcp';
+import { registerMemoryHandlers } from './memory';
 import { registerNodesHandlers } from './nodes';
 import { registerPairHandlers } from './pair';
 import { registerProjectHandlers } from './projects';
@@ -47,6 +48,7 @@ export function registerIpcHandlers(): void {
   registerTerminalHandlers();
   registerWorkspaceSearchHandlers();
   registerUsageHandlers();
+  registerMemoryHandlers();
 
   // 所有新建窗口自动挂载状态事件
   app.on('browser-window-created', (_, win) => {
