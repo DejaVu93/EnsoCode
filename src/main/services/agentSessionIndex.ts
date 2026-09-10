@@ -6,6 +6,10 @@ import {
   isSameChildSessionIdentity,
   type SessionIdentity,
 } from '@shared/builtinAgents';
+import {
+  DEFAULT_MAX_ACTIVE_COWORKERS,
+  normalizeMaxActiveCoworkers,
+} from '@shared/maxActiveCoworkers';
 import type {
   AgentWorkerEvent,
   ChildConversationMetadata,
@@ -17,7 +21,7 @@ import type {
 } from '@shared/types/agent';
 import { type AgentTypeEntry, BUILTIN_AGENT_TYPES } from '@shared/types/assets';
 
-export const MAX_ORIGIN_COWORKERS = 5;
+export const MAX_ORIGIN_COWORKERS = DEFAULT_MAX_ACTIVE_COWORKERS;
 
 interface IndexedSession {
   identity: SessionIdentity | ChildSessionIdentity;
@@ -136,6 +140,12 @@ export class AgentSessionIndex {
     this.randomUuid = options.randomUuid ?? randomUUID;
   }
 
+  private originCoworkerLimit(): number {
+    return normalizeMaxActiveCoworkers(
+      settingsState(this.options.readSettings()).maxActiveCoworkers
+    );
+  }
+
   prepareParent(identity: SessionIdentity): void {
     const current = this.sessions.get(identity.sessionId);
     if (current && isSameGeneration(current.identity, identity)) return;
@@ -221,11 +231,12 @@ export class AgentSessionIndex {
       return { ok: false, code: 'stale-parent', error: 'Parent generation is no longer current.' };
     }
     const occupied = session.coworkers.size + this.parentReservations(parent).length;
-    if (occupied >= MAX_ORIGIN_COWORKERS) {
+    const limit = this.originCoworkerLimit();
+    if (occupied >= limit) {
       return {
         ok: false,
         code: 'capacity-reached',
-        error: `Coworker limit reached (${MAX_ORIGIN_COWORKERS} active or reserved).`,
+        error: 'Coworker limit reached (active or reserved).',
       };
     }
 
@@ -277,11 +288,11 @@ export class AgentSessionIndex {
       return { ok: false, code: 'stale-parent', error: 'Parent generation is no longer current.' };
     }
     const occupied = session.coworkers.size + this.parentReservations(parent).length;
-    if (occupied >= MAX_ORIGIN_COWORKERS) {
+    if (occupied >= this.originCoworkerLimit()) {
       return {
         ok: false,
         code: 'capacity-reached',
-        error: `Coworker limit reached (${MAX_ORIGIN_COWORKERS} active or reserved).`,
+        error: 'Coworker limit reached (active or reserved).',
       };
     }
     // 撞名检查要排除自身：usedNames 扫持久化防跨重启撞名，而 resume 的 child

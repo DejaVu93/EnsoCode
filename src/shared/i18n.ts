@@ -457,8 +457,7 @@ export const zhTranslations: Record<string, string> = {
   'Model credentials could not be verified.': '无法验证模型凭证。',
   'The parent model is unavailable.': '父会话模型不可用。',
   'The Agent type is unavailable.': 'Agent 类型不可用。',
-  'Coworker limit reached (5 active or reserved).':
-    '已达到容量上限（5 个正在运行或已预留的子 Agent）。',
+  'Coworker limit reached (active or reserved).': '已达到容量上限（正在运行或已预留的 coworker）。',
   'Failed to spawn parent container.': '无法启动父会话容器。',
   'Failed to spawn child Agent.': '无法启动子 Agent。',
   'Agent worker exited before ready.': 'Agent worker 在就绪前退出。',
@@ -843,6 +842,9 @@ export const zhTranslations: Record<string, string> = {
   'Interrupt and send now': '打断并立即发送',
   Remove: '移除',
   'Agent types': '子代理类型',
+  'Max active coworkers': '同时在编 coworker 上限',
+  'How many coworkers one conversation can keep at once. Existing ones stay if you lower the limit; hire more only after dismissing. Subagents are not counted.':
+    '单个会话最多同时保留多少个 coworker。调低上限不会解散现有成员，雇新的前需先解雇。subagent 不计入。',
   'Built-in tools': '内置工具',
   'Toggle the built-in tools available to agents.': '开关 agent 可用的内置工具。',
   'Isolated sandbox': '隔离沙箱',

@@ -1,6 +1,10 @@
 import { sanitizeDefaultModel } from '@shared/defaultModel';
 import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
+import {
+  DEFAULT_MAX_ACTIVE_COWORKERS,
+  normalizeMaxActiveCoworkers,
+} from '@shared/maxActiveCoworkers';
 import { applyProjectGroupPatch } from '@shared/projectGroups';
 import { projectNameFromPath } from '@shared/projectName';
 import { applyIncomingProviders } from '@shared/providerIdentity';
@@ -135,6 +139,7 @@ const initialState = {
   expandLiveEdits: true,
   chatWide: false,
   notifyMainAgentOnly: true,
+  maxActiveCoworkers: DEFAULT_MAX_ACTIVE_COWORKERS,
   generationStallTimeoutMin: 0,
   autoArchiveIdleDays: DEFAULT_AUTO_ARCHIVE_IDLE_DAYS,
   autoArchiveMergedWorktrees: false,
@@ -266,6 +271,8 @@ export const useSettingsStore = create<SettingsState>()(
         set({ chatWide });
       },
       setNotifyMainAgentOnly: (notifyMainAgentOnly) => set({ notifyMainAgentOnly }),
+      setMaxActiveCoworkers: (value) =>
+        set({ maxActiveCoworkers: normalizeMaxActiveCoworkers(value) }),
       setGenerationStallTimeoutMin: (minutes) =>
         set({
           generationStallTimeoutMin: Number.isFinite(minutes)
@@ -818,6 +825,10 @@ export const useSettingsStore = create<SettingsState>()(
           segments.some((id, i) => s.statusLineSegments[i] !== id)
         ) {
           useSettingsStore.setState({ statusLineSegments: segments });
+        }
+        const maxActiveCoworkers = normalizeMaxActiveCoworkers(s.maxActiveCoworkers);
+        if (maxActiveCoworkers !== s.maxActiveCoworkers) {
+          useSettingsStore.setState({ maxActiveCoworkers });
         }
         const autoArchiveIdleDays = normalizeAutoArchiveIdleDays(s.autoArchiveIdleDays);
         if (autoArchiveIdleDays !== s.autoArchiveIdleDays) {

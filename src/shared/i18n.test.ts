@@ -136,7 +136,7 @@ const MODEL_CENTER_ENSO_I18N_KEYS = [
   'unavailable',
   'cancelled',
   // Capacity and exact ready handshake failures surfaced in the current TAB
-  'Coworker limit reached (5 active or reserved).',
+  'Coworker limit reached (active or reserved).',
   'Agent worker exited before ready.',
   'Agent session was rejected before ready.',
   'Agent session ready handshake timed out.',

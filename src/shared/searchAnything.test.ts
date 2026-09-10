@@ -208,6 +208,7 @@ describe('buildSettingsCatalog', () => {
     'providers.root',
     'presets.root',
     'agents.root',
+    'agents.maxActiveCoworkers',
     'tools.root',
     'tools.bashInterceptEnabled',
     'tools.hashlineEditEnabled',

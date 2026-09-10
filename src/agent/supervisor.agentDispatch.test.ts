@@ -661,6 +661,78 @@ describe('SessionSupervisor deterministic child lifecycle', () => {
     );
   });
 
+  it('set-max-active-coworkers 把新雇上限改成 1', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const supervisor = new SessionSupervisor({
+      emit: (event) => events.push(event),
+      agentDir: '/tmp/agent',
+      sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-dispatch-')),
+    });
+    supervisor.handleCommand({
+      type: 'spawn-parent',
+      identity: parent,
+      cwd: '/workspace',
+      model,
+    });
+    await waitFor(events, 'parent-ready');
+    supervisor.handleCommand({ type: 'set-max-active-coworkers', limit: 1 });
+
+    const first = {
+      sessionId: 'parent::cw-first',
+      generation: '88888888-8888-4888-8888-888888888888',
+      parent,
+      instanceId: '99999999-9999-4999-8999-999999999999',
+      instanceName: 'Scout-99999999',
+      typeKey: 'builtin:scout' as const,
+    };
+    const scoutConfig = {
+      typeKey: 'builtin:scout' as const,
+      displayName: 'Scout',
+      description: 'Read-only scout',
+      spawnSpecId: 'spawn-scout-first',
+      systemPrompt: 'scout role',
+      model,
+      tools: 'readonly' as const,
+      skillPaths: [],
+      skillBindingIds: [],
+      mcpServers: [],
+      mcpBindingIds: [],
+      systemPromptHash: 'scout-hash',
+    };
+    supervisor.handleCommand({
+      type: 'spawn-child',
+      identity: first,
+      cwd: '/workspace',
+      config: scoutConfig,
+    });
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'child-ready', identity: first })
+    );
+
+    const second = {
+      ...first,
+      sessionId: 'parent::cw-second',
+      generation: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      instanceId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      instanceName: 'Scout-bbbbbbbb',
+    };
+    supervisor.handleCommand({
+      type: 'spawn-child',
+      identity: second,
+      cwd: '/workspace',
+      config: { ...scoutConfig, spawnSpecId: 'spawn-scout-second' },
+    });
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'child-rejected',
+        identity: second,
+        reason: expect.stringContaining('coworker limit reached (1 active)'),
+      })
+    );
+  });
+
   it('rejects an ordinary exact profile when a configured MCP fails to establish', async () => {
     const events: AgentWorkerEvent[] = [];
     const supervisor = new SessionSupervisor({

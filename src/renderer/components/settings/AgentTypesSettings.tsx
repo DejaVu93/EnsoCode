@@ -1,5 +1,6 @@
 import { ENSO_AGENT_TYPE_KEY, isReservedAgentTypeName } from '@shared/builtinAgents';
 import { SUBAGENT_MODELS_CONFIGURE_PROMPT } from '@shared/i18n';
+import { MAX_MAX_ACTIVE_COWORKERS, MIN_MAX_ACTIVE_COWORKERS } from '@shared/maxActiveCoworkers';
 import type { AgentTypeEntry, AgentTypeModelMode } from '@shared/types';
 import { hasProviderCredentials, MODEL_THINKING_LEVEL_OVERRIDES } from '@shared/types';
 import { BUILTIN_AGENT_TYPES } from '@shared/types/assets';
@@ -18,6 +19,13 @@ import {
 } from '@/components/ui/dialog';
 import { Field, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { useI18n } from '@/i18n';
 import { useSettingsStore } from '@/stores/settings';
@@ -39,6 +47,7 @@ export function AgentTypesSettings() {
           )}
         </p>
       </div>
+      <MaxActiveCoworkersRow />
       {!hasSubagentModels && (
         <Alert variant="warning" className="text-xs">
           <AlertCircle className="h-4 w-4" />
@@ -65,6 +74,50 @@ export function AgentTypesSettings() {
         </Alert>
       )}
       <AgentTypeList hasSubagentModels={hasSubagentModels} />
+    </div>
+  );
+}
+
+const MAX_ACTIVE_COWORKER_OPTIONS = Array.from(
+  { length: MAX_MAX_ACTIVE_COWORKERS - MIN_MAX_ACTIVE_COWORKERS + 1 },
+  (_, index) => MIN_MAX_ACTIVE_COWORKERS + index
+);
+
+function MaxActiveCoworkersRow() {
+  const { t } = useI18n();
+  const maxActiveCoworkers = useSettingsStore((state) => state.maxActiveCoworkers);
+  const setMaxActiveCoworkers = useSettingsStore((state) => state.setMaxActiveCoworkers);
+  return (
+    <div
+      className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5"
+      data-settings-row="agents.maxActiveCoworkers"
+    >
+      <div className="min-w-0">
+        <p className="text-sm">{t('Max active coworkers')}</p>
+        <p className="text-xs text-muted-foreground">
+          {t(
+            'How many coworkers one conversation can keep at once. Existing ones stay if you lower the limit; hire more only after dismissing. Subagents are not counted.'
+          )}
+        </p>
+      </div>
+      <Select
+        items={Object.fromEntries(
+          MAX_ACTIVE_COWORKER_OPTIONS.map((value) => [String(value), String(value)])
+        )}
+        value={String(maxActiveCoworkers)}
+        onValueChange={(value) => setMaxActiveCoworkers(Number(value))}
+      >
+        <SelectTrigger className="w-20">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectPopup>
+          {MAX_ACTIVE_COWORKER_OPTIONS.map((value) => (
+            <SelectItem key={value} value={String(value)}>
+              {value}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
     </div>
   );
 }

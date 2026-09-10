@@ -17,6 +17,7 @@ import {
   type ModelCredentialContext,
   modelUsability,
 } from '@shared/defaultModel';
+import { normalizeMaxActiveCoworkers } from '@shared/maxActiveCoworkers';
 import { mcpTimeoutsForSpawn } from '@shared/mcpTimeout';
 import { pickModelCapabilityOverrides } from '@shared/modelCatalog';
 import { proxyEnvPatchFromEnv } from '@shared/proxy';
@@ -162,6 +163,7 @@ export function startAgentWorker(): void {
     commandsPending = [];
     for (const command of queued) child.postMessage(command);
     pushApprovalReviewer();
+    pushMaxActiveCoworkers();
   });
   child.on('message', (raw) => {
     const event = parseAgentWorkerEvent(raw);
@@ -1062,6 +1064,14 @@ export function pushApprovalReviewer(authenticatedAccountKeys?: ReadonlySet<stri
   worker.postMessage({
     type: 'set-approval-reviewer',
     ...(model ? { model } : {}),
+  } satisfies AgentCommand);
+}
+
+export function pushMaxActiveCoworkers(): void {
+  if (!worker || !workerReady) return;
+  worker.postMessage({
+    type: 'set-max-active-coworkers',
+    limit: normalizeMaxActiveCoworkers(readSettingsState()?.maxActiveCoworkers),
   } satisfies AgentCommand);
 }
 

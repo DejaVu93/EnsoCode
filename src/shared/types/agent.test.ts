@@ -355,6 +355,19 @@ describe('parent/child commands', () => {
     ).toBeNull();
   });
 
+  it('set-max-active-coworkers 只接受 1–20 整数', () => {
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 5 })).toEqual({
+      type: 'set-max-active-coworkers',
+      limit: 5,
+    });
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 1 })).not.toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 20 })).not.toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 0 })).toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 21 })).toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 5.5 })).toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers' })).toBeNull();
+  });
+
   it('spawn-parent 携 bashInterceptEnabled:合法通过,脏值拒绝', () => {
     const base = { type: 'spawn-parent', identity: parent, cwd: '/repo', model };
     expect(parseAgentCommand({ ...base, bashInterceptEnabled: true })).toEqual({

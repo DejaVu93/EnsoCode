@@ -151,6 +151,34 @@ describe('AgentSessionIndex generation and reservation authority', () => {
     ).toMatchObject({ ok: true });
   });
 
+  it('读取 settings 的 maxActiveCoworkers，脏值回落默认 5', () => {
+    const withLimit = (value: unknown) =>
+      new AgentSessionIndex({
+        readSettings: () => ({ 'enso-settings': { state: { maxActiveCoworkers: value } } }),
+        randomUuid: uuids(),
+      });
+
+    const two = withLimit(2);
+    two.prepareParent(parent);
+    expect(two.reserveChild(parent, 'builtin:worker', 'Worker', 'a').ok).toBe(true);
+    expect(two.reserveChild(parent, 'builtin:worker', 'Worker', 'b').ok).toBe(true);
+    expect(two.reserveChild(parent, 'builtin:worker', 'Worker', 'c')).toMatchObject({
+      ok: false,
+      code: 'capacity-reached',
+    });
+
+    const dirty = withLimit('nope');
+    dirty.prepareParent(parent);
+    const reserved = Array.from({ length: MAX_ORIGIN_COWORKERS }, (_, position) =>
+      dirty.reserveChild(parent, 'builtin:worker', 'Worker', `fill-${position}`)
+    );
+    expect(reserved.every((result) => result.ok)).toBe(true);
+    expect(dirty.reserveChild(parent, 'builtin:worker', 'Worker', 'overflow')).toMatchObject({
+      ok: false,
+      code: 'capacity-reached',
+    });
+  });
+
   it('reserveChildResume 保留原 instanceId/name/typeKey，只换新 generation', () => {
     // §7.3：resume 的身份连续性——sessionFile/instanceId/name 不变，每次恢复新 generation。
     const sessions = index();

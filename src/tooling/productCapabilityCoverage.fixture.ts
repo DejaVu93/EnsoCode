@@ -65,6 +65,7 @@ export const SETTINGS_DATA_COVERAGE = {
   notifyMainAgentOnly: excluded(
     'Desktop/phone completion notification preference; not an Enso capability.'
   ),
+  maxActiveCoworkers: excluded('Desktop coworker capacity preference; not an Enso capability.'),
   generationStallTimeoutMin: excluded('Renderer stall-abort preference; not an Enso capability.'),
   autoArchiveIdleDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
   autoArchiveMergedWorktrees: excluded(
@@ -159,6 +160,7 @@ export const SETTINGS_ACTION_COVERAGE = {
   setNotifyMainAgentOnly: excluded(
     'Desktop/phone completion notification preference; not an Enso capability.'
   ),
+  setMaxActiveCoworkers: excluded('Desktop coworker capacity preference; not an Enso capability.'),
   setGenerationStallTimeoutMin: excluded(
     'Renderer stall-abort preference; not an Enso capability.'
   ),

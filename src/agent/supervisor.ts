@@ -22,6 +22,7 @@ import {
   isSameChildSessionIdentity,
   type SessionIdentity,
 } from '@shared/builtinAgents';
+import { DEFAULT_MAX_ACTIVE_COWORKERS } from '@shared/maxActiveCoworkers';
 import {
   findCatalogModelById,
   positiveContextWindow,
@@ -495,6 +496,7 @@ export class SessionSupervisor {
   private pinned: ReadonlySet<string> = new Set();
   private readonly evictionTimer: ReturnType<typeof setInterval>;
   private approvalReviewer: SpawnModelConfig | undefined;
+  private maxActiveCoworkers = DEFAULT_MAX_ACTIVE_COWORKERS;
   /** 父会话通知(合并投递):闲则注入合成提示唤醒,忙则挂 pending 搭下次工具结果 */
   private readonly notifier = new ParentNotifier((sessionId, text) => {
     this.deliverNotification(sessionId, text);
@@ -765,6 +767,10 @@ export class SessionSupervisor {
     }
     if (command.type === 'set-approval-reviewer') {
       this.approvalReviewer = command.model;
+      return;
+    }
+    if (command.type === 'set-max-active-coworkers') {
+      this.maxActiveCoworkers = command.limit;
       return;
     }
     const identity =
@@ -2058,8 +2064,8 @@ export class SessionSupervisor {
     }
     // 容量对 resume 豁免（与 coworker 路径同语义）：恢复量受关机前存量约束，
     // 不是疯雇；上限的目的是防主 agent 循环雇人。
-    if (!resumeFile && parent.coworkers.size >= MAX_ACTIVE_COWORKERS) {
-      throw new Error(`coworker limit reached (${MAX_ACTIVE_COWORKERS} active)`);
+    if (!resumeFile && parent.coworkers.size >= this.maxActiveCoworkers) {
+      throw new Error(`coworker limit reached (${this.maxActiveCoworkers} active)`);
     }
 
     let managedRef: ManagedSession | undefined;
@@ -2173,9 +2179,9 @@ export class SessionSupervisor {
     const factory = parent.factory;
     if (!factory) throw new Error(`session cannot hire coworkers: ${parentId}`);
     if (parent.coworkers.has(name)) throw new Error(`coworker name already in use: ${name}`);
-    if (!resumeFile && parent.coworkers.size >= MAX_ACTIVE_COWORKERS) {
+    if (!resumeFile && parent.coworkers.size >= this.maxActiveCoworkers) {
       throw new Error(
-        `coworker limit reached (${MAX_ACTIVE_COWORKERS} active) — dismiss one before hiring more`
+        `coworker limit reached (${this.maxActiveCoworkers} active) — dismiss one before hiring more`
       );
     }
     if (this.sessions.has(coworkerId)) throw new Error(`coworker already exists: ${coworkerId}`);
@@ -3341,8 +3347,6 @@ export class SessionSupervisor {
   }
 }
 
-/** 同一父会话的在编 coworker 上限,防主 agent 循环疯狂雇人 */
-const MAX_ACTIVE_COWORKERS = 5;
 /** 投影 idle 但 pi 仍 streaming 时，等它真正空闲的上限；超时视为僵尸轮 */
 const ZOMBIE_TURN_WAIT_MS = 5_000;
 

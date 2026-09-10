@@ -19,6 +19,7 @@ import {
   parseCapabilityResult,
 } from '../capabilities/types';
 import type { DefaultModelRef } from '../defaultModel';
+import { parseMaxActiveCoworkers } from '../maxActiveCoworkers';
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
 import { parseSmartCompactMode } from '../smartCompactMode';
 import { WINDOWS_LOCAL_SHELLS, type WindowsLocalShell } from '../windowsLocalShell';
@@ -605,6 +606,7 @@ export type AgentCommand =
     }
   | { type: 'set-approval-mode'; identity: SessionIdentity; mode: ApprovalMode }
   | { type: 'set-approval-reviewer'; model?: SpawnModelConfig }
+  | { type: 'set-max-active-coworkers'; limit: number }
   | { type: 'compact'; identity: SessionIdentity; instructions?: string }
   | { type: 'ask-respond'; identity: SessionIdentity; requestId: string; answer: string }
   | {
@@ -2014,6 +2016,10 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
     case 'set-approval-reviewer':
       return hasOnlyKeys(value, ['type', 'model']) &&
         (value.model === undefined || parseSpawnModelConfig(value.model))
+        ? (value as unknown as AgentCommand)
+        : null;
+    case 'set-max-active-coworkers':
+      return hasExactKeys(value, ['type', 'limit']) && parseMaxActiveCoworkers(value.limit) !== null
         ? (value as unknown as AgentCommand)
         : null;
     case 'ask-respond':
