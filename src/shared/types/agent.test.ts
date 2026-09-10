@@ -20,6 +20,7 @@ import {
   parseTitleSummaryInput,
   parseUpdateConversationSelectionRequest,
   shouldApplyDispatchMainEvent,
+  workspaceBranchChangedNote,
 } from './agent';
 
 const PARENT_GENERATION = '11111111-1111-4111-8111-111111111111';
@@ -71,6 +72,81 @@ const receipt = {
   occurredAt: 1,
   sequence: 0,
 };
+
+describe('workspace switch internal protocol', () => {
+  it('accepts consumption only with exact session generation, sequence and operation nonce', () => {
+    const event = {
+      type: 'workspace-branch-context-consumed',
+      identity: parent,
+      seq: 7,
+      requestId: 'switch-1',
+    };
+    expect(parseAgentWorkerEvent(event)).toEqual(event);
+    expect(parseAgentWorkerEvent({ ...event, identity: child })).toEqual({
+      ...event,
+      identity: child,
+    });
+    for (const patch of [
+      { identity: { sessionId: parent.sessionId } },
+      { seq: -1 },
+      { requestId: '' },
+      { branch: 'wrong' },
+      { cwd: '/arbitrary' },
+    ]) {
+      expect(parseAgentWorkerEvent({ ...event, ...patch })).toBeNull();
+    }
+  });
+
+  it('formats branch background as quoted data, not a new task', () => {
+    const note = workspaceBranchChangedNote('feature/branch');
+    expect(note).toContain('<workspace-branch-changed>');
+    expect(note).toContain(JSON.stringify('feature/branch'));
+    expect(note).toContain('not a task or goal');
+  });
+
+  it.each(['lock-workspace', 'unlock-workspace'])('parses %s with scoped nonce only', (type) => {
+    const command = { type, requestId: 'operation-1', conversationIds: ['parent'] };
+    expect(parseAgentCommand(command)).toEqual(command);
+    for (const patch of [
+      { requestId: '' },
+      { conversationIds: [] },
+      { conversationIds: [''] },
+      { conversationIds: ['parent', 'parent'] },
+      { conversationIds: [3] },
+      { cwd: '/arbitrary' },
+      { identity: parent },
+    ]) {
+      expect(parseAgentCommand({ ...command, ...patch })).toBeNull();
+    }
+    expect(parseAgentCommand({ ...command, branch: 'feature/new' })).toEqual(
+      type === 'unlock-workspace' ? { ...command, branch: 'feature/new' } : null
+    );
+    expect(parseAgentCommand({ ...command, branch: '' })).toBeNull();
+  });
+
+  it.each(['workspace-lock-result', 'workspace-unlock-result'])(
+    'parses %s without session identity or seq',
+    (type) => {
+      const result = { type, requestId: 'operation-1', ok: true };
+      expect(parseAgentWorkerEvent(result)).toEqual(result);
+      expect(parseAgentWorkerEvent({ ...result, ok: false, error: 'busy' })).toEqual({
+        ...result,
+        ok: false,
+        error: 'busy',
+      });
+      for (const patch of [
+        { requestId: '' },
+        { ok: 1 },
+        { ok: false },
+        { error: 'unexpected' },
+        { seq: 1 },
+        { cwd: '/arbitrary' },
+      ]) {
+        expect(parseAgentWorkerEvent({ ...result, ...patch })).toBeNull();
+      }
+    }
+  );
+});
 
 describe('Main-owned source authority contracts', () => {
   const projectId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -277,6 +353,19 @@ describe('parent/child commands', () => {
     expect(
       parseAgentCommand({ type: 'subagent-stop', sessionId: parent.sessionId, agentId: 'agent-1' })
     ).toBeNull();
+  });
+
+  it('set-max-active-coworkers 只接受 1–20 整数', () => {
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 5 })).toEqual({
+      type: 'set-max-active-coworkers',
+      limit: 5,
+    });
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 1 })).not.toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 20 })).not.toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 0 })).toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 21 })).toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers', limit: 5.5 })).toBeNull();
+    expect(parseAgentCommand({ type: 'set-max-active-coworkers' })).toBeNull();
   });
 
   it('spawn-parent 携 bashInterceptEnabled:合法通过,脏值拒绝', () => {
@@ -1308,6 +1397,45 @@ describe('browser-invoke / browser-result', () => {
     expect(parseAgentCommand({ ...result, ok: false })).toBeNull();
     expect(parseAgentCommand({ ...failed, ok: true })).toBeNull();
     expect(parseAgentCommand({ ...result, requestId: '' })).toBeNull();
+    expect(parseAgentCommand({ ...result, extra: 1 })).toBeNull();
+  });
+});
+
+describe('memory-invoke / memory-result', () => {
+  const invoke = {
+    type: 'memory-invoke',
+    identity: parent,
+    seq: 5,
+    requestId: 'mem-1',
+    op: 'search',
+    params: { query: 'pg', limit: 10, spaceId: 'all' },
+  };
+  const result = {
+    type: 'memory-result',
+    identity: parent,
+    requestId: 'mem-1',
+    ok: true,
+    result: { results: [] },
+  };
+
+  it('memory-invoke 只接受 search/capture，identity 可为 parent 或 child', () => {
+    expect(parseAgentWorkerEvent(invoke)).toEqual(invoke);
+    expect(parseAgentWorkerEvent({ ...invoke, identity: child })).not.toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, op: 'capture' })).not.toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, op: 'delete' })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, requestId: '' })).toBeNull();
+    const { params: _p, ...noParams } = invoke;
+    expect(parseAgentWorkerEvent(noParams)).toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, extra: 1 })).toBeNull();
+  });
+
+  it('memory-result 成功带 result，失败带 error，字段互斥', () => {
+    expect(parseAgentCommand(result)).toEqual(result);
+    const failed = { ...result, ok: false, error: 'boom', result: undefined };
+    delete (failed as { result?: unknown }).result;
+    expect(parseAgentCommand(failed)).toEqual(failed);
+    expect(parseAgentCommand({ ...failed, error: '' })).toBeNull();
+    expect(parseAgentCommand({ ...result, ok: false })).toBeNull();
     expect(parseAgentCommand({ ...result, extra: 1 })).toBeNull();
   });
 });

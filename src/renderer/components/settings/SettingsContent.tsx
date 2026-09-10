@@ -2,6 +2,7 @@ import type { SettingsDeepLink } from '@shared/settingsDeepLink';
 import {
   BarChart3,
   Bot,
+  Brain,
   FileText,
   Keyboard,
   Layers,
@@ -17,6 +18,7 @@ import {
 import * as React from 'react';
 import { useI18n } from '@/i18n';
 import { cn } from '@/lib/utils';
+import { useSettingsStore } from '@/stores/settings';
 import { AgentTypesSettings } from './AgentTypesSettings';
 import { AppearanceSettings } from './AppearanceSettings';
 import { BuiltinToolsSettings } from './BuiltinToolsSettings';
@@ -26,10 +28,14 @@ import { GeneralSettings } from './GeneralSettings';
 import { InstructionsSettings } from './InstructionsSettings';
 import { KeybindingsSettings } from './KeybindingsSettings';
 import { McpSettings } from './McpSettings';
+import { MemoryKnowledge } from './MemoryKnowledge';
+import { MemoryLibrary } from './MemoryLibrary';
+import { MemorySettings } from './MemorySettings';
 import { PresetsSettings } from './PresetsSettings';
 import { ProvidersSettings } from './ProvidersSettings';
 import { SkillsSettings } from './SkillsSettings';
 import { SshSettings } from './SshSettings';
+import { resolveActiveCategory, visibleCategories } from './settingsCategories';
 import { UsageSettings } from './UsageSettings';
 
 function flashSettingsRow(rowId: string): void {
@@ -48,6 +54,9 @@ export function SettingsContent() {
   const { t } = useI18n();
   const [activeCategory, setActiveCategory] = React.useState<SettingsCategory>('general');
   const [flashRowId, setFlashRowId] = React.useState<string | null>(null);
+  // 提炼写入记忆后让记忆库重新拉数据（两个组件各自持有列表）
+  const [memoryRevision, setMemoryRevision] = React.useState(0);
+  const disabledBuiltinTools = useSettingsStore((state) => state.disabledBuiltinTools);
 
   const applyLink = React.useCallback((link: SettingsDeepLink) => {
     setActiveCategory(link.category);
@@ -68,7 +77,7 @@ export function SettingsContent() {
     return () => window.clearTimeout(timer);
   }, [flashRowId]);
 
-  const categories: Array<{ id: SettingsCategory; icon: React.ElementType; label: string }> = [
+  const allCategories: Array<{ id: SettingsCategory; icon: React.ElementType; label: string }> = [
     { id: 'general', icon: Settings, label: t('General') },
     { id: 'shortcuts', icon: Keyboard, label: t('Shortcuts') },
     { id: 'appearance', icon: Palette, label: t('Appearance') },
@@ -76,6 +85,7 @@ export function SettingsContent() {
     { id: 'presets', icon: Layers, label: t('Presets') },
     { id: 'agents', icon: Bot, label: t('Agent types') },
     { id: 'tools', icon: Wrench, label: t('Built-in tools') },
+    { id: 'memory', icon: Brain, label: t('Memory') },
     { id: 'skills', icon: Sparkles, label: t('Skills') },
     { id: 'mcp', icon: Plug, label: t('MCP Servers') },
     { id: 'instructions', icon: FileText, label: t('Instruction Files') },
@@ -83,6 +93,13 @@ export function SettingsContent() {
     { id: 'ssh', icon: Terminal, label: t('SSH') },
     { id: 'usage', icon: BarChart3, label: t('Usage') },
   ];
+  const categories = visibleCategories(allCategories, disabledBuiltinTools);
+
+  // 关掉 memory 工具时当前页会消失（deeplink 也可能指向未启用的功能），落到能重新打开它的地方
+  const resolvedCategory = resolveActiveCategory(activeCategory, disabledBuiltinTools);
+  React.useEffect(() => {
+    if (resolvedCategory !== activeCategory) setActiveCategory(resolvedCategory);
+  }, [resolvedCategory, activeCategory]);
 
   return (
     <div className="flex h-full w-full">
@@ -118,6 +135,13 @@ export function SettingsContent() {
         {activeCategory === 'presets' && <PresetsSettings />}
         {activeCategory === 'agents' && <AgentTypesSettings />}
         {activeCategory === 'tools' && <BuiltinToolsSettings />}
+        {activeCategory === 'memory' && (
+          <div className="space-y-8">
+            <MemorySettings onLibraryChanged={() => setMemoryRevision((n) => n + 1)} />
+            <MemoryKnowledge revision={memoryRevision} />
+            <MemoryLibrary revision={memoryRevision} />
+          </div>
+        )}
         {activeCategory === 'phone' && <DevicesSettings />}
         {activeCategory === 'ssh' && <SshSettings />}
         {activeCategory === 'usage' && <UsageSettings />}

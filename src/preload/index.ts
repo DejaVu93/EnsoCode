@@ -9,6 +9,30 @@ import type {
   StartOauthResult,
   StartOauthWizardRequest,
 } from '@shared/capabilities/types';
+import type {
+  ChatModelDto,
+  DistillableSessionDto,
+  EmbeddingDownloadProgressDto,
+  EmbeddingModelDto,
+  EvolvesEdgeDto,
+  MemoryDetail,
+  MemoryJobsSnapshot,
+  MemoryListQuery,
+  MemoryListResult,
+  MemoryMutationResult,
+  MemoryStats,
+} from '@shared/memory/dto';
+import type {
+  CrystallizeRequest,
+  CrystallizeResult,
+  GraphQuery,
+  InsightRequest,
+  InsightResult,
+  MemoryBriefDto,
+  MemoryGraphDto,
+  TreeNodeDto,
+  TreeQuery,
+} from '@shared/memory/graphDto';
 import type { BrowserSearchTab } from '@shared/searchAnything';
 import type { SettingsDeepLink } from '@shared/settingsDeepLink';
 import type {
@@ -107,7 +131,13 @@ import type {
   TerminalExitEvent,
 } from '@shared/types/sidePanel';
 import type { UpdateStatus } from '@shared/types/updater';
-import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import type {
+  SessionWorktree,
+  WorkspaceBranchesResult,
+  WorkspaceBranchSwitchRequest,
+  WorkspaceBranchSwitchResult,
+  WorktreeStatus,
+} from '@shared/types/worktree';
 import type { UsageRangeDays, UsageSummaryResult } from '@shared/usage/types';
 import type {
   WorkspaceSearchQueryRequest,
@@ -163,6 +193,75 @@ const electronAPI = {
   usage: {
     summary: (days: UsageRangeDays): Promise<UsageSummaryResult> =>
       ipcRenderer.invoke(IPC_CHANNELS.USAGE_SUMMARY, days),
+  },
+
+  memory: {
+    list: (query: MemoryListQuery): Promise<MemoryListResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_LIST, query),
+    detail: (id: string): Promise<MemoryDetail | null> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DETAIL, id),
+    archive: (id: string): Promise<MemoryMutationResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_ARCHIVE, id),
+    restore: (id: string): Promise<MemoryMutationResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_RESTORE, id),
+    delete: (id: string): Promise<MemoryMutationResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DELETE, id),
+    stats: (): Promise<MemoryStats> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_STATS),
+    jobs: (): Promise<MemoryJobsSnapshot> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_JOBS),
+    clearJobs: (): Promise<number> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_JOBS_CLEAR),
+    evolvesPending: (): Promise<EvolvesEdgeDto[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EVOLVES_PENDING),
+    evolvesReview: (id: string, state: 'accepted' | 'rejected'): Promise<MemoryMutationResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_EVOLVES_REVIEW, id, state),
+    models: (): Promise<EmbeddingModelDto[]> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_MODELS),
+    downloadModel: (modelId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_MODEL_DOWNLOAD, modelId),
+    cancelModelDownload: (modelId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_MODEL_CANCEL, modelId),
+    deleteModel: (modelId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_MODEL_DELETE, modelId),
+    reembed: (): Promise<boolean> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_REEMBED),
+    graph: (query: GraphQuery): Promise<MemoryGraphDto> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GRAPH, query),
+    graphEntity: (entityId: string): Promise<MemoryBriefDto[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_GRAPH_ENTITY, entityId),
+    tree: (query: TreeQuery): Promise<TreeNodeDto[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_TREE, query),
+    insight: (request: InsightRequest): Promise<InsightResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INSIGHT, request),
+    crystallize: (request: CrystallizeRequest): Promise<CrystallizeResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CRYSTALLIZE, request),
+    distillableSessions: (): Promise<DistillableSessionDto[]> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DISTILLABLE_SESSIONS),
+    distillSession: (sessionId: string, force = false): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DISTILL_SESSION, sessionId, force),
+    /** 记忆库发生任何写入（含 agent 工具写入）时触发，用于让列表/图谱重拉 */
+    onChanged: (listener: () => void): (() => void) => {
+      const handler = () => listener();
+      ipcRenderer.on(IPC_CHANNELS.MEMORY_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_CHANGED, handler);
+    },
+    onModelProgress: (listener: (progress: EmbeddingDownloadProgressDto) => void): (() => void) => {
+      const handler = (_event: unknown, progress: EmbeddingDownloadProgressDto) =>
+        listener(progress);
+      ipcRenderer.on(IPC_CHANNELS.MEMORY_MODEL_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_MODEL_PROGRESS, handler);
+    },
+    chatModels: (): Promise<ChatModelDto[]> => ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CHAT_MODELS),
+    downloadChatModel: (modelId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CHAT_MODEL_DOWNLOAD, modelId),
+    cancelChatModelDownload: (modelId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CHAT_MODEL_CANCEL, modelId),
+    deleteChatModel: (modelId: string): Promise<boolean> =>
+      ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CHAT_MODEL_DELETE, modelId),
+    onChatModelProgress: (
+      listener: (progress: EmbeddingDownloadProgressDto) => void
+    ): (() => void) => {
+      const handler = (_event: unknown, progress: EmbeddingDownloadProgressDto) =>
+        listener(progress);
+      ipcRenderer.on(IPC_CHANNELS.MEMORY_CHAT_MODEL_PROGRESS, handler);
+      return () => ipcRenderer.removeListener(IPC_CHANNELS.MEMORY_CHAT_MODEL_PROGRESS, handler);
+    },
   },
 
   providers: {
@@ -255,6 +354,9 @@ const electronAPI = {
   projects: {
     /** 从本机编辑器 / 编程应用读取最近打开的目录 */
     getRecent: (): Promise<RecentProject[]> => ipcRenderer.invoke(IPC_CHANNELS.PROJECTS_GET_RECENT),
+    /** 在系统文件管理器里打开项目根目录；ssh 项目返回 unsupported */
+    reveal: (request: { projectId: string }): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.PROJECTS_REVEAL, request),
   },
 
   git: {
@@ -546,6 +648,20 @@ const electronAPI = {
   },
 
   worktree: {
+    branches: (conversationId: string): Promise<WorkspaceBranchesResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_BRANCHES, conversationId),
+    switchBranch: (request: WorkspaceBranchSwitchRequest): Promise<WorkspaceBranchSwitchResult> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_SWITCH_BRANCH, request),
+    bind: (
+      conversationId: string,
+      sourceConversationId: string
+    ): Promise<{ ok: true; value: SessionWorktree } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_BIND, conversationId, sourceConversationId),
+    rename: (
+      conversationId: string,
+      name: string
+    ): Promise<{ ok: true; value: SessionWorktree[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_RENAME, conversationId, name),
     create: (
       conversationId: string,
       projectId: string

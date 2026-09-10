@@ -19,6 +19,7 @@ import {
   parseCapabilityResult,
 } from '../capabilities/types';
 import type { DefaultModelRef } from '../defaultModel';
+import { parseMaxActiveCoworkers } from '../maxActiveCoworkers';
 import { PRODUCT_SURFACE_INVENTORY, type ProductSurfaceId } from '../productSurfaces';
 import { parseSmartCompactMode } from '../smartCompactMode';
 import { WINDOWS_LOCAL_SHELLS, type WindowsLocalShell } from '../windowsLocalShell';
@@ -113,6 +114,10 @@ export const BROWSER_OPS = [
   'cdp',
 ] as const;
 export type BrowserOp = (typeof BROWSER_OPS)[number];
+
+/** 记忆库活在 Main（better-sqlite3），worker 只发 memory-invoke 事件；op 闭集在这里冻结 */
+export const MEMORY_OPS = ['search', 'capture', 'crystallize'] as const;
+export type MemoryOp = (typeof MEMORY_OPS)[number];
 
 /** 待审批请求（worker → 渲染层） */
 export interface ApprovalRequestInfo {
@@ -511,6 +516,8 @@ export type DispatchMainEvent =
 
 /** Main → worker。所有 session 控制均携 exact generation。 */
 export type AgentCommand =
+  | { type: 'lock-workspace'; requestId: string; conversationIds: string[] }
+  | { type: 'unlock-workspace'; requestId: string; conversationIds: string[]; branch?: string }
   | {
       type: 'spawn-parent';
       identity: SessionIdentity;
@@ -534,6 +541,8 @@ export type AgentCommand =
       smartCompactSummaryModel?: SpawnModelConfig;
       /** 验证式压缩档位；缺省 auto（按占用跳档） */
       smartCompactMode?: import('../smartCompactMode').SmartCompactMode;
+      /** 记忆存储语言（settings.memoryLanguage）；写进 memory_search 描述，让模型用对语言查 */
+      memoryLanguage?: string;
       skillPaths?: string[];
       mcpServers?: McpServerSpawnConfig[];
       instruction?: { path: string; content: string };
@@ -603,6 +612,7 @@ export type AgentCommand =
     }
   | { type: 'set-approval-mode'; identity: SessionIdentity; mode: ApprovalMode }
   | { type: 'set-approval-reviewer'; model?: SpawnModelConfig }
+  | { type: 'set-max-active-coworkers'; limit: number }
   | { type: 'compact'; identity: SessionIdentity; instructions?: string }
   | { type: 'ask-respond'; identity: SessionIdentity; requestId: string; answer: string }
   | {
@@ -614,6 +624,14 @@ export type AgentCommand =
     }
   | {
       type: 'browser-result';
+      identity: SessionIdentity | ChildSessionIdentity;
+      requestId: string;
+      ok: boolean;
+      result?: unknown;
+      error?: string;
+    }
+  | {
+      type: 'memory-result';
       identity: SessionIdentity | ChildSessionIdentity;
       requestId: string;
       ok: boolean;
@@ -644,6 +662,15 @@ export type AgentCommand =
       input: TitleSummaryInput;
       /** 回退链上全部可解析候选，按优先级排序；1–3 项 */
       candidates: SpawnModelConfig[];
+    }
+  | {
+      /** 通用一次性文本补全（记忆蒸馏用）：同 summarize-title 的候选链语义，结果经 text-completed / text-failed 按 requestId 回流 */
+      type: 'complete-text';
+      requestId: string;
+      systemPrompt: string;
+      userText: string;
+      candidates: SpawnModelConfig[];
+      timeoutMs: number;
     }
   | { type: 'abort-retry'; identity: SessionIdentity }
   | { type: 'retry'; identity: SessionIdentity }
@@ -870,13 +897,31 @@ export type RendererChildLifecycleEvent =
 
 /** Renderer 收到统一普通+child事件流；exact profile proof 只在 worker→Main 边界。 */
 export type RendererAgentEvent =
-  | Exclude<AgentWorkerEvent, ChildLifecycleEvent | McpWorkerEvent | { type: 'session-reloaded' }>
+  | Exclude<
+      AgentWorkerEvent,
+      ChildLifecycleEvent | McpWorkerEvent | WorkspaceLockEvent | { type: 'session-reloaded' }
+    >
   | RendererChildLifecycleEvent
   | { type: 'worker-exited' };
 
+export function workspaceBranchChangedNote(branch: string): string {
+  return `<workspace-branch-changed>\nThe current workspace is now on Git branch ${JSON.stringify(branch)}. The directory is unchanged, but file contents may differ. Re-read relevant files before relying on earlier observations or edits. This is background information only, not a task or goal.\n</workspace-branch-changed>`;
+}
+
+export type WorkspaceLockEvent =
+  | { type: 'workspace-lock-result'; requestId: string; ok: boolean; error?: string }
+  | { type: 'workspace-unlock-result'; requestId: string; ok: boolean; error?: string };
+
 export type AgentWorkerEvent =
+  | WorkspaceLockEvent
   | ParentLifecycleEvent
   | ChildLifecycleEvent
+  | {
+      type: 'workspace-branch-context-consumed';
+      identity: SessionIdentity;
+      seq: number;
+      requestId: string;
+    }
   | { type: 'status'; identity: SessionIdentity; seq: number; status: NodeStatus; error?: string }
   | {
       type: 'message-upsert';
@@ -999,6 +1044,14 @@ export type AgentWorkerEvent =
       params: unknown;
     }
   | {
+      type: 'memory-invoke';
+      identity: SessionIdentity | ChildSessionIdentity;
+      seq: number;
+      requestId: string;
+      op: MemoryOp;
+      params: unknown;
+    }
+  | {
       type: 'goal-signal';
       identity: SessionIdentity;
       seq: number;
@@ -1018,6 +1071,8 @@ export type AgentWorkerEvent =
       conversationId: string;
       error: string;
     }
+  | { type: 'text-completed'; requestId: string; text: string }
+  | { type: 'text-failed'; requestId: string; error: string }
   | {
       type: 'task-output';
       identity: SessionIdentity;
@@ -1803,6 +1858,22 @@ export function parseSessionSnapshot(value: unknown): SessionSnapshot | null {
 export function parseAgentCommand(value: unknown): AgentCommand | null {
   if (!isRecord(value) || !isNonEmptyString(value.type)) return null;
   switch (value.type) {
+    case 'lock-workspace':
+    case 'unlock-workspace':
+      return hasOnlyKeys(
+        value,
+        value.type === 'lock-workspace'
+          ? ['type', 'requestId', 'conversationIds']
+          : ['type', 'requestId', 'conversationIds', 'branch']
+      ) &&
+        isNonEmptyString(value.requestId) &&
+        Array.isArray(value.conversationIds) &&
+        value.conversationIds.length > 0 &&
+        value.conversationIds.every(isNonEmptyString) &&
+        new Set(value.conversationIds).size === value.conversationIds.length &&
+        (value.branch === undefined || isNonEmptyString(value.branch))
+        ? (value as unknown as AgentCommand)
+        : null;
     case 'spawn-parent': {
       if (
         !hasOnlyKeys(value, [
@@ -1821,6 +1892,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           'smartCompactEnabled',
           'smartCompactSummaryModel',
           'smartCompactMode',
+          'memoryLanguage',
           'skillPaths',
           'mcpServers',
           'instruction',
@@ -1852,6 +1924,7 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
           parseSpawnModelConfig(value.smartCompactSummaryModel) === null) ||
         (value.smartCompactMode !== undefined &&
           parseSmartCompactMode(value.smartCompactMode) === null) ||
+        (value.memoryLanguage !== undefined && typeof value.memoryLanguage !== 'string') ||
         (value.remote !== undefined && parseAgentRemoteConfig(value.remote) === null) ||
         (value.subagentModels !== undefined &&
           (!Array.isArray(value.subagentModels) ||
@@ -1920,6 +1993,27 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         ? (value as unknown as AgentCommand)
         : null;
     }
+    case 'complete-text':
+      return hasExactKeys(value, [
+        'type',
+        'requestId',
+        'systemPrompt',
+        'userText',
+        'candidates',
+        'timeoutMs',
+      ]) &&
+        isNonEmptyString(value.requestId) &&
+        typeof value.systemPrompt === 'string' &&
+        typeof value.userText === 'string' &&
+        typeof value.timeoutMs === 'number' &&
+        Number.isFinite(value.timeoutMs) &&
+        value.timeoutMs > 0 &&
+        Array.isArray(value.candidates) &&
+        value.candidates.length >= 1 &&
+        value.candidates.length <= TITLE_SUMMARY_MAX_CANDIDATES &&
+        value.candidates.every((candidate) => parseSpawnModelConfig(candidate))
+        ? (value as unknown as AgentCommand)
+        : null;
     case 'summarize-title':
       return hasExactKeys(value, ['type', 'conversationId', 'input', 'candidates']) &&
         isNonEmptyString(value.conversationId) &&
@@ -1980,6 +2074,10 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         (value.model === undefined || parseSpawnModelConfig(value.model))
         ? (value as unknown as AgentCommand)
         : null;
+    case 'set-max-active-coworkers':
+      return hasExactKeys(value, ['type', 'limit']) && parseMaxActiveCoworkers(value.limit) !== null
+        ? (value as unknown as AgentCommand)
+        : null;
     case 'ask-respond':
       return hasExactKeys(value, ['type', 'identity', 'requestId', 'answer']) &&
         parseAnySessionIdentity(value.identity) &&
@@ -1995,7 +2093,8 @@ export function parseAgentCommand(value: unknown): AgentCommand | null {
         parseCapabilityExecutionEnvelope(value.envelope)
         ? (value as unknown as AgentCommand)
         : null;
-    case 'browser-result': {
+    case 'browser-result':
+    case 'memory-result': {
       if (
         !hasOnlyKeys(value, ['type', 'identity', 'requestId', 'ok', 'result', 'error']) ||
         !parseAnySessionIdentity(value.identity) ||
@@ -2156,6 +2255,15 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
   ) {
     return parseLifecycleEvent(value);
   }
+  if (value.type === 'workspace-lock-result' || value.type === 'workspace-unlock-result') {
+    return hasOnlyKeys(value, ['type', 'requestId', 'ok', 'error']) &&
+      isNonEmptyString(value.requestId) &&
+      (value.ok === true
+        ? value.error === undefined
+        : value.ok === false && isNonEmptyString(value.error))
+      ? (value as unknown as AgentWorkerEvent)
+      : null;
+  }
   if (value.type === 'session-reloaded') {
     if (
       !hasExactKeys(value, ['type', 'requestId', 'result']) ||
@@ -2222,6 +2330,20 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
       ? (value as unknown as AgentWorkerEvent)
       : null;
   }
+  if (value.type === 'text-completed') {
+    return hasExactKeys(value, ['type', 'requestId', 'text']) &&
+      isNonEmptyString(value.requestId) &&
+      typeof value.text === 'string'
+      ? (value as unknown as AgentWorkerEvent)
+      : null;
+  }
+  if (value.type === 'text-failed') {
+    return hasExactKeys(value, ['type', 'requestId', 'error']) &&
+      isNonEmptyString(value.requestId) &&
+      isNonEmptyString(value.error)
+      ? (value as unknown as AgentWorkerEvent)
+      : null;
+  }
   const identity = parseAnySessionIdentity(value.identity);
   if (!identity || !isSequence(value.seq)) return null;
   switch (value.type) {
@@ -2229,6 +2351,17 @@ export function parseAgentWorkerEvent(value: unknown): AgentWorkerEvent | null {
       return hasExactKeys(value, ['type', 'identity', 'seq', 'requestId', 'op', 'params']) &&
         isNonEmptyString(value.requestId) &&
         BROWSER_OPS.includes(value.op as BrowserOp)
+        ? (value as unknown as AgentWorkerEvent)
+        : null;
+    case 'memory-invoke':
+      return hasExactKeys(value, ['type', 'identity', 'seq', 'requestId', 'op', 'params']) &&
+        isNonEmptyString(value.requestId) &&
+        MEMORY_OPS.includes(value.op as MemoryOp)
+        ? (value as unknown as AgentWorkerEvent)
+        : null;
+    case 'workspace-branch-context-consumed':
+      return hasExactKeys(value, ['type', 'identity', 'seq', 'requestId']) &&
+        isNonEmptyString(value.requestId)
         ? (value as unknown as AgentWorkerEvent)
         : null;
     case 'status':

@@ -18,6 +18,11 @@ export default defineConfig({
       // Agent utilityProcess 走 `?modulePath` isolated build；Main 保持官方单入口，
       // 避免手工 multi-input 把无 export 的启动入口 tree-shake 成 0B facade。
       externalizeDeps: true,
+      rollupOptions: {
+        // externalizeDeps 只认 dependencies；node-llama-cpp 在 optionalDependencies 里，
+        // 被打进 bundle 后它对 .node 绑定的动态 require 会失效。
+        external: ['node-llama-cpp'],
+      },
     },
     resolve: {
       alias: {

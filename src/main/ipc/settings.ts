@@ -57,6 +57,7 @@ export const SETTINGS_STATE_FIELDS = [
   'expandLiveEdits',
   'chatWide',
   'notifyMainAgentOnly',
+  'maxActiveCoworkers',
   'generationStallTimeoutMin',
   'autoArchiveIdleDays',
   'autoArchiveMergedWorktrees',
@@ -80,6 +81,9 @@ export const SETTINGS_STATE_FIELDS = [
   'defaultModel',
   'titleSummaryEnabled',
   'titleSummaryModel',
+  'memoryDistillModel',
+  'memoryChatModel',
+  'memoryLanguage',
   'approvalReviewer',
   'lastApprovalMode',
   'defaultReasoningEnabled',
@@ -94,6 +98,12 @@ export const SETTINGS_STATE_FIELDS = [
   'agentTypes',
   'disabledBuiltinAgentTypes',
   'disabledBuiltinTools',
+  'memoryEmbeddingModel',
+  'memoryEmbeddingAutoDownload',
+  'memoryEmbeddingRemoteProviderId',
+  'memoryDistillEnabled',
+  'memoryKgEnabled',
+  'memoryWorkingFileEnabled',
   'onboarded',
   'keybindings',
   'projects',
@@ -119,6 +129,8 @@ const CONFIG_SYNC_EXCLUDED_STATE_FIELDS = new Set<SettingsStateField>([
   'backgroundRandomEnabled',
   'backgroundRefreshNonce',
   'lastApprovalMode',
+  'memoryEmbeddingAutoDownload',
+  'memoryEmbeddingRemoteProviderId',
   'onboarded',
   'projects',
   'projectGroups',
@@ -127,6 +139,26 @@ const CONFIG_SYNC_EXCLUDED_STATE_FIELDS = new Set<SettingsStateField>([
 export const CONFIG_SYNC_COMMIT_FIELDS = SETTINGS_STATE_FIELDS.filter(
   (field) => !CONFIG_SYNC_EXCLUDED_STATE_FIELDS.has(field)
 );
+
+// 记忆 embedding 配置只存 id/开关，模型文件在 userData/memory/models；切换立即作用于之后的写入与查询
+function notifyMemoryEmbeddingSettings(settings: Record<string, unknown>): void {
+  void import('../services/memoryHost')
+    .then(
+      ({
+        syncMemoryEmbeddingFromSettings,
+        syncMemoryDistillFromSettings,
+        syncMemoryKgFromSettings,
+        syncMemoryWorkingFileFromSettings,
+      }) => {
+        const state = settingsStateOf(settings);
+        syncMemoryEmbeddingFromSettings(state);
+        syncMemoryDistillFromSettings(state);
+        syncMemoryKgFromSettings(state);
+        syncMemoryWorkingFileFromSettings(state);
+      }
+    )
+    .catch(() => {});
+}
 
 function settingsStateOf(settings: Record<string, unknown> | null): Record<string, unknown> {
   const store = settings?.['enso-settings'];
@@ -244,6 +276,7 @@ function scheduleWrite(
     }
     cachedSettings = data;
     isDirty = true;
+    notifyMemoryEmbeddingSettings(data);
 
     // 普通 store 写排除 sender；Gateway 写显式选择 all-renderers。
     for (const win of BrowserWindow.getAllWindows()) {
@@ -282,8 +315,9 @@ function scheduleWrite(
     }, DEBOUNCE_MS);
 
     void import('../services/agentHost')
-      .then(async ({ pushApprovalReviewer }) => {
+      .then(async ({ pushApprovalReviewer, pushMaxActiveCoworkers }) => {
         pushApprovalReviewer(await readStoredOauthCredentialKeys());
+        pushMaxActiveCoworkers();
       })
       .catch(() => {});
     return true;
@@ -376,6 +410,7 @@ export function commitSettingsTransaction(
 
   cachedSettings = next;
   isDirty = false;
+  notifyMemoryEmbeddingSettings(next);
   try {
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed()) continue;
@@ -385,8 +420,9 @@ export function commitSettingsTransaction(
     // Durable write already succeeded; a dead renderer must not fail the import.
   }
   void import('../services/agentHost')
-    .then(async ({ pushApprovalReviewer }) => {
+    .then(async ({ pushApprovalReviewer, pushMaxActiveCoworkers }) => {
       pushApprovalReviewer(await readStoredOauthCredentialKeys());
+      pushMaxActiveCoworkers();
     })
     .catch(() => {});
   return { ok: true, backupPath };

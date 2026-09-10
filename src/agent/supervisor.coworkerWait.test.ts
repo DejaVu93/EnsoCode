@@ -1,7 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { AgentWorkerEvent, SessionIdentity } from '@shared/types/agent';
+import {
+  type AgentWorkerEvent,
+  type SessionIdentity,
+  workspaceBranchChangedNote,
+} from '@shared/types/agent';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -27,8 +31,26 @@ vi.mock('./mcp', () => ({
 vi.mock('@earendil-works/pi-coding-agent', async (importOriginal) => {
   const original = await importOriginal<Record<string, unknown>>();
   class Loader {
+    beforeAgentStart = (systemPrompt: string, _prompt: string) => systemPrompt;
     constructor(options: Record<string, unknown>) {
       mocks.loaderOptions.push(options);
+      const extension = (
+        options.extensionFactories as
+          | Array<{ name: string; factory(pi: unknown): void }>
+          | undefined
+      )?.find((e) => e.name === 'workspace-branch-context');
+      extension?.factory({
+        on: (
+          _event: string,
+          handler: (event: {
+            systemPrompt: string;
+            prompt: string;
+          }) => { systemPrompt: string } | undefined
+        ) => {
+          this.beforeAgentStart = (systemPrompt, prompt) =>
+            handler({ systemPrompt, prompt })?.systemPrompt ?? systemPrompt;
+        },
+      });
     }
     async reload() {}
     getSkills() {
@@ -105,7 +127,17 @@ function session(options: Record<string, unknown>) {
     emit(event: { type: string; [key: string]: unknown }) {
       for (const listener of listeners) listener(event);
     },
-    prompt: vi.fn(async () => undefined),
+    systemPrompts: [] as string[],
+    prompt: vi.fn(async (text: string) => {
+      if (!text.startsWith('/no-turn'))
+        value.systemPrompts.push(
+          (
+            options.resourceLoader as {
+              beforeAgentStart(systemPrompt: string, prompt: string): string;
+            }
+          ).beforeAgentStart('base system', text)
+        );
+    }),
     steer: vi.fn(async () => undefined),
     abort: vi.fn(async () => undefined),
     dispose: vi.fn(),
@@ -222,6 +254,280 @@ describe('SessionSupervisor coworker wait/report', () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
+  });
+
+  it('workspace lock defers internal wakeups and installs branch context once per live session', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, parentSession, coworkerSession, childOptions } =
+      await spawnParentAndCoworker(events);
+    const command = { requestId: 'switch-1', conversationIds: [parent.sessionId] };
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    parentSession.prompt.mockClear();
+    parentSession.systemPrompts.length = 0;
+    coworkerSession.prompt.mockClear();
+    supervisor.handleCommand({ type: 'lock-workspace', ...command });
+    expect(events.at(-1)).toEqual({
+      type: 'workspace-lock-result',
+      requestId: 'switch-1',
+      ok: true,
+    });
+    const send = childOptions.customTools.find((tool) => tool.name === 'message_main_agent')!;
+    await send.execute('notify', { message: 'delayed result', urgent: true });
+    expect(parentSession.prompt).not.toHaveBeenCalled();
+    supervisor.handleCommand({ type: 'unlock-workspace', ...command, branch: 'feature/new' });
+    await settle();
+    expect(parentSession.prompt).toHaveBeenCalledTimes(1);
+    expect(parentSession.prompt.mock.calls[0][0]).not.toContain('feature/new');
+    expect(parentSession.systemPrompts[0]).toContain('feature/new');
+    expect(parentSession.prompt.mock.calls[0][0]).toContain('delayed result');
+    expect(coworkerSession.prompt).not.toHaveBeenCalled();
+    await send.execute('notify-again', { message: 'next result', urgent: true });
+    expect(parentSession.systemPrompts[1]).not.toContain('feature/new');
+    expect(events.filter((event) => event.type === 'workspace-branch-context-consumed')).toEqual([
+      expect.objectContaining({
+        type: 'workspace-branch-context-consumed',
+        identity: parent,
+        requestId: 'switch-1',
+        seq: expect.any(Number),
+      }),
+    ]);
+  });
+
+  it('workspace unlock does not create a message and the next coworker send consumes its note', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, parentSession, coworkerSession, coworkerTool, coworkerIdentity } =
+      await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    parentSession.prompt.mockClear();
+    coworkerSession.prompt.mockClear();
+    coworkerSession.systemPrompts.length = 0;
+    parentSession.systemPrompts.length = 0;
+    const command = { requestId: 'switch', conversationIds: [parent.sessionId] };
+    supervisor.handleCommand({ type: 'lock-workspace', ...command });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: true });
+    const sending = coworkerTool.execute(
+      'send',
+      { operation: 'send', name: 'bob', message: 'next task' },
+      undefined,
+      undefined,
+      {}
+    );
+    await settle();
+    expect(coworkerSession.prompt).not.toHaveBeenCalled();
+    supervisor.handleCommand({ type: 'unlock-workspace', ...command, branch: 'feature/child' });
+    await sending;
+    expect(coworkerSession.prompt).toHaveBeenCalledTimes(1);
+    expect(coworkerSession.prompt.mock.calls[0][0]).not.toContain('feature/child');
+    expect(coworkerSession.systemPrompts[0]).toContain('feature/child');
+    expect(coworkerSession.prompt.mock.calls[0][0]).toContain('next task');
+    expect(events.filter((event) => event.type === 'workspace-branch-context-consumed')).toEqual([
+      expect.objectContaining({ identity: coworkerIdentity, requestId: 'switch' }),
+    ]);
+    expect(parentSession.prompt).not.toHaveBeenCalled();
+  });
+
+  it('reports consumption when renderer already attached the branch note without duplicating system context', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, parentSession, coworkerSession } = await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    parentSession.systemPrompts.length = 0;
+    supervisor.handleCommand({
+      type: 'lock-workspace',
+      requestId: 'store-note',
+      conversationIds: [parent.sessionId],
+    });
+    supervisor.handleCommand({
+      type: 'unlock-workspace',
+      requestId: 'store-note',
+      conversationIds: [parent.sessionId],
+      branch: 'branch-A',
+    });
+    supervisor.handleCommand({
+      type: 'prompt',
+      identity: parent,
+      text: `${workspaceBranchChangedNote('branch-A')}\n\nreal input`,
+    });
+    await settle();
+    expect(parentSession.systemPrompts).toEqual(['base system']);
+    expect(events.filter((event) => event.type === 'workspace-branch-context-consumed')).toEqual([
+      expect.objectContaining({ identity: parent, requestId: 'store-note' }),
+    ]);
+  });
+
+  it('consecutive switches consume only the latest nonce, even when returning to the same branch', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, parentSession, coworkerSession } = await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    parentSession.systemPrompts.length = 0;
+    for (const [requestId, branch] of [
+      ['first', 'branch-A'],
+      ['second', 'branch-B'],
+      ['latest', 'branch-A'],
+    ]) {
+      supervisor.handleCommand({
+        type: 'lock-workspace',
+        requestId,
+        conversationIds: [parent.sessionId],
+      });
+      supervisor.handleCommand({
+        type: 'unlock-workspace',
+        requestId,
+        conversationIds: [parent.sessionId],
+        branch,
+      });
+    }
+    expect(events.filter((event) => event.type === 'workspace-branch-context-consumed')).toEqual(
+      []
+    );
+    supervisor.handleCommand({ type: 'prompt', identity: parent, text: 'real input' });
+    await settle();
+    expect(parentSession.systemPrompts).toEqual([expect.stringContaining('branch-A')]);
+    expect(events.filter((event) => event.type === 'workspace-branch-context-consumed')).toEqual([
+      expect.objectContaining({ identity: parent, requestId: 'latest' }),
+    ]);
+  });
+
+  it('workspace note survives non-turn commands and rejected prompts without modifying input history', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, parentSession, coworkerSession } = await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    parentSession.prompt.mockClear();
+    parentSession.systemPrompts.length = 0;
+    const command = { requestId: 'switch', conversationIds: [parent.sessionId] };
+    supervisor.handleCommand({ type: 'lock-workspace', ...command });
+    supervisor.handleCommand({ type: 'unlock-workspace', ...command, branch: 'feature/pending' });
+    await settle();
+    expect(parentSession.prompt).not.toHaveBeenCalled();
+    supervisor.handleCommand({ type: 'prompt', identity: parent, text: '/no-turn' });
+    await settle();
+    expect(parentSession.prompt).toHaveBeenCalledWith('/no-turn', undefined);
+    expect(parentSession.systemPrompts).toEqual([]);
+    parentSession.prompt.mockRejectedValueOnce(new Error('not accepted'));
+    supervisor.handleCommand({ type: 'prompt', identity: parent, text: 'rejected' });
+    await settle();
+    expect(parentSession.systemPrompts).toEqual([]);
+    supervisor.handleCommand({ type: 'prompt', identity: parent, text: 'real input' });
+    await settle();
+    expect(parentSession.prompt).toHaveBeenLastCalledWith('real input', undefined);
+    expect(parentSession.systemPrompts).toEqual([expect.stringContaining('feature/pending')]);
+  });
+
+  it.each([
+    'background',
+    'subagent',
+    'roundPending',
+    'retry',
+    'compaction',
+    'capability',
+    'browser',
+  ])('workspace lock rejects %s work without interrupting it', async (kind) => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, coworkerSession, coworkerId } = await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    const internal = supervisor as unknown as {
+      bgTasks: { snapshot(id: string): Array<{ status: string }> };
+      sessions: Map<
+        string,
+        {
+          roundPending?: boolean;
+          compaction?: string;
+          ensoApp?: { pendingCount: number };
+          browser?: { pendingCount: number };
+          subagents: Map<string, { status: string }>;
+        }
+      >;
+    };
+    const child = internal.sessions.get(coworkerId)!;
+    if (kind === 'background')
+      vi.spyOn(internal.bgTasks, 'snapshot').mockReturnValue([{ status: 'running' }]);
+    if (kind === 'subagent') child.subagents.set('sub', { status: 'running' });
+    if (kind === 'roundPending') child.roundPending = true;
+    if (kind === 'retry') coworkerSession.isRetrying = true;
+    if (kind === 'compaction') child.compaction = 'running';
+    if (kind === 'capability') child.ensoApp = { pendingCount: 1 };
+    if (kind === 'browser') child.browser = { pendingCount: 1 };
+    supervisor.handleCommand({
+      type: 'lock-workspace',
+      requestId: kind,
+      conversationIds: [parent.sessionId],
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: false });
+    expect(coworkerSession.abort).not.toHaveBeenCalled();
+    expect(coworkerSession.dispose).not.toHaveBeenCalled();
+  });
+
+  it('workspace lock rejects in-flight post-round verification commands', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, coworkerSession, coworkerId } = await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    const internal = supervisor as unknown as {
+      sessions: Map<string, { factory?: { runGate(command: string): Promise<string> } }>;
+      runParentGate(managed: unknown, command: string): Promise<string>;
+    };
+    const completion = Promise.withResolvers<string>();
+    internal.sessions.get(parent.sessionId)!.factory!.runGate = () => completion.promise;
+    const verifying = internal.runParentGate(internal.sessions.get(coworkerId), 'verify');
+    supervisor.handleCommand({
+      type: 'lock-workspace',
+      requestId: 'verify',
+      conversationIds: [parent.sessionId],
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: false });
+    completion.resolve('passed');
+    await verifying;
+    supervisor.handleCommand({
+      type: 'lock-workspace',
+      requestId: 'after-verify',
+      conversationIds: [parent.sessionId],
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: true });
+  });
+
+  it('workspace lock rejects a command queued before running is projected', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, coworkerSession, coworkerIdentity } = await spawnParentAndCoworker(events);
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    supervisor.handleCommand({ type: 'prompt', identity: coworkerIdentity, text: 'real input' });
+    supervisor.handleCommand({
+      type: 'lock-workspace',
+      requestId: 'queued',
+      conversationIds: [parent.sessionId],
+    });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: false });
+    await settle();
+    expect(coworkerSession.prompt).toHaveBeenCalledWith('real input', undefined);
+  });
+
+  it('workspace busy rejection is atomic and a failed switch resumes notifications without branch context', async () => {
+    const events: AgentWorkerEvent[] = [];
+    const { supervisor, coworkerSession, parentSession, childOptions } =
+      await spawnParentAndCoworker(events);
+    const command = { requestId: 'switch-1', conversationIds: [parent.sessionId] };
+    coworkerSession.emit({ type: 'agent_end', willRetry: false });
+    await vi.advanceTimersByTimeAsync(200);
+    parentSession.prompt.mockClear();
+    coworkerSession.isStreaming = true;
+    supervisor.handleCommand({ type: 'lock-workspace', ...command });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: false });
+    coworkerSession.isStreaming = false;
+    supervisor.handleCommand({ type: 'lock-workspace', ...command, requestId: 'switch-2' });
+    expect(events.at(-1)).toMatchObject({ type: 'workspace-lock-result', ok: true });
+    const send = childOptions.customTools.find((tool) => tool.name === 'message_main_agent')!;
+    await send.execute('notify', { message: 'delayed', urgent: true });
+    supervisor.handleCommand({ type: 'unlock-workspace', ...command });
+    expect(parentSession.prompt).not.toHaveBeenCalled();
+    supervisor.handleCommand({ type: 'unlock-workspace', ...command, requestId: 'switch-2' });
+    await settle();
+    expect(parentSession.prompt).toHaveBeenCalledTimes(1);
+    expect(parentSession.prompt.mock.calls[0][0]).not.toContain('workspace-branch-change');
   });
 
   it('对没有跑过一轮的空闲 coworker 调用 wait,返回文案含 no round completed yet', async () => {
@@ -673,6 +979,32 @@ describe('SessionSupervisor coworker wait/report', () => {
       | Array<{ name?: string }>
       | undefined;
     expect(childFactories?.some((factory) => factory.name === 'explore-fold')).toBe(true);
+  });
+
+  it('memory 开关：默认下发 memory_search/memory_capture，关掉后不下发', async () => {
+    const tools = async (disabledTools: string[]) => {
+      const supervisor = new SessionSupervisor({
+        emit: () => {},
+        agentDir: '/tmp/agent',
+        sessionDir: mkdtempSync(path.join(tmpdir(), 'enso-cw-')),
+      });
+      const calls = mocks.createAgentSession.mock.calls.length;
+      supervisor.handleCommand({
+        type: 'spawn-parent',
+        identity: parent,
+        cwd: '/workspace',
+        model,
+        disabledTools,
+      });
+      await settleUntil(() => mocks.createAgentSession.mock.calls.length > calls);
+      return (
+        mocks.createAgentSession.mock.calls[calls][0] as { customTools: Array<{ name: string }> }
+      ).customTools.map((tool) => tool.name);
+    };
+    expect(await tools([])).toEqual(expect.arrayContaining(['memory_search', 'memory_capture']));
+    const disabled = await tools(['memory']);
+    expect(disabled).not.toContain('memory_search');
+    expect(disabled).not.toContain('memory_capture');
   });
 
   it('父关掉 isolated_sandbox / explore-fold 时子也不下发', async () => {

@@ -1,6 +1,10 @@
 import { sanitizeDefaultModel } from '@shared/defaultModel';
 import type { Locale } from '@shared/i18n';
 import { normalizeLocale } from '@shared/i18n';
+import {
+  DEFAULT_MAX_ACTIVE_COWORKERS,
+  normalizeMaxActiveCoworkers,
+} from '@shared/maxActiveCoworkers';
 import { applyProjectGroupPatch } from '@shared/projectGroups';
 import { projectNameFromPath } from '@shared/projectName';
 import { applyIncomingProviders } from '@shared/providerIdentity';
@@ -127,6 +131,12 @@ const initialState = {
   smartCompactEnabled: false,
   smartCompactModel: null as import('@shared/defaultModel').DefaultModelRef | null,
   smartCompactMode: 'auto' as import('@shared/smartCompactMode').SmartCompactMode,
+  memoryEmbeddingModel: 'local:potion-multilingual-128M',
+  memoryEmbeddingAutoDownload: false,
+  memoryEmbeddingRemoteProviderId: null as string | null,
+  memoryDistillEnabled: false,
+  memoryKgEnabled: false,
+  memoryWorkingFileEnabled: false,
   autoUpdate: true,
   proxyMode: 'system' as ProxyMode,
   customProxyUrl: '',
@@ -135,6 +145,7 @@ const initialState = {
   expandLiveEdits: true,
   chatWide: false,
   notifyMainAgentOnly: true,
+  maxActiveCoworkers: DEFAULT_MAX_ACTIVE_COWORKERS,
   generationStallTimeoutMin: 0,
   autoArchiveIdleDays: DEFAULT_AUTO_ARCHIVE_IDLE_DAYS,
   autoArchiveMergedWorktrees: false,
@@ -158,6 +169,9 @@ const initialState = {
   defaultModel: null,
   titleSummaryEnabled: false,
   titleSummaryModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  memoryDistillModel: null as import('@shared/defaultModel').DefaultModelRef | null,
+  memoryChatModel: 'remote',
+  memoryLanguage: 'en',
   approvalReviewer: null as import('@shared/defaultModel').DefaultModelRef | null,
   lastApprovalMode: null as import('@shared/types/agent').ApprovalMode | null,
   defaultReasoningEnabled: true,
@@ -247,6 +261,14 @@ export const useSettingsStore = create<SettingsState>()(
       setWindowsLocalShell: (windowsLocalShell) =>
         set({ windowsLocalShell: parseWindowsLocalShell(windowsLocalShell) }),
       setExploreFoldEnabled: (exploreFoldEnabled) => set({ exploreFoldEnabled }),
+      setMemoryEmbeddingModel: (memoryEmbeddingModel) => set({ memoryEmbeddingModel }),
+      setMemoryEmbeddingAutoDownload: (memoryEmbeddingAutoDownload) =>
+        set({ memoryEmbeddingAutoDownload }),
+      setMemoryEmbeddingRemoteProviderId: (memoryEmbeddingRemoteProviderId) =>
+        set({ memoryEmbeddingRemoteProviderId }),
+      setMemoryDistillEnabled: (memoryDistillEnabled) => set({ memoryDistillEnabled }),
+      setMemoryKgEnabled: (memoryKgEnabled) => set({ memoryKgEnabled }),
+      setMemoryWorkingFileEnabled: (memoryWorkingFileEnabled) => set({ memoryWorkingFileEnabled }),
       setBashInterceptEnabled: (bashInterceptEnabled) => set({ bashInterceptEnabled }),
       setHashlineEditEnabled: (hashlineEditEnabled) => set({ hashlineEditEnabled }),
       setSmartCompactEnabled: (smartCompactEnabled) => set({ smartCompactEnabled }),
@@ -266,6 +288,8 @@ export const useSettingsStore = create<SettingsState>()(
         set({ chatWide });
       },
       setNotifyMainAgentOnly: (notifyMainAgentOnly) => set({ notifyMainAgentOnly }),
+      setMaxActiveCoworkers: (value) =>
+        set({ maxActiveCoworkers: normalizeMaxActiveCoworkers(value) }),
       setGenerationStallTimeoutMin: (minutes) =>
         set({
           generationStallTimeoutMin: Number.isFinite(minutes)
@@ -341,6 +365,9 @@ export const useSettingsStore = create<SettingsState>()(
 
       setTitleSummaryEnabled: (titleSummaryEnabled) => set({ titleSummaryEnabled }),
       setTitleSummaryModel: (titleSummaryModel) => set({ titleSummaryModel }),
+      setMemoryDistillModel: (memoryDistillModel) => set({ memoryDistillModel }),
+      setMemoryChatModel: (memoryChatModel) => set({ memoryChatModel }),
+      setMemoryLanguage: (memoryLanguage) => set({ memoryLanguage }),
       setApprovalReviewer: (approvalReviewer) => set({ approvalReviewer }),
       setLastApprovalMode: (lastApprovalMode) => set({ lastApprovalMode }),
 
@@ -713,6 +740,19 @@ export const useSettingsStore = create<SettingsState>()(
           }),
         }));
       },
+      setProjectAlias: (projectId, alias) => {
+        const next = alias?.trim();
+        set((state) => ({
+          projects: state.projects.map((project) => {
+            if (project.id !== projectId) return project;
+            if (!next) {
+              const { alias: _removed, ...rest } = project;
+              return rest;
+            }
+            return { ...project, alias: next };
+          }),
+        }));
+      },
       setProjectDefaultModel: (projectId, model, reasoning) => {
         set((state) => ({
           projects: state.projects.map((project) => {
@@ -805,6 +845,10 @@ export const useSettingsStore = create<SettingsState>()(
           segments.some((id, i) => s.statusLineSegments[i] !== id)
         ) {
           useSettingsStore.setState({ statusLineSegments: segments });
+        }
+        const maxActiveCoworkers = normalizeMaxActiveCoworkers(s.maxActiveCoworkers);
+        if (maxActiveCoworkers !== s.maxActiveCoworkers) {
+          useSettingsStore.setState({ maxActiveCoworkers });
         }
         const autoArchiveIdleDays = normalizeAutoArchiveIdleDays(s.autoArchiveIdleDays);
         if (autoArchiveIdleDays !== s.autoArchiveIdleDays) {

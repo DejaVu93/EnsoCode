@@ -39,6 +39,31 @@ renderer 的状态永远可能陈旧（HMR、事件竞态、多入口 resume）�
 参数不要依赖 renderer 传对：main 在 AGENT_SPAWN 里按 worktree registry
 **无条件覆写** cwd，整类「陈旧 cwd 抢跑」从有害降级为无害。
 
+同一 worktree 可被多个会话引用，不能把会话 ID 当作物理目录身份：
+
+- 新会话须先完成 Main 绑定，再发布为 active；绑定失败不得静默落回主树。
+- 清理只解除当前绑定，最后引用才删除目录；共享、创建与删除必须使用同一操作门，异步后重读引用。
+- 名称与重建路径同步同一 `projectId + repoPath + path` 的绑定，保留每条记录自己的会话 ID。
+- typed dispatch、hire、restore 的 parent/child spawn 也要读 Main 当前绑定；文件引用快照必须使用同一 cwd，不能只修 spawn 路径。
+
+回归位置：`src/main/ipc/worktree.test.ts`、`src/main/services/agentDispatchService.test.ts`、
+`src/renderer/stores/sessions/worktree.test.ts`。
+
+## 同目录切分支也需要 worker 确认
+
+切分支不改变 cwd，不必释放 idle worker，但 Main 的 busy 门挡不住 worker 内部 notifier、coworker 续轮或验收 shell。
+安全顺序为：Main 按真实 Git 工作树立门 → worker 原子检查整树空闲并冻结、ACK → Git 检查与切换 → 安装分支背景并解锁、ACK。
+锁覆盖同树路径别名与项目子目录，不能用 Git commonDir 把不同 worktree 锁成一组。
+
+- `git status` 干净不代表可切：merge/rebase/cherry-pick 等进行中状态须独立检查。
+- 分支背景在下一次真实 `before_agent_start` 消费，不主动发送消息或改变 slash 输入；消费事件以 generation、seq、操作 nonce 清除 renderer 提醒。
+- Git 已变更但读盘、落库或 ACK 失败，仍返回 `changed` 投影刷新文件和分支，不自动回滚 Git。
+- 有限解锁重试后仍不能确认恢复，返回 `workspaceBlocked` 并保留 Main/renderer 门，提示重启；不能只报错却放开下一次发送。
+- 文件刷新使用 workspace revision 丢弃旧回包，保留未保存草稿并标记冲突，不能重挂载编辑器来清状态。
+
+回归位置：`src/main/ipc/workspaceBranches.test.ts`、`src/main/services/gitBranches.test.ts`、
+`src/agent/workspaceSwitch.test.ts`、`src/agent/supervisor.coworkerWait.test.ts`。
+
 ## 排障手段备忘
 
 - supervisor `[spawn]` 日志带 cwd 是定位关键（本次顺手加上了，别删）。

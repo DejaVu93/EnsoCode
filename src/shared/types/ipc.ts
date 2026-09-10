@@ -39,6 +39,37 @@ export const IPC_CHANNELS = {
   // Local token usage statistics
   USAGE_SUMMARY: 'usage:summary',
 
+  // Memory administration
+  MEMORY_LIST: 'memory:list',
+  MEMORY_DETAIL: 'memory:detail',
+  MEMORY_ARCHIVE: 'memory:archive',
+  MEMORY_RESTORE: 'memory:restore',
+  MEMORY_DELETE: 'memory:delete',
+  MEMORY_STATS: 'memory:stats',
+  MEMORY_JOBS: 'memory:jobs',
+  MEMORY_JOBS_CLEAR: 'memory:jobs-clear',
+  MEMORY_EVOLVES_PENDING: 'memory:evolves-pending',
+  MEMORY_EVOLVES_REVIEW: 'memory:evolves-review',
+  MEMORY_MODELS: 'memory:models',
+  MEMORY_MODEL_DOWNLOAD: 'memory:model-download',
+  MEMORY_MODEL_CANCEL: 'memory:model-cancel',
+  MEMORY_MODEL_DELETE: 'memory:model-delete',
+  MEMORY_MODEL_PROGRESS: 'memory:model-progress',
+  MEMORY_CHAT_MODELS: 'memory:chat-models',
+  MEMORY_CHAT_MODEL_DOWNLOAD: 'memory:chat-model-download',
+  MEMORY_CHAT_MODEL_CANCEL: 'memory:chat-model-cancel',
+  MEMORY_CHAT_MODEL_DELETE: 'memory:chat-model-delete',
+  MEMORY_CHAT_MODEL_PROGRESS: 'memory:chat-model-progress',
+  MEMORY_REEMBED: 'memory:reembed',
+  MEMORY_CHANGED: 'memory:changed',
+  MEMORY_GRAPH: 'memory:graph',
+  MEMORY_GRAPH_ENTITY: 'memory:graph-entity',
+  MEMORY_TREE: 'memory:tree',
+  MEMORY_INSIGHT: 'memory:insight',
+  MEMORY_CRYSTALLIZE: 'memory:crystallize',
+  MEMORY_DISTILLABLE_SESSIONS: 'memory:distillable-sessions',
+  MEMORY_DISTILL_SESSION: 'memory:distill-session',
+
   // OAuth subscription providers (pi builtin)
   OAUTH_PROVIDERS_LIST: 'oauth-providers:list',
   OAUTH_LOGIN: 'oauth-providers:login',
@@ -110,6 +141,10 @@ export const IPC_CHANNELS = {
   AGENT_RELEASE: 'agent:release',
 
   WORKTREE_CREATE: 'worktree:create',
+  WORKTREE_BIND: 'worktree:bind',
+  WORKTREE_BRANCHES: 'worktree:branches',
+  WORKTREE_SWITCH_BRANCH: 'worktree:switch-branch',
+  WORKTREE_RENAME: 'worktree:rename',
   WORKTREE_GET: 'worktree:get',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_STATUS: 'worktree:status',
@@ -148,6 +183,8 @@ export const IPC_CHANNELS = {
 
   // Recent projects from local apps
   PROJECTS_GET_RECENT: 'projects:get-recent',
+  /** 在系统文件管理器里打开项目根目录（仅本地项目） */
+  PROJECTS_REVEAL: 'projects:reveal',
 
   // SSH connection profiles (settings + add-project picker)
   SSH_CONNECTIONS_LIST: 'ssh-connections:list',

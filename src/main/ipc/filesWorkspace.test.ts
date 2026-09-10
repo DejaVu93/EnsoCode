@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   conversation: { projectId: 'project', lifecycle: 'active' },
   exec: vi.fn(),
   writeText: vi.fn(),
+  busy: vi.fn(() => false),
 }));
 vi.mock('node:path', async (importOriginal) => {
   const actual = await importOriginal<{ default: typeof import('node:path') }>();
@@ -30,6 +31,7 @@ vi.mock('electron', () => ({
   shell: {},
   ipcMain: { handle: (key: string, fn: never) => mocks.handlers.set(key, fn) },
 }));
+vi.mock('./worktree', () => ({ sessionWorktreeBusy: mocks.busy }));
 vi.mock('./agent', () => ({
   getSourceAuthorityRegistry: () => ({
     conversation: () => mocks.conversation,
@@ -52,6 +54,7 @@ beforeEach(() => {
   mocks.project = { kind: 'local', state: 'active', canonicalPath: root, sshHost: 'host' };
   mocks.conversation = { projectId: 'project', lifecycle: 'active' };
   mocks.exec.mockReset();
+  mocks.busy.mockReturnValue(false);
   mocks.writeText.mockReset();
   registerFilesWorkspaceHandlers();
 });
@@ -61,6 +64,22 @@ const invoke = (channel: string, request = {}) =>
     {},
     { conversationId: 'conversation', projectId: 'project', rel: 'file', ...request }
   );
+it.each([
+  IPC_CHANNELS.FILES_WRITE,
+  IPC_CHANNELS.FILES_CREATE,
+  IPC_CHANNELS.FILES_MKDIR,
+  IPC_CHANNELS.FILES_RENAME,
+  IPC_CHANNELS.FILES_REMOVE,
+])('blocks local mutation %s while the shared workspace is switching', async (channel) => {
+  writeFileSync(path.join(root, 'file'), 'original');
+  mocks.busy.mockReturnValue(true);
+  expect(await invoke(channel, { content: 'changed', name: 'new' })).toEqual({
+    ok: false,
+    error: 'unavailable',
+  });
+  expect(readFileSync(path.join(root, 'file'), 'utf8')).toBe('original');
+  expect(existsSync(path.join(root, 'new'))).toBe(false);
+});
 it('拒绝不匹配的会话项目且不写剪贴板', async () => {
   mocks.conversation.projectId = 'other';
   expect(await invoke(IPC_CHANNELS.FILES_COPY_PATH, { mode: 'relative' })).toEqual({

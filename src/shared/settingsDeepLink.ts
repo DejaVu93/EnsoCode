@@ -9,6 +9,7 @@ export const SETTINGS_CATEGORIES = [
   'presets',
   'agents',
   'tools',
+  'memory',
   'phone',
   'ssh',
   'usage',

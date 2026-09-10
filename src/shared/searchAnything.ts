@@ -177,6 +177,13 @@ const STATIC_CATALOG: SettingsSearchEntry[] = [
   { id: 'providers.root', category: 'providers', title: 'Model Providers' },
   { id: 'presets.root', category: 'presets', title: 'Presets' },
   { id: 'agents.root', category: 'agents', title: 'Agent types' },
+  {
+    id: 'agents.maxActiveCoworkers',
+    category: 'agents',
+    title: 'Max active coworkers',
+    description:
+      'How many coworkers one conversation can keep at once. Existing ones stay if you lower the limit; hire more only after dismissing. Subagents are not counted.',
+  },
   { id: 'tools.root', category: 'tools', title: 'Built-in tools' },
   {
     id: 'tools.bashInterceptEnabled',

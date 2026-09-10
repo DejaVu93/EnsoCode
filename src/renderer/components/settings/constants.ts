@@ -12,6 +12,7 @@ export type SettingsCategory =
   | 'presets'
   | 'agents'
   | 'tools'
+  | 'memory'
   | 'phone'
   | 'ssh'
   | 'usage';

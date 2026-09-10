@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ChildSessionIdentity } from '@shared/builtinAgents';
 import type { CapabilityReceipt } from '@shared/capabilities/types';
@@ -7,14 +7,23 @@ import type {
   DispatchMainEvent,
   ResolvedAgentTypeSpawnConfig,
 } from '@shared/types/agent';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ActiveConversationRegistry } from './activeConversationRegistry';
 import { AgentDispatchService } from './agentDispatchService';
 import { AgentSessionIndex } from './agentSessionIndex';
 import { SourceAuthorityRegistry } from './sourceAuthorityRegistry';
 
+const worktrees = vi.hoisted(() => new Map<string, { path: string }>());
+const busyWorktrees = vi.hoisted(() => new Set<string>());
+vi.mock('../ipc/worktree', () => ({
+  sessionWorktree: (conversationId: string) => worktrees.get(conversationId),
+  sessionWorktreeBusy: (conversationId: string) => busyWorktrees.has(conversationId),
+}));
+
 const roots: string[] = [];
 afterEach(() => {
+  worktrees.clear();
+  busyWorktrees.clear();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -23,6 +32,7 @@ interface SetupOptions {
   persistedState?: (conversationId: string) => Record<string, unknown>;
   /** 覆盖 resolveAgentType（模拟类型已删） */
   resolveAgentTypeError?: string;
+  readCredentials?: () => Promise<ReadonlySet<string>>;
 }
 
 async function setup(
@@ -103,6 +113,7 @@ async function setup(
   };
   const mainEvents: DispatchMainEvent[] = [];
   const customEntries: AgentSessionCustomEntry[] = [];
+  const spawnParentCalls: Array<{ sessionId: string; cwd: string }> = [];
   const spawnChildCalls: Array<{
     identity: ChildSessionIdentity;
     cwd: string;
@@ -117,6 +128,7 @@ async function setup(
   }> = [];
   const capabilityBindings: ChildSessionIdentity[] = [];
   const terminatedGenerations: ChildSessionIdentity[] = [];
+  const promptedTasks: string[] = [];
   let service!: AgentDispatchService;
   service = new AgentDispatchService({
     registerCapabilityInvocation: (context) => {
@@ -128,7 +140,7 @@ async function setup(
     },
     sourceRegistry: bindings,
     sessionIndex: index,
-    readStoredOauthCredentialKeys: async () => new Set(),
+    readStoredOauthCredentialKeys: options.readCredentials ?? (async () => new Set()),
     emitRendererEvent: () => {},
     emitDispatchEvent: (_owner, event) => mainEvents.push(event),
     host: {
@@ -165,7 +177,8 @@ async function setup(
               expectedModel: { providerId: 'provider', modelId: 'model' },
               expectedToolIds: ['enso_capabilities', 'enso_app', 'ask_user'],
             },
-      spawnParent: (identity) => {
+      spawnParent: (identity, request) => {
+        spawnParentCalls.push({ sessionId: identity.sessionId, cwd: request.cwd });
         queueMicrotask(() =>
           service.observe({
             type: 'parent-ready',
@@ -199,7 +212,10 @@ async function setup(
         );
         return { ok: true };
       },
-      promptChild: () => ({ ok: true }),
+      promptChild: (_identity, _requestId, task) => {
+        promptedTasks.push(task.text);
+        return { ok: true };
+      },
       appendCustomEntry: (_identity, entry) => {
         customEntries.push(entry);
         return { ok: true };
@@ -225,15 +241,97 @@ async function setup(
     customEntries,
     bindings,
     index,
+    spawnParentCalls,
     spawnChildCalls,
     resumeCoworkerCalls,
     capabilityBindings,
     terminatedGenerations,
+    projectPath: project.value.canonicalPath,
     root,
+    promptedTasks,
   };
 }
 
 describe('AgentDispatchService delta coordination', () => {
+  it('rejects a busy workspace before any parent or child spawn', async () => {
+    const fixture = await setup();
+    busyWorktrees.add(fixture.conversationId);
+    const result = await fixture.service.dispatch(
+      {
+        requestId: 'busy',
+        selectionBindingId: fixture.selectionBindingId,
+        typeKey: 'agent:enso',
+        task: { text: 'task', images: [], fileMentions: [] },
+      },
+      1
+    );
+    expect(result.accepted).toBe(false);
+    expect(fixture.spawnParentCalls).toEqual([]);
+    expect(fixture.spawnChildCalls).toEqual([]);
+  });
+
+  it('uses the binding completed during credential lookup for cwd and file mentions', async () => {
+    let finish!: () => void;
+    const fixture = await setup(undefined, {
+      readCredentials: () =>
+        new Promise((resolve) => {
+          finish = () => resolve(new Set());
+        }),
+    });
+    const cwd = path.join(fixture.root, 'worktree');
+    mkdirSync(cwd);
+    writeFileSync(path.join(fixture.projectPath, 'file.txt'), 'wrong main content');
+    writeFileSync(path.join(cwd, 'file.txt'), 'correct worktree content');
+    const pending = fixture.service.dispatch(
+      {
+        requestId: 'late-binding',
+        selectionBindingId: fixture.selectionBindingId,
+        typeKey: 'agent:enso',
+        task: {
+          text: 'task',
+          images: [],
+          fileMentions: [{ id: 'file', relativePath: 'file.txt' }],
+        },
+      },
+      1
+    );
+    worktrees.set(fixture.conversationId, { path: cwd });
+    finish();
+    expect((await pending).accepted).toBe(true);
+    expect(fixture.spawnParentCalls[0].cwd).toBe(cwd);
+    expect(fixture.spawnChildCalls[0].cwd).toBe(cwd);
+    expect(fixture.promptedTasks[0]).toContain('correct worktree content');
+    expect(fixture.promptedTasks[0]).not.toContain('wrong main content');
+  });
+
+  it.each([true, false])(
+    '冷 parent 首次 dispatch 按 root registry 选择 cwd（worktree=%s）',
+    async (isolated) => {
+      const fixture = await setup();
+      const cwd = isolated ? path.join(fixture.root, 'worktree') : fixture.projectPath;
+      mkdirSync(cwd, { recursive: true });
+      if (isolated) worktrees.set(fixture.conversationId, { path: cwd });
+
+      const result = await fixture.service.dispatch(
+        {
+          requestId: 'worktree-dispatch',
+          selectionBindingId: fixture.selectionBindingId,
+          typeKey: 'agent:enso',
+          task: { text: 'do it', images: [], fileMentions: [] },
+        },
+        1
+      );
+
+      expect(result.accepted).toBe(true);
+      expect(fixture.spawnParentCalls).toEqual([{ sessionId: fixture.conversationId, cwd }]);
+      expect(fixture.spawnChildCalls).toHaveLength(1);
+      expect(fixture.spawnChildCalls[0].cwd).toBe(cwd);
+      expect(fixture.bindings.resolveParentSource(fixture.conversationId)?.parentProjectPath).toBe(
+        fixture.projectPath
+      );
+    }
+  );
+
   it('receipt 的每笔调用 requestId 与派发 requestId 不同时，完成通知仍带安全 summary', async () => {
     const { service, selectionBindingId, customEntries } = await setup();
     const result = await service.dispatch(
@@ -470,6 +568,44 @@ describe('parent-ready 级联恢复 child（§7.3）', () => {
     await settle();
     return identity;
   }
+
+  it.each([true, false])('hire 按 root registry 选择 cwd（worktree=%s）', async (isolated) => {
+    const fixture = await setup();
+    await ready(fixture, '11111111-1111-4111-8111-111111111111');
+    const cwd = isolated ? path.join(fixture.root, 'worktree') : fixture.projectPath;
+    mkdirSync(cwd, { recursive: true });
+    if (isolated) worktrees.set(fixture.conversationId, { path: cwd });
+
+    const result = await fixture.service.hireCoworker(
+      fixture.conversationId,
+      'helper',
+      'agent:enso'
+    );
+
+    expect(result.ok).toBe(true);
+    expect(fixture.spawnParentCalls).toHaveLength(0);
+    expect(fixture.spawnChildCalls).toHaveLength(1);
+    expect(fixture.spawnChildCalls[0].cwd).toBe(cwd);
+  });
+
+  it.each([true, false])(
+    'typed child 恢复按 root 而非 child registry 选择 cwd（worktree=%s）',
+    async (isolated) => {
+      const fixture = await setup(undefined, { persistedState });
+      const cwd = isolated ? path.join(fixture.root, 'worktree') : fixture.projectPath;
+      mkdirSync(cwd, { recursive: true });
+      if (isolated) worktrees.set(fixture.conversationId, { path: cwd });
+      worktrees.set(`${fixture.conversationId}::cw-${INSTANCE_ID}`, {
+        path: path.join(fixture.root, 'wrong-child-worktree'),
+      });
+
+      await ready(fixture, '11111111-1111-4111-8111-111111111111');
+
+      expect(fixture.spawnChildCalls).toHaveLength(1);
+      expect(fixture.spawnChildCalls[0]).toMatchObject({ cwd, resumeFile: '/tmp/typed.jsonl' });
+      expect(fixture.resumeCoworkerCalls).toHaveLength(1);
+    }
+  );
 
   it('typed child 走 resume 预约 + spawnChild(resumeFile)；legacy 走 resumeCoworker；ended/缺文件跳过', async () => {
     const fixture = await setup(undefined, { persistedState });

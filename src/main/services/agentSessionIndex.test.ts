@@ -35,6 +35,44 @@ function readyChild(child: ChildSessionIdentity) {
 }
 
 describe('AgentSessionIndex generation and reservation authority', () => {
+  it('blocks starting, reserved and running workspace trees but allows idle children', () => {
+    const sessions = index();
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(false);
+    sessions.prepareParent(parent);
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(true);
+    sessions.observe({
+      type: 'parent-ready',
+      identity: parent,
+      seq: 1,
+      sessionFile: '/tmp/a.jsonl',
+      model: { providerId: 'p', modelId: 'm' },
+    });
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(false);
+    const reserved = sessions.reserveChild(parent, 'builtin:scout', 'Scout', 'request-1');
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(true);
+    if (!reserved.ok) throw new Error('reservation failed');
+    const child = reserved.reservation.child;
+    sessions.observe(readyChild(child));
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(false);
+    expect(sessions.workspaceRoot(child.sessionId)).toBe(parent.sessionId);
+    sessions.observe({ type: 'status', identity: child, seq: 2, status: 'running' });
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(true);
+    expect(sessions.workspaceTreeRunning('unrelated')).toBe(false);
+    sessions.observe({ type: 'status', identity: child, seq: 3, status: 'idle' });
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(false);
+    sessions.observe({ type: 'worker-exited' });
+    expect(sessions.workspaceTreeRunning(parent.sessionId)).toBe(false);
+  });
+  it('distinguishes preparing workers from ended identities for worktree rebuilds', () => {
+    const sessions = index();
+    expect(sessions.isAlive(parent.sessionId)).toBe(false);
+    sessions.prepareParent(parent);
+    expect(sessions.isAlive(parent.sessionId)).toBe(true);
+    sessions.observe({ type: 'parent-ended', identity: parent, seq: 1, reason: 'released' });
+    expect(sessions.currentIdentity(parent.sessionId)).toEqual(parent);
+    expect(sessions.isAlive(parent.sessionId)).toBe(false);
+  });
+
   it('手动只读响应不进入生命周期索引', () => {
     const sessions = index();
     const response = {
@@ -111,6 +149,34 @@ describe('AgentSessionIndex generation and reservation authority', () => {
     expect(
       sessions.reserveChild(parent, 'builtin:worker', 'Worker', 'request-retry')
     ).toMatchObject({ ok: true });
+  });
+
+  it('读取 settings 的 maxActiveCoworkers，脏值回落默认 5', () => {
+    const withLimit = (value: unknown) =>
+      new AgentSessionIndex({
+        readSettings: () => ({ 'enso-settings': { state: { maxActiveCoworkers: value } } }),
+        randomUuid: uuids(),
+      });
+
+    const two = withLimit(2);
+    two.prepareParent(parent);
+    expect(two.reserveChild(parent, 'builtin:worker', 'Worker', 'a').ok).toBe(true);
+    expect(two.reserveChild(parent, 'builtin:worker', 'Worker', 'b').ok).toBe(true);
+    expect(two.reserveChild(parent, 'builtin:worker', 'Worker', 'c')).toMatchObject({
+      ok: false,
+      code: 'capacity-reached',
+    });
+
+    const dirty = withLimit('nope');
+    dirty.prepareParent(parent);
+    const reserved = Array.from({ length: MAX_ORIGIN_COWORKERS }, (_, position) =>
+      dirty.reserveChild(parent, 'builtin:worker', 'Worker', `fill-${position}`)
+    );
+    expect(reserved.every((result) => result.ok)).toBe(true);
+    expect(dirty.reserveChild(parent, 'builtin:worker', 'Worker', 'overflow')).toMatchObject({
+      ok: false,
+      code: 'capacity-reached',
+    });
   });
 
   it('reserveChildResume 保留原 instanceId/name/typeKey，只换新 generation', () => {
