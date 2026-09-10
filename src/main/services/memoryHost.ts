@@ -58,9 +58,23 @@ let embedder: Embedder | null = null;
  * 表现成「向量数一直是 0，点补齐没反应」而无从排查——把它留下来给设置页显示。
  */
 let lastEmbeddingError: string | null = null;
+// 只缓存本代订阅；文件互斥与取消由 downloader 的同目录共享任务负责。
 let download: Promise<void> | null = null;
-// provider 构造是异步的（onnx 运行时 import / 建 session）；失败后置 null 让下次调用重试
+// provider 构造是异步的（GGUF 加载 / 建 context）；失败后置 null 让下次调用重试
 let providerInit: Promise<Embedder | null> | null = null;
+let embeddingGeneration = 0;
+
+function invalidateMemoryEmbedding(): void {
+  embeddingGeneration += 1;
+  reembedAbort?.abort();
+  const previous = provider;
+  provider = null;
+  embedder = null;
+  providerInit = null;
+  download = null;
+  lastEmbeddingError = null;
+  previous?.close?.();
+}
 
 /**
  * 设置层调用；切换模型立即作用于之后的写入/查询，旧向量由后台滚动重嵌（持久化 jobs 表，可中断续跑）；
@@ -68,10 +82,7 @@ let providerInit: Promise<Embedder | null> | null = null;
  */
 export function configureMemoryEmbedding(next: Partial<MemoryEmbeddingConfig>): void {
   config = { ...config, ...next };
-  provider?.close?.();
-  provider = null;
-  embedder = null;
-  providerInit = null;
+  invalidateMemoryEmbedding();
   scheduleReembed();
 }
 
@@ -475,12 +486,15 @@ function scheduleReembed(): void {
       const e = await memoryEmbedder();
       if (!e || ac.signal.aborted || !db) return;
       const job = await runReembedJob(db, e, { signal: ac.signal });
+      if (ac.signal.aborted) return;
       // 任务层自己把逐行失败吞进 failed 计数，这里把它提上来
       lastEmbeddingError =
         job?.error ?? (job && job.failed > 0 ? `${job.failed} rows failed` : null);
     })
     .catch((error: unknown) => {
-      lastEmbeddingError = error instanceof Error ? error.message : String(error);
+      if (!ac.signal.aborted) {
+        lastEmbeddingError = error instanceof Error ? error.message : String(error);
+      }
     })
     .finally(() => {
       if (reembedAbort === ac) reembedAbort = null;
@@ -497,11 +511,10 @@ function scheduleReembedIfIdle(): void {
  * 丢掉 provider 缓存让下次解析重新探测磁盘；库文件已存在就顺带打开，
  * 否则 memoryHost 的 db 一直是 null（它只在 agent 用记忆时才懒开），重嵌永远不会跑。
  */
-export function refreshMemoryEmbedding(): void {
-  provider?.close?.();
-  provider = null;
-  embedder = null;
-  providerInit = null;
+export function refreshMemoryEmbedding(opts: { reembed?: boolean } = {}): void {
+  invalidateMemoryEmbedding();
+  // 删除模型仅失效缓存；主动重嵌会在 autoDownload 开启时立即把它下回来。
+  if (opts.reembed === false) return;
   if (!db && existsSync(path.join(memoryRoot(), 'memory.db'))) memoryDb();
   scheduleReembed();
 }
@@ -559,22 +572,35 @@ async function memoryEmbedder(): Promise<Embedder | null> {
     lastEmbeddingError = null;
     return null;
   }
+  const generation = embeddingGeneration;
   const dir = path.join(memoryRoot(), 'models', embeddingModelDirName(spec));
   if (spec.files.length > 0 && !isModelReady(dir, spec)) {
     lastEmbeddingError = config.autoDownload ? 'model is downloading' : 'model is not downloaded';
     if (config.autoDownload && !download) {
-      download = downloadModel(spec, dir, { onProgress: config.onProgress })
+      const onProgress = config.onProgress;
+      const pending = downloadModel(spec, dir, {
+        onProgress: (progress) => {
+          if (generation === embeddingGeneration) onProgress?.(progress);
+        },
+      })
         // 下载完成就能给已有记忆补向量，不等下一次前台读写
-        .then(() => scheduleReembedIfIdle())
+        .then(() => {
+          if (generation === embeddingGeneration) scheduleReembedIfIdle();
+        })
         .catch(() => {})
         .finally(() => {
-          download = null;
+          if (download === pending) download = null;
         });
+      download = pending;
     }
     return null;
   }
-  providerInit = createEmbeddingProvider(spec, { modelDir: dir, remote: remoteOptions(spec) })
+  const init = createEmbeddingProvider(spec, { modelDir: dir, remote: remoteOptions(spec) })
     .then((p) => {
+      if (generation !== embeddingGeneration) {
+        p?.close?.();
+        return null;
+      }
       provider = p;
       embedder = p ? toEmbedder(p) : null;
       lastEmbeddingError = p ? null : 'embedding provider could not be created';
@@ -582,13 +608,16 @@ async function memoryEmbedder(): Promise<Embedder | null> {
       return embedder;
     })
     .catch((error: unknown) => {
-      lastEmbeddingError = error instanceof Error ? error.message : String(error);
+      if (generation === embeddingGeneration) {
+        lastEmbeddingError = error instanceof Error ? error.message : String(error);
+      }
       return null;
     })
     .finally(() => {
-      providerInit = null;
+      if (providerInit === init) providerInit = null;
     });
-  return providerInit;
+  providerInit = init;
+  return init;
 }
 
 function remoteOptions(spec: EmbeddingModelSpec): RemoteEmbeddingOptions | undefined {
@@ -597,15 +626,12 @@ function remoteOptions(spec: EmbeddingModelSpec): RemoteEmbeddingOptions | undef
 }
 
 export function closeMemoryDb(): void {
-  reembedAbort?.abort();
+  invalidateMemoryEmbedding();
   reembedAbort = null;
   // 退出前把没到防抖时间的那轮重写补上（同步，库仍开着）
   wmPending?.fire();
   db?.close();
   db = null;
-  provider?.close?.();
-  provider = null;
-  embedder = null;
 }
 
 /** 子会话（coworker `${parentId}::cw-x` / enso child）归属父会话所在项目。 */

@@ -887,6 +887,451 @@ describe('memoryHost embedding 配置与生命周期', () => {
     });
   });
 
+  it.each(['close', 'none'] as const)(
+    '下载中 %s：旧下载完成不重新调度后台任务或回写错误',
+    async (action) => {
+      const downloading = deferred<void>();
+      const download = vi
+        .spyOn(embeddingDownloads, 'downloadModel')
+        .mockReturnValueOnce(downloading.promise);
+      const progress = vi.fn();
+      configureMemoryEmbedding({
+        modelId: 'local:potion-multilingual-128M',
+        autoDownload: true,
+        onProgress: progress,
+      });
+      await getMemoryEmbedder();
+      await awaitMemoryReembed();
+      if (action === 'close') closeMemoryDb();
+      else {
+        configureMemoryEmbedding({ modelId: 'none' });
+        await awaitMemoryReembed();
+        await getMemoryEmbedder();
+      }
+      const error = getMemoryEmbeddingError();
+      download.mock.calls[0][2]?.onProgress?.({
+        file: 'model.safetensors',
+        fileIndex: 0,
+        fileCount: 3,
+        received: 1,
+        total: 2,
+      });
+      downloading.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await awaitMemoryReembed();
+      expect(progress).not.toHaveBeenCalled();
+      expect(getMemoryEmbeddingError()).toBe(error);
+      expect(embeddingDownloads.downloadModel).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('自动下载中切走再切回：新代重新等待同一下载，完成后旧记忆自动补向量', async () => {
+    const spec = resolveEmbeddingModelSpec('local:potion-multilingual-128M')!;
+    const dir = path.join(userData, 'memory', 'models', embeddingModelDirName(spec));
+    rmSync(dir, { recursive: true, force: true });
+    const result = (await invokeMemory(
+      'capture',
+      {
+        content: 'redis generation-resume',
+        importance: 0.8,
+        spaceId: 'global',
+      },
+      null
+    )) as { memory: { id: string } };
+    await awaitMemoryReembed();
+    const downloading = deferred<void>();
+    vi.spyOn(embeddingDownloads, 'downloadModel').mockReturnValue(downloading.promise);
+    try {
+      configureMemoryEmbedding({ modelId: spec.id, autoDownload: true });
+      await getMemoryEmbedder();
+      await awaitMemoryReembed();
+      configureMemoryEmbedding({ modelId: 'none' });
+      configureMemoryEmbedding({ modelId: spec.id });
+      await getMemoryEmbedder();
+      await awaitMemoryReembed();
+      const vector = Array(256).fill(0);
+      vector[0] = 1;
+      writeTinyModel2Vec(dir, { tokens: ['redis'], rows: [vector] });
+      writeFileSync(path.join(dir, '.ready'), '{}');
+      downloading.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await awaitMemoryReembed();
+      expect(
+        memoryDatabase()
+          .prepare('SELECT embedding_model FROM memories WHERE id = ?')
+          .get(result.memory.id)
+      ).toEqual({
+        embedding_model: spec.id,
+      });
+    } finally {
+      downloading.resolve();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await awaitMemoryReembed();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('A→B 不同目录下载：A 完成不清 B 订阅，B 进度不重复且完成后自动重嵌', async () => {
+    const old = resolveEmbeddingModelSpec('local:qwen3-0.6b-gguf')!;
+    const next = loadGguf();
+    const oldDir = path.join(userData, 'memory', 'models', embeddingModelDirName(old));
+    const nextDir = path.join(
+      userData,
+      'memory',
+      'models',
+      embeddingModelDirName(resolveEmbeddingModelSpec(next.modelId)!)
+    );
+    rmSync(oldDir, { recursive: true, force: true });
+    rmSync(nextDir, { recursive: true, force: true });
+    next.resolve(next.model);
+    const result = (await invokeMemory(
+      'capture',
+      {
+        content: 'separate download generation',
+        importance: 0.8,
+        spaceId: 'global',
+      },
+      null
+    )) as { memory: { id: string } };
+    await awaitMemoryReembed();
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const network = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              streams.push(controller);
+              controller.enqueue(Uint8Array.from([1, 2, 3]));
+            },
+          })
+        )
+    );
+    vi.stubGlobal('fetch', network);
+    const downloads = vi.spyOn(embeddingDownloads, 'downloadModel');
+    const firstProgress = deferred<void>();
+    const nextProgress = deferred<void>();
+    const received: number[] = [];
+    try {
+      configureMemoryEmbedding({
+        modelId: old.id,
+        autoDownload: true,
+        onProgress: () => firstProgress.resolve(),
+      });
+      await getMemoryEmbedder();
+      await firstProgress.promise;
+      configureMemoryEmbedding({
+        modelId: next.modelId,
+        onProgress: (p) => {
+          received.push(p.received);
+          nextProgress.resolve();
+        },
+      });
+      await getMemoryEmbedder();
+      await nextProgress.promise;
+      streams[0].close();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await getMemoryEmbedder();
+      streams[1].enqueue(Uint8Array.from([4]));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(received).toEqual([3, 4]);
+      expect(network).toHaveBeenCalledTimes(2);
+      streams[1].close();
+      await Promise.allSettled(downloads.mock.results.map((r) => r.value));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await awaitMemoryReembed();
+      expect(
+        memoryDatabase()
+          .prepare('SELECT embedding_model FROM memories WHERE id = ?')
+          .get(result.memory.id)
+      ).toEqual({ embedding_model: next.modelId });
+    } finally {
+      configureMemoryEmbedding({ modelId: 'none', autoDownload: false, onProgress: undefined });
+      cancelEmbeddingModelDownload(old.id);
+      cancelEmbeddingModelDownload(next.modelId);
+      for (const stream of streams) {
+        try {
+          stream.error(new DOMException('Aborted', 'AbortError'));
+        } catch {}
+      }
+      await Promise.allSettled(downloads.mock.results.map((r) => r.value));
+      await awaitMemoryReembed();
+      rmSync(oldDir, { recursive: true, force: true });
+      rmSync(nextDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['start', 'cancel', 'delete'] as const)(
+    'Host 自动下载与显式 %s 共用文件互斥、取消和状态',
+    async (action) => {
+      const modelId = 'local:qwen3-0.6b-gguf';
+      const spec = resolveEmbeddingModelSpec(modelId)!;
+      const dir = path.join(userData, 'memory', 'models', embeddingModelDirName(spec));
+      rmSync(dir, { recursive: true, force: true });
+      const part = path.join(dir, `${spec.files[0].name}.part`);
+      const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+      const network = vi.fn<typeof fetch>(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                streams.push(controller);
+                controller.enqueue(Uint8Array.from([1, 2, 3]));
+              },
+            })
+          )
+      );
+      vi.stubGlobal('fetch', network);
+      const started = deferred<void>();
+      const downloads = vi.spyOn(embeddingDownloads, 'downloadModel');
+      let explicit: Promise<boolean> | null = null;
+      try {
+        configureMemoryEmbedding({
+          modelId,
+          autoDownload: true,
+          onProgress: () => started.resolve(),
+        });
+        await getMemoryEmbedder();
+        await started.promise;
+        expect(readFileSync(part)).toEqual(Buffer.from([1, 2, 3]));
+        if (action === 'start') {
+          explicit = startEmbeddingModelDownload(modelId);
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(network).toHaveBeenCalledTimes(1);
+          expect(readFileSync(part)).toEqual(Buffer.from([1, 2, 3]));
+        }
+        expect(listEmbeddingModels().find((model) => model.id === modelId)?.state).toBe(
+          'downloading'
+        );
+        if (action === 'delete') expect(deleteEmbeddingModel(modelId)).toBe(false);
+        else expect(cancelEmbeddingModelDownload(modelId)).toBe(true);
+        expect(network.mock.calls[0][1]?.signal?.aborted).toBe(true);
+        expect(existsSync(part)).toBe(true);
+        configureMemoryEmbedding({ modelId: 'none', autoDownload: false, onProgress: undefined });
+        for (const stream of streams) stream.error(new DOMException('Aborted', 'AbortError'));
+        await Promise.allSettled(downloads.mock.results.map((result) => result.value));
+        if (explicit) expect(await explicit).toBe(false);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(existsSync(path.join(dir, '.ready'))).toBe(false);
+        expect(listEmbeddingModels().find((model) => model.id === modelId)?.state).toBe('missing');
+        expect(deleteEmbeddingModel(modelId)).toBe(true);
+        expect(existsSync(dir)).toBe(false);
+      } finally {
+        configureMemoryEmbedding({ modelId: 'none', autoDownload: false, onProgress: undefined });
+        cancelEmbeddingModelDownload(modelId);
+        for (const stream of streams) {
+          try {
+            stream.error(new DOMException('Aborted', 'AbortError'));
+          } catch {}
+        }
+        await Promise.allSettled(downloads.mock.results.map((result) => result.value));
+        await explicit;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it('真实 IPC 删除选中模型后不自动下回来；后续用户查询仍遵循 autoDownload', async () => {
+    const { registerMemoryHandlers } = await import('../ipc/memory');
+    registerMemoryHandlers();
+    const model = loadGguf();
+    const spec = resolveEmbeddingModelSpec(model.modelId)!;
+    const dir = path.join(userData, 'memory', 'models', embeddingModelDirName(spec));
+    model.resolve(model.model);
+    memoryDatabase();
+    configureMemoryEmbedding({ modelId: model.modelId, autoDownload: true });
+    expect(await getMemoryEmbedder()).not.toBeNull();
+    await awaitMemoryReembed();
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const network = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              streams.push(controller);
+              controller.enqueue(Uint8Array.from([1, 2, 3]));
+            },
+          })
+        )
+    );
+    vi.stubGlobal('fetch', network);
+    const downloads = vi.spyOn(embeddingDownloads, 'downloadModel');
+    try {
+      const remove = ipcHandlers.get(IPC_CHANNELS.MEMORY_MODEL_DELETE)!;
+      expect(await remove({ sender: { id: 1 } }, model.modelId)).toBe(true);
+      await awaitMemoryReembed();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(network).not.toHaveBeenCalled();
+      expect(existsSync(dir)).toBe(false);
+      expect(model.context.dispose).toHaveBeenCalledTimes(1);
+      await invokeMemory(
+        'search',
+        { query: 'user query after deletion', limit: 5, spaceId: 'global' },
+        null
+      );
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(network).toHaveBeenCalledTimes(1);
+      expect(existsSync(path.join(dir, `${spec.files[0].name}.part`))).toBe(true);
+    } finally {
+      configureMemoryEmbedding({ modelId: 'none', autoDownload: false });
+      cancelEmbeddingModelDownload(model.modelId);
+      for (const stream of streams) {
+        try {
+          stream.error(new DOMException('Aborted', 'AbortError'));
+        } catch {}
+      }
+      await Promise.allSettled(downloads.mock.results.map((r) => r.value));
+      await awaitMemoryReembed();
+      setMemoryChangeListener(null);
+      setEmbeddingProgressSink(null);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('远程初始化中切 none，不返回可继续外发文本的旧 embedder', async () => {
+    syncMemoryEmbeddingFromSettings(remoteSettings());
+    const pending = getMemoryEmbedder();
+    configureMemoryEmbedding({ modelId: 'none' });
+    const stale = await pending;
+    if (stale) await stale.embed('private after disabling', 'query');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(stale).toBeNull();
+    expect(await getMemoryEmbedder()).toBeNull();
+  });
+
+  it('GGUF 加载中切 none：旧 context 被释放，后续检索仍为纯 FTS', async () => {
+    const old = loadGguf();
+    configureMemoryEmbedding({ modelId: old.modelId });
+    const pending = getMemoryEmbedder();
+    configureMemoryEmbedding({ modelId: 'none' });
+    old.resolve(old.model);
+    const stale = await pending;
+    const current = await getMemoryEmbedder();
+    if (current) await current.embed('private after disabling', 'query');
+    expect(old.context.getEmbeddingFor).not.toHaveBeenCalled();
+    expect(old.context.dispose).toHaveBeenCalledTimes(1);
+    expect(stale).toBeNull();
+    expect(current).toBeNull();
+  });
+
+  it('新 GGUF 先就绪后旧加载完成，不覆盖新选择也不释放新 context', async () => {
+    const old = loadGguf();
+    configureMemoryEmbedding({ modelId: old.modelId });
+    const oldPending = getMemoryEmbedder();
+    const next = loadGguf('local:qwen3-0.6b-gguf');
+    configureMemoryEmbedding({ modelId: next.modelId });
+    const nextPending = getMemoryEmbedder();
+    next.resolve(next.model);
+    const current = await nextPending;
+    old.resolve(old.model);
+    const stale = await oldPending;
+    const after = await getMemoryEmbedder();
+    await after!.embed('new model query', 'query');
+    expect(after).toBe(current);
+    expect(stale).toBeNull();
+    expect(next.context.getEmbeddingFor).toHaveBeenCalledTimes(1);
+    expect(next.context.dispose).not.toHaveBeenCalled();
+    expect(old.context.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('旧加载失败的 finally 不能清除新 init；新模型只创建一个 context', async () => {
+    const old = loadGguf();
+    configureMemoryEmbedding({ modelId: old.modelId });
+    const oldPending = getMemoryEmbedder();
+    const next = loadGguf('local:qwen3-0.6b-gguf');
+    configureMemoryEmbedding({ modelId: next.modelId });
+    const nextPending = getMemoryEmbedder();
+    await awaitMemoryReembed();
+    old.reject(new Error('obsolete load failed'));
+    await oldPending;
+    const error = getMemoryEmbeddingError();
+    const joined = getMemoryEmbedder();
+    next.resolve(next.model);
+    const [first, second] = await Promise.all([nextPending, joined]);
+    expect(error).not.toContain('obsolete load failed');
+    expect(second).toBe(first);
+    expect(first?.model).toBe(next.modelId);
+    expect(acquireModel).toHaveBeenCalledTimes(2);
+    expect(next.model.createEmbeddingContext).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['close', 'refresh'] as const)(
+    '%s 后同模型重新加载：旧 init 不复活、不清新 init',
+    async (action) => {
+      const old = loadGguf();
+      configureMemoryEmbedding({ modelId: old.modelId });
+      const oldPending = getMemoryEmbedder();
+      const next = loadGguf();
+      if (action === 'close') closeMemoryDb();
+      else refreshMemoryEmbedding();
+      const nextPending = getMemoryEmbedder();
+      old.resolve(old.model);
+      await oldPending;
+      const joined = getMemoryEmbedder();
+      next.resolve(next.model);
+      const [first, second] = await Promise.all([nextPending, joined]);
+      expect(second).toBe(first);
+      expect(old.context.dispose).toHaveBeenCalledTimes(1);
+      expect(next.context.dispose).not.toHaveBeenCalled();
+      await first!.embed('fresh context query', 'query');
+      expect(next.context.getEmbeddingFor).toHaveBeenCalled();
+      expect(old.context.getEmbeddingFor).not.toHaveBeenCalled();
+      expect(acquireModel).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('关库后旧重嵌失败不覆盖新配置错误，后台链可正常结束', async () => {
+    await invokeMemory(
+      'capture',
+      { content: 'pending embedding lifecycle', importance: 0.8, spaceId: 'global' },
+      null
+    );
+    await awaitMemoryReembed();
+    const old = loadGguf();
+    const started = deferred<void>();
+    const vector = deferred<{ vector: number[] }>();
+    old.context.getEmbeddingFor.mockImplementationOnce(() => {
+      started.resolve();
+      return vector.promise;
+    });
+    configureMemoryEmbedding({ modelId: old.modelId });
+    old.resolve(old.model);
+    await started.promise;
+    closeMemoryDb();
+    configureMemoryEmbedding({ modelId: 'local:potion-multilingual-128M' });
+    await getMemoryEmbedder();
+    closeMemoryDb();
+    const error = getMemoryEmbeddingError();
+    vector.reject(new Error('obsolete embedding failed'));
+    await awaitMemoryReembed();
+    expect(getMemoryEmbeddingError()).toBe(error);
+    expect(old.context.getEmbeddingFor).toHaveBeenCalledTimes(1);
+  });
+
+  it('零进展重嵌只跑一轮，后续查询不会反复重新排队', async () => {
+    await invokeMemory(
+      'capture',
+      { content: 'zero progress embedding', importance: 0.8, spaceId: 'global' },
+      null
+    );
+    await awaitMemoryReembed();
+    const gguf = loadGguf();
+    gguf.context.getEmbeddingFor.mockResolvedValue({ vector: [] });
+    configureMemoryEmbedding({ modelId: gguf.modelId });
+    gguf.resolve(gguf.model);
+    await awaitMemoryReembed();
+    const before = memoryDatabase()
+      .prepare("SELECT count(*) AS n FROM memory_jobs WHERE kind = 'reembed'")
+      .get();
+    const job = getMemoryReembedProgress();
+    expect(job).toMatchObject({ status: 'done', done: 0 });
+    expect(job!.failed).toBeGreaterThan(0);
+    await getMemoryEmbedder();
+    await awaitMemoryReembed();
+    expect(
+      memoryDatabase().prepare("SELECT count(*) AS n FROM memory_jobs WHERE kind = 'reembed'").get()
+    ).toEqual(before);
+  });
 });
 
 describe('rootSessionId', () => {

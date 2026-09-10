@@ -330,7 +330,7 @@ export function registerMemoryHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.MEMORY_MODEL_DELETE, (event, modelId: unknown) => {
     if (!isTrustedWindow(event.sender.id) || typeof modelId !== 'string' || !modelId) return false;
     const removed = deleteEmbeddingModel(modelId);
-    if (removed) refreshMemoryEmbedding();
+    if (removed) refreshMemoryEmbedding({ reembed: false });
     return removed;
   });
 

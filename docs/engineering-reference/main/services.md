@@ -147,6 +147,15 @@ let lastScan: { scanId: string; byId: Map<string, Cached> } | null = null;
 （`registered` / `same-content` / `same-name`），界面上置灰且默认不勾选，
 用户仍可手动选。三层都要拦：扫描标记、collect 批内去重、store 落库前再判一次。
 
+## 异步资源替换与取消
+
+- 缓存失效比较实际有效配置；Provider 的 ID 不变，不代表端点或凭证未变，删除记录也必须失效。
+- 重配、刷新和关闭都要使旧初始化失效；成功、失败及 `finally` 只允许当前任务发布状态，过期资源须释放。
+- 发出 abort 不等于文件 I/O 已结束。同目录下载重启前等待旧任务收尾，不能仅删除 `running` 后立即复用 `.part`。
+- 回归须挂起初始化或重试，再跨事件轮次切换、取消和重开，验证旧任务不会覆盖新配置、释放新资源或删除新任务状态。
+
+回归位置：`src/main/services/memoryHost.test.ts`、`src/main/services/chatModels.test.ts`、`src/main/services/memoryModels.test.ts`。
+
 ## 网络请求按协议分派
 
 `providerApi.ts` 按 `ModelApiKind` 分派 URL、请求头和请求体。约定：
