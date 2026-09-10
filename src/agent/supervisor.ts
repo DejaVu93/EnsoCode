@@ -441,10 +441,15 @@ function isSameGeneration(left: SessionIdentity, right: SessionIdentity): boolea
 
 async function refreshWorkerProviderModels(
   runtime: ModelRuntime,
-  providerId: string
+  providerId: string,
+  options?: { force?: boolean }
 ): Promise<void> {
   try {
-    await runtime.refresh({ providers: [providerId], allowNetwork: true });
+    await runtime.refresh({
+      providers: [providerId],
+      allowNetwork: true,
+      ...(options?.force ? { force: true } : {}),
+    });
   } catch {
     // 拉不到就留用该 provider 的兜底清单，不该让 worker 起不来
   }
@@ -3299,7 +3304,12 @@ export async function resolveBaseModelOrRefresh(runtime: ModelRuntime, model: Sp
     return resolveBaseModel(runtime, model);
   } catch (error) {
     if (!model.oauthAccountKey) throw error;
-    await refreshWorkerProviderModels(runtime, providerIdOfAccountKey(model.oauthAccountKey));
+    // Cursor 无 force 只踢后台任务并立刻返回兜底清单（没有 claude-fable-5-1 这类新 id）
+    await refreshWorkerProviderModels(
+      runtime,
+      providerIdOfAccountKey(model.oauthAccountKey),
+      { force: true }
+    );
     return resolveBaseModel(runtime, model);
   }
 }

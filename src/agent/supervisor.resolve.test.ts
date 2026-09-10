@@ -214,6 +214,38 @@ describe('resolveBaseModelOrRefresh', () => {
     expect(refresh).toHaveBeenCalledWith({
       providers: ['google-antigravity'],
       allowNetwork: true,
+      force: true,
+    });
+  });
+
+  it('Cursor 无 force 只返回兜底清单时，miss 刷新必须 force 才能解析新模型', async () => {
+    const late = { id: 'claude-fable-5-1', provider: 'cursor' };
+    let catalog: typeof late | undefined;
+    const refresh = vi.fn(async (options: { force?: boolean }) => {
+      if (options.force) catalog = late;
+      return { aborted: false, errors: new Map() };
+    });
+    const runtime = {
+      getModel: vi.fn((providerId: string, modelId: string) =>
+        providerId === 'cursor' && modelId === late.id ? catalog : undefined
+      ),
+      refresh,
+    } as unknown as ModelRuntime;
+
+    await expect(
+      resolveBaseModelOrRefresh(runtime, {
+        api: 'openai-completions',
+        baseUrl: '',
+        apiKey: '',
+        modelId: 'claude-fable-5-1',
+        settingsProviderId: 'settings-provider',
+        oauthAccountKey: 'cursor',
+      })
+    ).resolves.toBe(late);
+    expect(refresh).toHaveBeenCalledWith({
+      providers: ['cursor'],
+      allowNetwork: true,
+      force: true,
     });
   });
 
