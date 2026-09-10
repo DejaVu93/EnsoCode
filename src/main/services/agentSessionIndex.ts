@@ -6,6 +6,10 @@ import {
   isSameChildSessionIdentity,
   type SessionIdentity,
 } from '@shared/builtinAgents';
+import {
+  DEFAULT_MAX_ACTIVE_COWORKERS,
+  normalizeMaxActiveCoworkers,
+} from '@shared/maxActiveCoworkers';
 import type {
   AgentWorkerEvent,
   ChildConversationMetadata,
@@ -13,10 +17,11 @@ import type {
   McpWorkerEvent,
   ModelRef,
   NodeStatus,
+  WorkspaceLockEvent,
 } from '@shared/types/agent';
 import { type AgentTypeEntry, BUILTIN_AGENT_TYPES } from '@shared/types/assets';
 
-export const MAX_ORIGIN_COWORKERS = 5;
+export const MAX_ORIGIN_COWORKERS = DEFAULT_MAX_ACTIVE_COWORKERS;
 
 interface IndexedSession {
   identity: SessionIdentity | ChildSessionIdentity;
@@ -104,6 +109,7 @@ function identityOf(
     | { type: 'text-completed' }
     | { type: 'text-failed' }
     | McpWorkerEvent
+    | WorkspaceLockEvent
   >
 ): SessionIdentity {
   return 'child' in event ? event.child : event.identity;
@@ -136,6 +142,12 @@ export class AgentSessionIndex {
     this.randomUuid = options.randomUuid ?? randomUUID;
   }
 
+  private originCoworkerLimit(): number {
+    return normalizeMaxActiveCoworkers(
+      settingsState(this.options.readSettings()).maxActiveCoworkers
+    );
+  }
+
   prepareParent(identity: SessionIdentity): void {
     const current = this.sessions.get(identity.sessionId);
     if (current && isSameGeneration(current.identity, identity)) return;
@@ -153,6 +165,38 @@ export class AgentSessionIndex {
 
   currentIdentity(sessionId: string): SessionIdentity | ChildSessionIdentity | undefined {
     return this.sessions.get(sessionId)?.identity;
+  }
+
+  isAlive(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.alive === true;
+  }
+
+  workspaceRoot(sessionId: string): string {
+    const identity = this.currentIdentity(sessionId);
+    if (identity && 'parent' in identity) return this.workspaceRoot(identity.parent.sessionId);
+    for (const session of this.sessions.values()) {
+      if (session.coworkers.has(sessionId)) return this.workspaceRoot(session.identity.sessionId);
+    }
+    const persisted = this.persistedConversation(sessionId);
+    return typeof persisted?.parentId === 'string' && persisted.parentId !== sessionId
+      ? persisted.parentId
+      : sessionId;
+  }
+
+  workspaceTreeRunning(rootId: string): boolean {
+    if (
+      [...this.reservations.values()].some(
+        ({ child }) => this.workspaceRoot(child.parent.sessionId) === rootId
+      )
+    )
+      return true;
+    for (const [id, session] of this.sessions) {
+      if (this.workspaceRoot(id) !== rootId || !session.alive) continue;
+      if (!session.ready || session.status === 'running') return true;
+      if ([...session.coworkers.values()].some((coworker) => coworker.status === 'running'))
+        return true;
+    }
+    return false;
   }
 
   isCurrent(identity: SessionIdentity): boolean {
@@ -189,11 +233,12 @@ export class AgentSessionIndex {
       return { ok: false, code: 'stale-parent', error: 'Parent generation is no longer current.' };
     }
     const occupied = session.coworkers.size + this.parentReservations(parent).length;
-    if (occupied >= MAX_ORIGIN_COWORKERS) {
+    const limit = this.originCoworkerLimit();
+    if (occupied >= limit) {
       return {
         ok: false,
         code: 'capacity-reached',
-        error: `Coworker limit reached (${MAX_ORIGIN_COWORKERS} active or reserved).`,
+        error: 'Coworker limit reached (active or reserved).',
       };
     }
 
@@ -245,11 +290,11 @@ export class AgentSessionIndex {
       return { ok: false, code: 'stale-parent', error: 'Parent generation is no longer current.' };
     }
     const occupied = session.coworkers.size + this.parentReservations(parent).length;
-    if (occupied >= MAX_ORIGIN_COWORKERS) {
+    if (occupied >= this.originCoworkerLimit()) {
       return {
         ok: false,
         code: 'capacity-reached',
-        error: `Coworker limit reached (${MAX_ORIGIN_COWORKERS} active or reserved).`,
+        error: 'Coworker limit reached (active or reserved).',
       };
     }
     // 撞名检查要排除自身：usedNames 扫持久化防跨重启撞名，而 resume 的 child
@@ -335,7 +380,12 @@ export class AgentSessionIndex {
     }
 
     // 手动读取结果不改变会话生命周期或 seq 权威。
-    if (event.type === 'session-reloaded') return false;
+    if (
+      event.type === 'session-reloaded' ||
+      event.type === 'workspace-lock-result' ||
+      event.type === 'workspace-unlock-result'
+    )
+      return false;
     // 标题总结与 MCP 旁路事件不属于任何 worker 会话（无 identity/seq），不进会话索引
     if (event.type === 'title-generated' || event.type === 'title-failed') return false;
     if (event.type === 'text-completed' || event.type === 'text-failed') return false;

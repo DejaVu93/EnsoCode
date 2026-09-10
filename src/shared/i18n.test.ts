@@ -136,7 +136,7 @@ const MODEL_CENTER_ENSO_I18N_KEYS = [
   'unavailable',
   'cancelled',
   // Capacity and exact ready handshake failures surfaced in the current TAB
-  'Coworker limit reached (5 active or reserved).',
+  'Coworker limit reached (active or reserved).',
   'Agent worker exited before ready.',
   'Agent session was rejected before ready.',
   'Agent session ready handshake timed out.',
@@ -193,6 +193,43 @@ describe('model center and Enso i18n keys', () => {
       expect(zhTranslations, `missing feature key: ${key}`).toHaveProperty(key);
       expect(zhTranslations[key], `empty feature translation: ${key}`).not.toBe('');
       expect(getTranslation('zh', key), `untranslated feature key: ${key}`).not.toBe(key);
+    }
+  });
+});
+
+describe('workspace branch i18n keys', () => {
+  it('分支搜索、占用、安全阻止与创建提示均有中文映射，英文原样可用', () => {
+    const keys = [
+      'Switch branch',
+      'Back to workspaces',
+      'Local branches',
+      'Search local branches',
+      'Switching branches affects all conversations in this workspace.',
+      'Create branch from HEAD…',
+      'Create branch',
+      'Create and switch',
+      'Branch name',
+      'Detached HEAD',
+      'No matching local branches.',
+      'Failed to load branches',
+      'Failed to switch branch',
+      'Creates a branch from the current HEAD and switches every conversation in this workspace to it.',
+      'Create a commit before creating a branch from HEAD.',
+      'Stop running conversations and coworkers in this workspace before switching branches.',
+      'Commit or stash uncommitted changes before switching branches.',
+      'This workspace is busy. Try again when its conversations are ready.',
+      'Branch is checked out in another worktree.',
+      'Enter a valid Git branch name.',
+      'A branch with this name already exists.',
+      'This branch no longer exists. Refresh the branch list.',
+      'This workspace is already on that branch.',
+      'Branches are not available for this workspace.',
+      'Git could not switch branches.',
+      'Wait for the workspace operation to finish before saving.',
+    ];
+    for (const key of keys) {
+      expect(getTranslation('en', key)).toBe(key);
+      expect(getTranslation('zh', key), key).not.toBe(key);
     }
   });
 });

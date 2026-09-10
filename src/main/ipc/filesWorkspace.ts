@@ -41,6 +41,7 @@ import { writeFileToClipboard } from '../services/filesWorkspaceClipboard';
 import { fetchRemoteImageDataUrl, REMOTE_IMAGE_MAX_BYTES } from '../services/remoteImageFetch';
 import { getSshConnectionStore } from '../services/sshConnectionStore';
 import { getSourceAuthorityRegistry } from './agent';
+import { sessionWorktreeBusy } from './worktree';
 
 const watches = new RefCountWatchers();
 const hookedSenders = new Set<number>();
@@ -184,6 +185,23 @@ export function registerFilesWorkspaceHandlers(): void {
   ) => {
     ipcMain.handle(channel, async (event, request: unknown) => {
       try {
+        if (
+          [
+            IPC_CHANNELS.FILES_WRITE,
+            IPC_CHANNELS.FILES_CREATE,
+            IPC_CHANNELS.FILES_MKDIR,
+            IPC_CHANNELS.FILES_RENAME,
+            IPC_CHANNELS.FILES_REMOVE,
+          ].some((mutator) => mutator === channel)
+        ) {
+          const parsed = parseRequest(request);
+          if (
+            parsed &&
+            getSourceAuthorityRegistry()?.project(parsed.projectId)?.kind !== 'ssh' &&
+            sessionWorktreeBusy(parsed.conversationId)
+          )
+            return { ok: false, error: 'unavailable' };
+        }
         return await handler(event, request);
       } catch {
         return { ok: false, error: 'unavailable' };

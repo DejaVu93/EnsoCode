@@ -152,6 +152,8 @@ export interface SettingsState {
   chatWide: boolean;
   /** 仅主 agent 发送完成/失败通知；coworker 提问/审批仍提醒；缺省 true */
   notifyMainAgentOnly: boolean;
+  /** 同一父会话同时在编 coworker 上限；缺省 5，范围 1–20 */
+  maxActiveCoworkers: number;
   /** 无 token/工具结果超过此时长则中止；0 = 永不；单位分钟 */
   generationStallTimeoutMin: number;
   /** 闲置超过此天数自动归档；0 = 永不；缺省 30 */
@@ -284,6 +286,7 @@ export interface SettingsState {
   setExpandLiveEdits: (value: boolean) => void;
   setChatWide: (value: boolean) => void;
   setNotifyMainAgentOnly: (value: boolean) => void;
+  setMaxActiveCoworkers: (value: number) => void;
   setGenerationStallTimeoutMin: (minutes: number) => void;
   setAutoArchiveIdleDays: (days: number) => void;
   setAutoArchiveMergedWorktrees: (value: boolean) => void;
@@ -410,6 +413,8 @@ export interface SettingsState {
   removeProjectGroup: (id: string) => void;
   reorderProjectGroups: (activeId: string, overId: string) => void;
   setProjectGroupId: (projectId: string, groupId: string | null) => void;
+  /** 空串或纯空白视为清除别名 */
+  setProjectAlias: (projectId: string, alias: string | null) => void;
   setProjectDefaultModel: (
     projectId: string,
     model: DefaultModelRef | null,

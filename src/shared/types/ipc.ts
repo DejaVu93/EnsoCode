@@ -141,6 +141,10 @@ export const IPC_CHANNELS = {
   AGENT_RELEASE: 'agent:release',
 
   WORKTREE_CREATE: 'worktree:create',
+  WORKTREE_BIND: 'worktree:bind',
+  WORKTREE_BRANCHES: 'worktree:branches',
+  WORKTREE_SWITCH_BRANCH: 'worktree:switch-branch',
+  WORKTREE_RENAME: 'worktree:rename',
   WORKTREE_GET: 'worktree:get',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_STATUS: 'worktree:status',
@@ -179,6 +183,8 @@ export const IPC_CHANNELS = {
 
   // Recent projects from local apps
   PROJECTS_GET_RECENT: 'projects:get-recent',
+  /** 在系统文件管理器里打开项目根目录（仅本地项目） */
+  PROJECTS_REVEAL: 'projects:reveal',
 
   // SSH connection profiles (settings + add-project picker)
   SSH_CONNECTIONS_LIST: 'ssh-connections:list',

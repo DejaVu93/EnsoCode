@@ -21,6 +21,38 @@ const conv = (id: string, extra: { title?: string; text?: string } = {}) => ({
 });
 
 describe('cachedPartializeSessions', () => {
+  it('preserves empty worktree drafts and their names across serialization', () => {
+    const worktree = {
+      conversationId: 'a',
+      projectId: 'p',
+      repoPath: '/repo',
+      path: '/managed/a',
+      branch: 'enso/a',
+      baseBranch: 'main',
+      baseCommit: 'abc',
+      createdAt: 1,
+      name: 'Feature',
+    };
+    const persisted = cachedPartializeSessions({
+      conversations: {
+        a: {
+          ...conv('a'),
+          title: '',
+          started: false,
+          sessionFile: undefined,
+          messages: [],
+          worktree,
+        },
+      },
+      order: ['a'],
+      activeId: 'a',
+    });
+    const restored = JSON.parse(JSON.stringify(persisted));
+    expect(restored.conversations.a.worktree).toEqual(worktree);
+    expect(restored.conversations.a.messages).toEqual([]);
+    expect(restored.order).toEqual(['a']);
+    expect(restored.activeId).toBe('a');
+  });
   it('strips messages and returns the same object when only transcript changes', () => {
     const first = cachedPartializeSessions({
       conversations: { a: conv('a', { text: 'one' }) },

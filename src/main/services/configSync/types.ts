@@ -130,6 +130,7 @@ export interface ConfigSyncState {
   expandLiveEdits?: boolean;
   chatWide?: boolean;
   notifyMainAgentOnly?: boolean;
+  maxActiveCoworkers?: number;
   generationStallTimeoutMin?: number;
   autoArchiveIdleDays?: number;
   autoArchiveMergedWorktrees?: boolean;

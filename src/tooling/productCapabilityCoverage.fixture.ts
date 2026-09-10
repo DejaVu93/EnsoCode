@@ -73,6 +73,7 @@ export const SETTINGS_DATA_COVERAGE = {
   notifyMainAgentOnly: excluded(
     'Desktop/phone completion notification preference; not an Enso capability.'
   ),
+  maxActiveCoworkers: excluded('Desktop coworker capacity preference; not an Enso capability.'),
   generationStallTimeoutMin: excluded('Renderer stall-abort preference; not an Enso capability.'),
   autoArchiveIdleDays: excluded('Renderer sidebar archive preference; not an Enso capability.'),
   autoArchiveMergedWorktrees: excluded(
@@ -180,6 +181,7 @@ export const SETTINGS_ACTION_COVERAGE = {
   setNotifyMainAgentOnly: excluded(
     'Desktop/phone completion notification preference; not an Enso capability.'
   ),
+  setMaxActiveCoworkers: excluded('Desktop coworker capacity preference; not an Enso capability.'),
   setGenerationStallTimeoutMin: excluded(
     'Renderer stall-abort preference; not an Enso capability.'
   ),
@@ -247,6 +249,7 @@ export const SETTINGS_ACTION_COVERAGE = {
   removeProjectGroup: surfaces('projects.list'),
   reorderProjectGroups: surfaces('projects.list'),
   setProjectGroupId: surfaces('projects.list'),
+  setProjectAlias: surfaces('projects.list'),
   setProjectDefaultModel: surfaces('projects.list'),
   removeProject: surfaces('projects.remove'),
   setUsageModelPricing: excluded(
@@ -396,6 +399,14 @@ export const IPC_PRODUCT_COVERAGE = {
   AGENT_ASK_RESPOND: surfaces('conversations.ask.respond'),
   AGENT_RELEASE: surfaces('conversations.worktree.release'),
   WORKTREE_CREATE: surfaces('conversations.worktree.create'),
+  WORKTREE_BIND: excluded(
+    'Desktop workspace selection for a fresh conversation; no Enso capability.'
+  ),
+  WORKTREE_RENAME: excluded('Desktop worktree display name; no Enso capability.'),
+  WORKTREE_BRANCHES: excluded('Desktop local branch picker; no Enso capability.'),
+  WORKTREE_SWITCH_BRANCH: excluded(
+    'Desktop workspace branch mutation with worker freeze; no Enso capability.'
+  ),
   WORKTREE_GET: surfaces('conversations.worktree.status'),
   WORKTREE_LIST: surfaces('conversations.worktree.status'),
   WORKTREE_STATUS: surfaces('conversations.worktree.status'),
@@ -427,6 +438,7 @@ export const IPC_PRODUCT_COVERAGE = {
   ),
   DIALOG_SELECT_DIRECTORY: surfaces('projects.add'),
   PROJECTS_GET_RECENT: surfaces('projects.recent'),
+  PROJECTS_REVEAL: surfaces('projects.list'),
   FILES_SEARCH: surfaces('conversations.file-mention.attach'),
   FILES_READ: excluded('Internal bounded file reader used by reviewed UI flows.'),
   GIT_DIFF_HEAD: excluded('Internal git working-tree reader for the Changes panel.'),

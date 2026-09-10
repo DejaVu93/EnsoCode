@@ -293,12 +293,13 @@ export class AgentDispatchService {
       metadata: reserved.reservation.metadata,
     });
     try {
+      const cwd = await this.resolveSpawnCwd(source);
+      if (!this.guardCurrent(guard)) {
+        this.options.sessionIndex.releaseChild(child);
+        return this.cancelledTeamOperation();
+      }
       if (guard) this.teamGuards.set(child.generation, guard);
-      const spawned = this.options.host.spawnChild(
-        child,
-        source.parentProjectPath,
-        resolved.config
-      );
+      const spawned = this.options.host.spawnChild(child, cwd, resolved.config);
       if (!spawned.ok) throw new Error(spawned.error ?? 'Failed to spawn coworker.');
       const ready = await this.waitForChild(child, guard?.signal);
       this.verifyChildReady(
@@ -620,13 +621,10 @@ export class AgentDispatchService {
       this.emitDispatch(dispatch, { phase: 'parent-spawning' });
       await this.ensureParentReady(binding, parent, parentModel.selection, credentialKeys);
       this.emitDispatch(dispatch, { phase: 'parent-ready' });
-      const task = this.snapshotFileMentions(binding.parentProjectPath, request.task);
+      const cwd = await this.resolveSpawnCwd(binding);
+      const task = this.snapshotFileMentions(cwd, request.task);
       this.emitDispatch(dispatch, { phase: 'child-spawning' });
-      const spawned = this.options.host.spawnChild(
-        reservation.child,
-        binding.parentProjectPath,
-        agentType.config
-      );
+      const spawned = this.options.host.spawnChild(reservation.child, cwd, agentType.config);
       if (!spawned.ok) throw new Error(spawned.error ?? 'Failed to spawn child Agent.');
       const ready = await this.waitForChild(reservation.child);
       this.verifyChildReady(
@@ -747,7 +745,7 @@ export class AgentDispatchService {
         if (!reservation.ok) continue;
         const spawned = this.options.host.spawnChild(
           reservation.reservation.child,
-          source.parentProjectPath,
+          await this.resolveSpawnCwd(source),
           resolved.config,
           resumeFile
         );
@@ -767,6 +765,18 @@ export class AgentDispatchService {
         resumeFile
       );
     }
+  }
+
+  private async resolveSpawnCwd(
+    binding: Pick<ParentSourceBinding, 'parentConversationId' | 'parentProjectPath'>
+  ): Promise<string> {
+    // 延迟加载避免 IPC 初始化循环；项目身份仍用 canonicalPath，只有 spawn cwd 随 worktree。
+    const { sessionWorktree, sessionWorktreeBusy } = await import('../ipc/worktree');
+    if (sessionWorktreeBusy(binding.parentConversationId))
+      throw new Error('Worktree operation in progress.');
+    const source = this.options.sourceRegistry.resolveParentSource(binding.parentConversationId);
+    if (!source) throw new Error('The parent source is unavailable.');
+    return sessionWorktree(binding.parentConversationId)?.path ?? source.parentProjectPath;
   }
 
   private currentOrNewParent(binding: ParentSourceBinding): SessionIdentity {
@@ -797,7 +807,7 @@ export class AgentDispatchService {
         sessionId: parent.sessionId,
         providerId: binding.selectedModel.providerId,
         modelId: binding.selectedModel.modelId,
-        cwd: binding.parentProjectPath,
+        cwd: await this.resolveSpawnCwd(binding),
         ...(typeof persisted.sessionFile === 'string' ? { resumeFile: persisted.sessionFile } : {}),
         ...(persisted.reasoningEnabled === true ? { reasoningEnabled: true } : {}),
         ...(typeof persisted.thinkingLevel === 'string'

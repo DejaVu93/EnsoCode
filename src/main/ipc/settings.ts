@@ -57,6 +57,7 @@ export const SETTINGS_STATE_FIELDS = [
   'expandLiveEdits',
   'chatWide',
   'notifyMainAgentOnly',
+  'maxActiveCoworkers',
   'generationStallTimeoutMin',
   'autoArchiveIdleDays',
   'autoArchiveMergedWorktrees',
@@ -314,8 +315,9 @@ function scheduleWrite(
     }, DEBOUNCE_MS);
 
     void import('../services/agentHost')
-      .then(async ({ pushApprovalReviewer }) => {
+      .then(async ({ pushApprovalReviewer, pushMaxActiveCoworkers }) => {
         pushApprovalReviewer(await readStoredOauthCredentialKeys());
+        pushMaxActiveCoworkers();
       })
       .catch(() => {});
     return true;
@@ -418,8 +420,9 @@ export function commitSettingsTransaction(
     // Durable write already succeeded; a dead renderer must not fail the import.
   }
   void import('../services/agentHost')
-    .then(async ({ pushApprovalReviewer }) => {
+    .then(async ({ pushApprovalReviewer, pushMaxActiveCoworkers }) => {
       pushApprovalReviewer(await readStoredOauthCredentialKeys());
+      pushMaxActiveCoworkers();
     })
     .catch(() => {});
   return { ok: true, backupPath };

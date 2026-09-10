@@ -39,6 +39,7 @@ import {
   toPreviewKey,
   wasPathInvalidated,
 } from './filesViewRel';
+import { readWorkspaceDocument, refreshWorkspaceDocument } from './filesWorkspaceRefresh';
 import { FileTreeMenu, isMarkdownRel } from './fileTreeMenu';
 import { idsToClose } from './tabCloseActions';
 
@@ -88,6 +89,26 @@ interface FilesViewProps {
 export function FilesView({ conversationId, projectId }: FilesViewProps) {
   const { t } = useI18n();
   const req = useMemo(() => ({ conversationId, projectId }), [conversationId, projectId]);
+  const workspaceRevision = useSessionsStore(
+    (s) => s.workspaceRevisionByConversation[conversationId] ?? 0
+  );
+  const workspaceMigrating = useSessionsStore((s) =>
+    Boolean(s.conversations[conversationId]?.workspaceMigrating)
+  );
+  const readFile = useCallback(
+    (rel: string) =>
+      readWorkspaceDocument(
+        () => window.electronAPI.workspaceFiles.read({ ...req, rel }),
+        () => {
+          const state = useSessionsStore.getState();
+          return {
+            revision: state.workspaceRevisionByConversation[conversationId] ?? 0,
+            migrating: Boolean(state.conversations[conversationId]?.workspaceMigrating),
+          };
+        }
+      ),
+    [conversationId, req]
+  );
   const [ready, setReady] = useState(false);
   const [openDocs, setOpenDocs] = useState<OpenDoc[]>([]);
   const [activeRel, setActiveRel] = useState<string | null>(null);
@@ -135,23 +156,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
 
   const applyDisk = useCallback((rel: string, content: string) => {
     setOpenDocs((docs) =>
-      docs.map((doc) => {
-        if (doc.rel !== rel) return doc;
-        if (doc.dirty) {
-          if (content !== doc.contents && content !== doc.draft) {
-            return { ...doc, conflict: true };
-          }
-          return doc;
-        }
-        if (content === doc.draft) return doc;
-        return {
-          ...doc,
-          contents: content,
-          draft: content,
-          version: doc.version + 1,
-          conflict: false,
-        };
-      })
+      docs.map((doc) => (doc.rel === rel ? refreshWorkspaceDocument(doc, content) : doc))
     );
   }, []);
 
@@ -178,8 +183,8 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
         return;
       }
       const epoch = opEpochRef.current;
-      const result = await window.electronAPI.workspaceFiles.read({ ...req, rel });
-      if (wasPathInvalidated(mutationsRef.current, rel, epoch)) return;
+      const result = await readFile(rel);
+      if (!result || wasPathInvalidated(mutationsRef.current, rel, epoch)) return;
       if (!result.ok) {
         if (result.error !== 'too-large') {
           failToast(result.error);
@@ -214,7 +219,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
       setActiveRel(rel);
       void window.electronAPI.workspaceFiles.watchStart({ ...req, rel });
     },
-    [failToast, req]
+    [failToast, readFile, req]
   );
 
   const [confirmClose, setConfirmClose] = useState<null | {
@@ -277,15 +282,20 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
   }, [req]);
 
   useEffect(() => {
-    return window.electronAPI.workspaceFiles.onChange((event) => {
+    let alive = true;
+    const unsubscribe = window.electronAPI.workspaceFiles.onChange((event) => {
       if (event.conversationId !== conversationId) return;
       const doc = openDocsRef.current.find((item) => item.rel === event.rel);
       if (!doc) return;
-      void window.electronAPI.workspaceFiles.read({ ...req, rel: event.rel }).then((result) => {
-        if (result.ok) applyDisk(event.rel, result.content);
+      void readFile(event.rel).then((result) => {
+        if (alive && result?.ok) applyDisk(event.rel, result.content);
       });
     });
-  }, [applyDisk, conversationId, req]);
+    return () => {
+      alive = false;
+      unsubscribe();
+    };
+  }, [applyDisk, conversationId, readFile]);
 
   const conversation = useSessionsStore((s) => s.conversations[conversationId]);
   const running = conversation?.status === 'running';
@@ -309,20 +319,46 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
     [timeline]
   );
   useEffect(() => {
+    let alive = true;
     const rels = new Set(editedRelsKey ? editedRelsKey.split('\n') : []);
     for (const rel of rels) {
       if (!openDocsRef.current.some((doc) => doc.rel === rel)) continue;
-      void window.electronAPI.workspaceFiles.read({ ...req, rel }).then((result) => {
-        if (result.ok) applyDisk(rel, result.content);
+      void readFile(rel).then((result) => {
+        if (alive && result?.ok) applyDisk(rel, result.content);
       });
     }
-  }, [applyDisk, req, editedRelsKey]);
+    return () => {
+      alive = false;
+    };
+  }, [applyDisk, readFile, editedRelsKey]);
 
   const seenWritesRef = useRef<Set<string> | null>(null);
   const seenWritesSessionRef = useRef(conversationId);
   const seenWritesEpochRef = useRef(conversation?.historyBaseIndex);
 
   const bumpTree = useCallback(() => setTreeGen((n) => n + 1), []);
+  useEffect(() => {
+    if (workspaceRevision === 0 || workspaceMigrating) return;
+    let alive = true;
+    bumpTree();
+    for (const doc of openDocsRef.current) {
+      const rel = fromPreviewKey(doc.rel);
+      const epoch = opEpochRef.current;
+      void readFile(rel).then((result) => {
+        if (!alive || !result || wasPathInvalidated(mutationsRef.current, rel, epoch)) return;
+        setOpenDocs((docs) =>
+          docs.map((current) =>
+            current.rel === doc.rel
+              ? refreshWorkspaceDocument(current, result.ok ? result.content : null)
+              : current
+          )
+        );
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [bumpTree, readFile, workspaceMigrating, workspaceRevision]);
 
   const expandDir = useCallback((rel: string) => {
     if (!rel) return;
@@ -407,8 +443,8 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
         return;
       }
       const epoch = opEpochRef.current;
-      const result = await window.electronAPI.workspaceFiles.read({ ...req, rel });
-      if (wasPathInvalidated(mutationsRef.current, rel, epoch)) return;
+      const result = await readFile(rel);
+      if (!result || wasPathInvalidated(mutationsRef.current, rel, epoch)) return;
       if (!result.ok) {
         failToast(result.error);
         return;
@@ -427,7 +463,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
       ]);
       setActiveRel(key);
     },
-    [failToast, req]
+    [failToast, readFile]
   );
 
   const resolvePreviewImage = useCallback(
@@ -467,6 +503,13 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
 
   const save = useCallback(
     async (rel: string) => {
+      if (useSessionsStore.getState().conversations[conversationId]?.workspaceMigrating) {
+        addToast({
+          type: 'error',
+          title: t('Wait for the workspace operation to finish before saving.'),
+        });
+        return;
+      }
       const doc = openDocsRef.current.find((item) => item.rel === rel);
       if (!doc || doc.preview) return;
       const content = doc.draft;
@@ -486,7 +529,7 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
         )
       );
     },
-    [failToast, req]
+    [conversationId, failToast, req, t]
   );
 
   const toggleDocViewMode = useCallback((rel: string) => {
@@ -829,26 +872,25 @@ export function FilesView({ conversationId, projectId }: FilesViewProps) {
               <button
                 type="button"
                 className="underline"
+                disabled={workspaceMigrating}
                 onClick={() => {
-                  void window.electronAPI.workspaceFiles
-                    .read({ ...req, rel: active.rel })
-                    .then((result) => {
-                      if (!result.ok) return;
-                      setOpenDocs((docs) =>
-                        docs.map((doc) =>
-                          doc.rel === active.rel
-                            ? {
-                                ...doc,
-                                contents: result.content,
-                                draft: result.content,
-                                version: doc.version + 1,
-                                dirty: false,
-                                conflict: false,
-                              }
-                            : doc
-                        )
-                      );
-                    });
+                  void readFile(fromPreviewKey(active.rel)).then((result) => {
+                    if (!result?.ok) return;
+                    setOpenDocs((docs) =>
+                      docs.map((doc) =>
+                        doc.rel === active.rel
+                          ? {
+                              ...doc,
+                              contents: result.content,
+                              draft: result.content,
+                              version: doc.version + 1,
+                              dirty: false,
+                              conflict: false,
+                            }
+                          : doc
+                      )
+                    );
+                  });
                 }}
               >
                 {t('Reload')}

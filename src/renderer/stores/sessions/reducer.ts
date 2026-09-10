@@ -387,6 +387,8 @@ export function applyAgentEvent(
         // 不归零则复活后的 status/message 全部被单调守卫丢掉：无 loading、无回复、无报错
         lastSeq: 0,
       };
+    case 'workspace-branch-context-consumed':
+      return { ...state, generation: state.generation ?? identity.generation, lastSeq: event.seq };
     case 'status': {
       const base =
         event.status === 'running'

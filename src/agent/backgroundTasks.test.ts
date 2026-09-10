@@ -161,6 +161,20 @@ describe('withBackground 命令变换(远程会话用)', () => {
 });
 
 describe('BackgroundTaskManager', () => {
+  it('workspace busy scope includes descendant tasks even without a live session', async () => {
+    const { manager, ended } = makeManager();
+    const taskId = manager.start('root::cw-child', 'sleep 30', tmpdir());
+    try {
+      expect(manager.hasRunningInWorkspace(['root'])).toBe(true);
+      expect(manager.hasRunningInWorkspace(['roo'])).toBe(false);
+      expect(manager.hasRunningInWorkspace(['other'])).toBe(false);
+    } finally {
+      manager.stop(taskId);
+      await until(() => ended.includes(taskId));
+    }
+    expect(manager.hasRunningInWorkspace(['root'])).toBe(false);
+  });
+
   it('任务完成:输出捕获、exit 事件、未知情则自动通知(含 log 路径)', async () => {
     const { manager, notified, ended } = makeManager();
     const taskId = manager.start('s1', 'echo hello-bg', '/tmp');

@@ -25,7 +25,11 @@ import type {
 } from '@shared/types/agent';
 import type { AgentDispatchResult, AgentDispatchTask } from '@shared/types/mentions';
 import type { PairCreatedSession } from '@shared/types/pair';
-import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
+import type {
+  SessionWorktree,
+  WorkspaceBranchSwitchResult,
+  WorktreeStatus,
+} from '@shared/types/worktree';
 // 纯逻辑模块(仅类型级依赖),store 引用不破坏 node 环境测试
 import {
   cleanTitleSummarySource,
@@ -87,7 +91,12 @@ import {
 } from './reducer';
 import { applyConversationReload } from './reload';
 import { isPairViewed, nextUnread } from './unread';
-import { DIRTY_MAIN_TREE, workspaceFallbackNote, workspaceMigratedNote } from './worktree';
+import {
+  DIRTY_MAIN_TREE,
+  workspaceBranchChangedNote,
+  workspaceFallbackNote,
+  workspaceMigratedNote,
+} from './worktree';
 
 /** 离开时盖章；正在看的会话由 viewedId 保热，TTL 从离开起算 */
 const lastViewedAt: Record<string, number> = {};
@@ -97,6 +106,14 @@ const olderHistoryInFlight = new Set<string>();
  * 手动重读在途：同会话合并为一次 IPC；缓冲期间到达的实时事件，快照落地后按 seq 水位重放，
  * 防止 IPC reply 晚于实时事件时旧快照把新消息抹掉。实时事件本身仍照常即时上屏。
  */
+const branchSwitchesInFlight = new Set<string>();
+const consumedBranchContexts = new Map<string, string>();
+const withoutBranchNote = (
+  note: string | undefined,
+  branch: string | undefined
+): string | undefined =>
+  branch ? note?.replace(workspaceBranchChangedNote(branch), '').trim() || undefined : note;
+
 const reloadInFlight = new Map<
   string,
   { promise: Promise<string | null>; buffered: RendererAgentEvent[] }
@@ -226,6 +243,7 @@ export interface Conversation extends SessionProjection {
   worktree?: SessionWorktree;
   /** 工作区迁移/回退提醒，随下一条用户消息前置注入后清除；持久化 */
   pendingWorkspaceNote?: string;
+  pendingWorkspaceBranch?: { requestId: string; branch: string };
   /** resume 时发现 worktree 丢失（驱动重建/回退选择 UI）；不持久化 */
   worktreeMissing?: boolean;
   /** 用户点了停止：抑制这一轮收束触发的排队投递/目标续跑（否则停完立刻自己跑起来）。不持久化 */
@@ -248,12 +266,21 @@ interface SessionsState {
   activeId: string | null;
   /** 隔离会话的 worktree 状态快照（侧边栏徽标）；不持久化 */
   worktreeStatuses: Record<string, WorktreeStatus>;
+  workspaceRevisionByConversation: Record<string, number>;
+  switchWorkspaceBranch(
+    id: string,
+    branch: string,
+    create?: boolean
+  ): Promise<WorkspaceBranchSwitchResult>;
   /** 无 project 时保留的一次性 summon；下一条普通 draft 消费。 */
   pendingAgentPrefill?: AgentTypeKey;
 
   newConversation(
     projectId: string,
-    options?: { forkedFrom?: { conversationId: string; entryId: string } }
+    options?: {
+      forkedFrom?: { conversationId: string; entryId: string };
+      worktreeFromConversationId?: string;
+    }
   ): Promise<string | null>;
   /** 会话切到隔离 worktree（composer 选择器/右键菜单入口）。
    *  fresh（未开聊）直接绑定；已有内容走完整迁移（主树干净检查 + release + 迁移提醒）。
@@ -262,6 +289,8 @@ interface SessionsState {
     id: string,
     options?: { allowDirtyMainTree?: boolean }
   ): Promise<string | null>;
+  attachConversationToWorktree(id: string, sourceConversationId: string): Promise<string | null>;
+  renameWorktree(id: string, name: string): Promise<string | null>;
   /** 清理 worktree 保留会话：cwd 回退主工作树 + 注入回退提醒。拦截确认在 UI 层 */
   cleanupWorktree(id: string): Promise<string | null>;
   /** resume 发现 worktree 丢失后：从记录分支/基准重建 */
@@ -944,6 +973,30 @@ export const useSessionsStore = create<SessionsState>()(
         const id = identity.sessionId;
         reloadInFlight.get(id)?.buffered.push(event);
 
+        if (event.type === 'workspace-branch-context-consumed') {
+          set((state) => {
+            const current = state.conversations[id];
+            if (!current) return state;
+            const next = applyAgentEvent(current, id, event);
+            if (next === current) return state;
+            if (branchSwitchesInFlight.size)
+              consumedBranchContexts.set(`${event.requestId}:${id}`, identity.generation);
+            return patch(state, id, {
+              ...next,
+              ...(current.pendingWorkspaceBranch?.requestId === event.requestId
+                ? {
+                    pendingWorkspaceNote: withoutBranchNote(
+                      current.pendingWorkspaceNote,
+                      current.pendingWorkspaceBranch.branch
+                    ),
+                    pendingWorkspaceBranch: undefined,
+                  }
+                : {}),
+            });
+          });
+          return;
+        }
+
         if (event.type === 'coworker-update') {
           set((state) => {
             const parent = state.conversations[id];
@@ -1038,30 +1091,42 @@ export const useSessionsStore = create<SessionsState>()(
             if (get().conversations[targetId]) get().removeConversation(targetId);
             return;
           }
-          set((state) => {
-            const target = state.conversations[targetId];
-            if (!target) return state;
-            return patch(state, targetId, {
-              sessionFile: event.sessionFile,
-              started: false,
-              spawning: false,
-              title: target.title || `${source?.title || ''} (分支)`.trim(),
-              lastProviderId: source?.lastProviderId,
-              lastModelId: source?.lastModelId,
-              reasoningEnabled: source?.reasoningEnabled,
-              thinkingLevel: source?.thinkingLevel,
-              presetId: source?.presetId,
-              approvalMode: source?.approvalMode,
-              worktree: source?.worktree,
-              forkedFromConversationId: source?.id,
-              forkedFromEntryId: event.entryId,
-              pendingWorkspaceNote: source?.worktree
-                ? `本会话从 ${source.title || '源会话'} 分出，与源会话共用工作区`
-                : undefined,
+          void window.electronAPI.worktree
+            .get(targetId)
+            .then((worktree) => {
+              set((state) => {
+                const target = state.conversations[targetId];
+                if (!target) return state;
+                return patch(state, targetId, {
+                  sessionFile: event.sessionFile,
+                  started: false,
+                  spawning: false,
+                  title: target.title || `${source?.title || ''} (分支)`.trim(),
+                  lastProviderId: source?.lastProviderId ?? target.lastProviderId,
+                  lastModelId: source?.lastModelId ?? target.lastModelId,
+                  reasoningEnabled: source?.reasoningEnabled ?? target.reasoningEnabled,
+                  thinkingLevel: source?.thinkingLevel ?? target.thinkingLevel,
+                  presetId: source?.presetId ?? target.presetId,
+                  approvalMode: source?.approvalMode ?? target.approvalMode,
+                  worktree: worktree ?? undefined,
+                  forkedFromConversationId: id,
+                  forkedFromEntryId: event.entryId,
+                  pendingWorkspaceNote: worktree
+                    ? `本会话从 ${source?.title || '源会话'} 分出，与源会话共用工作区`
+                    : undefined,
+                });
+              });
+              if (!get().conversations[targetId]) return;
+              void get().resumeConversation(targetId);
+              get().selectConversation(targetId);
+            })
+            .catch((error: unknown) => {
+              set((state) =>
+                state.conversations[targetId]
+                  ? patch(state, targetId, { spawning: false, error: String(error) })
+                  : state
+              );
             });
-          });
-          void get().resumeConversation(targetId);
-          get().selectConversation(targetId);
           return;
         }
 
@@ -1346,7 +1411,12 @@ export const useSessionsStore = create<SessionsState>()(
       function continueGoal(id: string): void {
         const conversation = get().conversations[id];
         const goal = conversation?.goal;
-        if (!conversation?.started || conversation.status === 'running') return;
+        if (
+          !conversation?.started ||
+          conversation.workspaceMigrating ||
+          conversation.status === 'running'
+        )
+          return;
         if (goal?.status !== 'active') return;
         if ((conversation.queuedMessages ?? []).length > 0) return;
         if (
@@ -1420,7 +1490,12 @@ export const useSessionsStore = create<SessionsState>()(
       /** 逐条投递排队消息:每次轮次收束只发队首一条(每条获得完整一轮),下轮结束再发下一条 */
       function flushQueue(id: string): void {
         const conversation = get().conversations[id];
-        if (!conversation?.started || conversation.status !== 'idle') return;
+        if (
+          !conversation?.started ||
+          conversation.workspaceMigrating ||
+          conversation.status !== 'idle'
+        )
+          return;
         // 压缩排队/进行中先等压完：上下文还没换形就发下一条会打在旧占用上
         if (conversation.compaction) return;
         const [next, ...rest] = conversation.queuedMessages ?? [];
@@ -1454,6 +1529,208 @@ export const useSessionsStore = create<SessionsState>()(
         activeId: null,
         pendingAgentPrefill: undefined,
         worktreeStatuses: {},
+        workspaceRevisionByConversation: {},
+
+        async switchWorkspaceBranch(id, branch, create = false) {
+          const conversation = get().conversations[id];
+          const project = useSettingsStore
+            .getState()
+            .projects.find((item) => item.id === conversation?.projectId);
+          if (
+            !conversation ||
+            conversation.parentId ||
+            conversation.historyOnly ||
+            conversation.archived ||
+            !project ||
+            project.kind === 'ssh'
+          ) {
+            return {
+              ok: false,
+              code: 'unavailable',
+              error: 'Local root workspace is unavailable.',
+            };
+          }
+          const cwd = conversation.worktree?.path ?? project.path;
+          const roots = new Set(
+            Object.values(get().conversations)
+              .filter(
+                (current) =>
+                  !current.parentId &&
+                  current.projectId === conversation.projectId &&
+                  (current.worktree?.path ?? project.path) === cwd
+              )
+              .map((current) => current.id)
+          );
+          const targets = Object.values(get().conversations).filter(
+            (current) =>
+              roots.has(current.id) || Boolean(current.parentId && roots.has(current.parentId))
+          );
+          if (targets.some((current) => current.workspaceMigrating))
+            return { ok: false, code: 'busy', error: 'Workspace operation in progress.' };
+          if (
+            targets.some(
+              (current) => current.status === 'running' || current.spawning || current.compaction
+            )
+          )
+            return {
+              ok: false,
+              code: 'running',
+              error: 'A session using this workspace is running.',
+            };
+          set((state) => ({
+            conversations: Object.fromEntries(
+              Object.entries(state.conversations).map(([key, current]) => [
+                key,
+                targets.some((target) => target.id === key)
+                  ? { ...current, workspaceMigrating: true }
+                  : current,
+              ])
+            ),
+          }));
+          branchSwitchesInFlight.add(id);
+          let remainsBlocked = false;
+          try {
+            const result = await window.electronAPI.worktree.switchBranch({
+              conversationId: id,
+              branch,
+              create,
+            });
+            const projection = result.ok ? result.value : result.changed;
+            remainsBlocked =
+              !result.ok &&
+              (result.workspaceBlocked === true || projection?.blockedReason === 'busy');
+            if (!projection) return result;
+            const affected = new Set(projection.affectedConversationIds);
+            const records = new Map(
+              projection.worktrees.map((record) => [record.conversationId, record])
+            );
+            set((state) => {
+              const conversations = { ...state.conversations };
+              const workspaceRevisionByConversation = { ...state.workspaceRevisionByConversation };
+              for (const [key, current] of Object.entries(conversations)) {
+                if (!affected.has(key) && !(current.parentId && affected.has(current.parentId)))
+                  continue;
+                const nextBranch = projection.currentBranch ?? branch;
+                const consumed =
+                  consumedBranchContexts.get(`${projection.requestId}:${key}`) ===
+                    current.generation && current.generation !== undefined;
+                conversations[key] = {
+                  ...current,
+                  ...(remainsBlocked ? { workspaceMigrating: true } : {}),
+                  pendingWorkspaceBranch: consumed
+                    ? undefined
+                    : { requestId: projection.requestId, branch: nextBranch },
+                  ...(records.has(key) ? { worktree: records.get(key) } : {}),
+                  pendingWorkspaceNote:
+                    [
+                      withoutBranchNote(
+                        current.pendingWorkspaceNote,
+                        current.pendingWorkspaceBranch?.branch
+                      ),
+                      consumed ? undefined : workspaceBranchChangedNote(nextBranch),
+                    ]
+                      .filter(Boolean)
+                      .join('\n\n') || undefined,
+                };
+                workspaceRevisionByConversation[key] =
+                  (workspaceRevisionByConversation[key] ?? 0) + 1;
+              }
+              return { conversations, workspaceRevisionByConversation };
+            });
+            void get()
+              .refreshWorktreeStatuses()
+              .catch(() => {});
+            return result;
+          } catch (error) {
+            return {
+              ok: false,
+              code: 'git-error',
+              error: error instanceof Error ? error.message : String(error),
+            };
+          } finally {
+            branchSwitchesInFlight.delete(id);
+            if (!branchSwitchesInFlight.size) consumedBranchContexts.clear();
+            set((state) => ({
+              conversations: Object.fromEntries(
+                Object.entries(state.conversations).map(([key, current]) => [
+                  key,
+                  !remainsBlocked && targets.some((target) => target.id === key)
+                    ? { ...current, workspaceMigrating: undefined }
+                    : current,
+                ])
+              ),
+            }));
+          }
+        },
+
+        async attachConversationToWorktree(id, sourceConversationId) {
+          const conversation = get().conversations[id];
+          const source = get().conversations[sourceConversationId];
+          if (
+            !conversation ||
+            conversation.started ||
+            conversation.spawning ||
+            conversation.workspaceMigrating ||
+            conversation.sessionFile ||
+            conversation.parentId ||
+            conversation.historyOnly ||
+            conversation.archived ||
+            conversation.worktree ||
+            conversation.forkedFromConversationId ||
+            conversation.messages.length > 0
+          ) {
+            return 'only fresh local root conversations can attach a worktree';
+          }
+          if (
+            !source?.worktree ||
+            source.parentId ||
+            source.historyOnly ||
+            source.worktreeMissing ||
+            source.workspaceMigrating ||
+            source.projectId !== conversation.projectId ||
+            get().worktreeStatuses[sourceConversationId]?.exists === false
+          ) {
+            return 'source worktree is unavailable';
+          }
+          set((state) => patch(state, id, { workspaceMigrating: true }));
+          try {
+            const bound = await window.electronAPI.worktree.bind(id, sourceConversationId);
+            if (!bound.ok) return bound.error;
+            if (!get().conversations[id]) {
+              await window.electronAPI.worktree.remove(id);
+              return 'conversation was removed';
+            }
+            set((state) => patch(state, id, { worktree: bound.value, worktreeMissing: undefined }));
+            return null;
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          } finally {
+            if (get().conversations[id]) {
+              set((state) => patch(state, id, { workspaceMigrating: undefined }));
+            }
+          }
+        },
+
+        async renameWorktree(id, name) {
+          if (!get().conversations[id]?.worktree) return 'conversation has no worktree';
+          try {
+            const renamed = await window.electronAPI.worktree.rename(id, name);
+            if (!renamed.ok) return renamed.error;
+            set((state) => {
+              const conversations = { ...state.conversations };
+              for (const worktree of renamed.value) {
+                const current = conversations[worktree.conversationId];
+                if (current?.worktree?.path === worktree.path) {
+                  conversations[current.id] = { ...current, worktree };
+                }
+              }
+              return { conversations };
+            });
+            return null;
+          } catch (error) {
+            return error instanceof Error ? error.message : String(error);
+          }
+        },
 
         async moveConversationToWorktree(id, options) {
           const conversation = get().conversations[id];
@@ -1544,14 +1821,24 @@ export const useSessionsStore = create<SessionsState>()(
           if (!conversation?.worktree) return 'conversation has no worktree';
           const rebuilt = await window.electronAPI.worktree.rebuild(id);
           if (!rebuilt.ok) return rebuilt.error;
-          set((state) =>
-            patch(state, id, {
-              worktree: rebuilt.value,
-              worktreeMissing: undefined,
-              // 重建可能落在新路径，同样需要告知 agent
-              pendingWorkspaceNote: workspaceMigratedNote(rebuilt.value.path),
-            })
-          );
+          set((state) => ({
+            conversations: Object.fromEntries(
+              Object.entries(state.conversations).map(([key, current]) => [
+                key,
+                current.worktree?.path === conversation.worktree!.path &&
+                current.projectId === conversation.projectId
+                  ? {
+                      ...current,
+                      worktree: { ...rebuilt.value, conversationId: key },
+                      worktreeMissing: undefined,
+                      pendingWorkspaceNote: current.sessionFile
+                        ? workspaceMigratedNote(rebuilt.value.path)
+                        : undefined,
+                    }
+                  : current,
+              ])
+            ),
+          }));
           return null;
         },
 
@@ -1573,23 +1860,60 @@ export const useSessionsStore = create<SessionsState>()(
         },
 
         async refreshWorktreeStatuses() {
-          const targets = Object.values(get().conversations).filter(
-            (conversation) => conversation.worktree
-          );
+          const targets = get().conversations;
+          const records = await window.electronAPI.worktree.list();
           const entries = await Promise.all(
-            targets.map(async (conversation) => {
-              const status = await window.electronAPI.worktree.status(conversation.id);
-              return status.ok ? ([conversation.id, status.value] as const) : null;
-            })
+            records
+              .filter((record) => targets[record.conversationId])
+              .map(async (record) => {
+                const result = await window.electronAPI.worktree.status(record.conversationId);
+                return { record, status: result.ok ? result.value : undefined };
+              })
           );
-          set({
-            worktreeStatuses: Object.fromEntries(
-              entries.filter((entry): entry is [string, WorktreeStatus] => entry !== null)
-            ),
+          set((state) => {
+            const conversations = { ...state.conversations };
+            const worktreeStatuses = { ...state.worktreeStatuses };
+            for (const { record, status } of entries) {
+              const conversation = conversations[record.conversationId];
+              if (
+                !conversation ||
+                conversation !== targets[record.conversationId] ||
+                conversation.workspaceMigrating ||
+                conversation.projectId !== record.projectId
+              )
+                continue;
+              conversations[conversation.id] = {
+                ...conversation,
+                worktree: record,
+                worktreeMissing: status
+                  ? !status.exists || undefined
+                  : conversation.worktreeMissing,
+                ...(conversation.sessionFile && conversation.worktree?.path !== record.path
+                  ? { pendingWorkspaceNote: workspaceMigratedNote(record.path) }
+                  : {}),
+              };
+              if (status) worktreeStatuses[conversation.id] = status;
+            }
+            return { conversations, worktreeStatuses };
           });
         },
 
         async newConversation(projectId, options) {
+          const sourceId = options?.worktreeFromConversationId;
+          if (sourceId !== undefined) {
+            const source = get().conversations[sourceId];
+            if (
+              options?.forkedFrom ||
+              !source?.worktree ||
+              source.projectId !== projectId ||
+              source.parentId ||
+              source.historyOnly ||
+              source.worktreeMissing ||
+              source.workspaceMigrating ||
+              get().worktreeStatuses[sourceId]?.exists === false
+            )
+              return null;
+          }
           const projection = await window.electronAPI.sourceAuthority.read();
           const activeConversationIds = new Set(
             projection.conversations
@@ -1601,20 +1925,26 @@ export const useSessionsStore = create<SessionsState>()(
               )
               .map((conversation) => conversation.conversationId)
           );
-          const existing = options?.forkedFrom
-            ? undefined
-            : get().order.find((id) => {
-                const conversation = get().conversations[id];
-                return (
-                  activeConversationIds.has(id) &&
-                  conversation.projectId === projectId &&
-                  !conversation.started &&
-                  conversation.archived !== true &&
-                  !conversation.sessionFile &&
-                  conversation.messages.length === 0 &&
-                  !conversation.title
-                );
-              });
+          const existing =
+            options?.forkedFrom || sourceId !== undefined
+              ? undefined
+              : get().order.find((id) => {
+                  const conversation = get().conversations[id];
+                  return (
+                    activeConversationIds.has(id) &&
+                    conversation.projectId === projectId &&
+                    !conversation.started &&
+                    !conversation.spawning &&
+                    !conversation.workspaceMigrating &&
+                    !conversation.worktree &&
+                    !conversation.parentId &&
+                    !conversation.historyOnly &&
+                    conversation.archived !== true &&
+                    !conversation.sessionFile &&
+                    conversation.messages.length === 0 &&
+                    !conversation.title
+                  );
+                });
           if (existing) {
             if (!(await activateConversationAuthority(existing))) return null;
             const pendingAgentPrefill = get().pendingAgentPrefill;
@@ -1642,6 +1972,19 @@ export const useSessionsStore = create<SessionsState>()(
           });
           if (!created.accepted) return null;
           const id = created.value.conversationId;
+          let worktree: SessionWorktree | undefined;
+          if (sourceId !== undefined) {
+            try {
+              const bound = await window.electronAPI.worktree.bind(id, sourceId);
+              if (!bound.ok) throw new Error(bound.error);
+              worktree = bound.value;
+            } catch {
+              await purgeConversationAuthority(window.electronAPI.sourceAuthority, id, () =>
+                crypto.randomUUID()
+              );
+              return null;
+            }
+          }
           const pendingAgentPrefill = get().pendingAgentPrefill;
           // 新会话应用默认预设；'default'（内置全局）或预设已删除时不写，spawn 时自然回落全局
           const settings = useSettingsStore.getState();
@@ -1685,6 +2028,7 @@ export const useSessionsStore = create<SessionsState>()(
               lastApprovalMode
             ),
             ...defaultPreset,
+            ...(worktree ? { worktree } : {}),
             ...(pendingAgentPrefill ? { prefillAgentTypeKey: pendingAgentPrefill } : {}),
             ...(options?.forkedFrom
               ? {
@@ -1940,9 +2284,23 @@ export const useSessionsStore = create<SessionsState>()(
         removeConversation(id) {
           const conversation = get().conversations[id];
           if (!conversation) return;
-          // 隔离会话连带清理 worktree（拦截确认在 UI 层；分支保留）
+          // 先等 worker 释放、worktree 解绑成功，再丢弃投影与 authority。
           if (conversation.worktree) {
-            void window.electronAPI.worktree.remove(id);
+            if (conversation.workspaceMigrating) return;
+            const reportError = (error: string) => {
+              if (get().conversations[id]) set((state) => patch(state, id, { error }));
+              void import('@/components/ui/toast')
+                .then(({ addToast }) => addToast({ type: 'error', description: error }))
+                .catch(() => {});
+            };
+            void get()
+              .cleanupWorktree(id)
+              .then((error) => {
+                if (error) reportError(error);
+                else get().removeConversation(id);
+              })
+              .catch((error: unknown) => reportError(String(error)));
+            return;
           }
           // 级联解雇 coworker,防 worker 侧孤儿泄漏
           for (const coworkerId of conversation.coworkerIds ?? []) {
@@ -1981,7 +2339,7 @@ export const useSessionsStore = create<SessionsState>()(
           const requestId = crypto.randomUUID();
           const parentId = get().activeId;
           const parent = parentId ? get().conversations[parentId] : undefined;
-          if (!parentId || !parent || parent.parentId) {
+          if (!parentId || !parent || parent.parentId || parent.workspaceMigrating) {
             return {
               accepted: false,
               requestId,
@@ -2145,6 +2503,7 @@ export const useSessionsStore = create<SessionsState>()(
           const activeTab = get().conversations[activeId]?.activeTabId;
           const id = activeTab && get().conversations[activeTab] ? activeTab : activeId;
           const conversation = get().conversations[id];
+          if (conversation?.workspaceMigrating) return 'workspace operation in progress';
           // 只读回放的已结束实例：必须在乐观回显之前拦，否则会往只读历史里插一条
           // 根本没发出去的用户消息。
           if (conversation?.historyOnly) {
@@ -2583,7 +2942,7 @@ export const useSessionsStore = create<SessionsState>()(
 
         setGoal(conversationId, text) {
           const conversation = get().conversations[conversationId];
-          if (!conversation || !text.trim()) return;
+          if (!conversation || conversation.workspaceMigrating || !text.trim()) return;
           set((state) =>
             patch(state, conversationId, {
               goal: {
@@ -2622,6 +2981,7 @@ export const useSessionsStore = create<SessionsState>()(
         },
 
         resumeGoal(conversationId) {
+          if (get().conversations[conversationId]?.workspaceMigrating) return;
           const goal = get().conversations[conversationId]?.goal;
           if (!goal) return;
           // 恢复即重置安全计数(与 pi-goal 的 guided review 语义一致:人已过目)
@@ -2726,7 +3086,8 @@ export const useSessionsStore = create<SessionsState>()(
 
         compact(conversationId, instructions) {
           const conversation = get().conversations[conversationId];
-          if (!conversation?.started || conversation.compaction) return;
+          if (!conversation?.started || conversation.workspaceMigrating || conversation.compaction)
+            return;
           void window.electronAPI.agent.compact(conversationId, instructions);
         },
 
@@ -2737,7 +3098,12 @@ export const useSessionsStore = create<SessionsState>()(
 
         rewind(conversationId, userIndexFromEnd, restoreFiles) {
           const conversation = get().conversations[conversationId];
-          if (!conversation?.started || conversation.status === 'running') return;
+          if (
+            !conversation?.started ||
+            conversation.workspaceMigrating ||
+            conversation.status === 'running'
+          )
+            return;
           void window.electronAPI.agent.rewind(conversationId, userIndexFromEnd, restoreFiles);
         },
 
@@ -2754,6 +3120,7 @@ export const useSessionsStore = create<SessionsState>()(
           if (
             !conversation?.started ||
             conversation.spawning ||
+            conversation.workspaceMigrating ||
             conversation.status === 'running'
           ) {
             return;
@@ -2769,7 +3136,7 @@ export const useSessionsStore = create<SessionsState>()(
         sendQueuedNow(conversationId, messageId) {
           const conversation = get().conversations[conversationId];
           const item = conversation?.queuedMessages?.find((message) => message.id === messageId);
-          if (!conversation || !item) return;
+          if (!conversation || conversation.workspaceMigrating || !item) return;
           if (conversation.compaction) return;
           const running = conversation.status === 'running';
           // 出队并乐观回显。optimistic 标记使其浮在权威消息之后：running 时 steer
@@ -2797,7 +3164,7 @@ export const useSessionsStore = create<SessionsState>()(
         async interruptAndSendQueued(conversationId, messageId) {
           const conversation = get().conversations[conversationId];
           const item = conversation?.queuedMessages?.find((message) => message.id === messageId);
-          if (!conversation?.started || !item) return;
+          if (!conversation?.started || conversation.workspaceMigrating || !item) return;
           if (conversation.status !== 'running') {
             get().sendQueuedNow(conversationId, messageId);
             return;
@@ -2826,7 +3193,11 @@ export const useSessionsStore = create<SessionsState>()(
             });
             const timer = setTimeout(done, 10_000);
           });
-          if (!get().conversations[conversationId]?.started) return;
+          if (
+            !get().conversations[conversationId]?.started ||
+            get().conversations[conversationId]?.workspaceMigrating
+          )
+            return;
           const deliveryId = crypto.randomUUID();
           set((state) =>
             patch(state, conversationId, {
@@ -2874,7 +3245,9 @@ export const useSessionsStore = create<SessionsState>()(
           void hydrateParentHistoryTail(viewed);
           void window.electronAPI.agent.requestSnapshot(viewed);
         }
-        void syncConversationProjectIds();
+        void syncConversationProjectIds()
+          .then(() => useSessionsStore.getState().refreshWorktreeStatuses())
+          .catch(() => {});
       },
     }
   )

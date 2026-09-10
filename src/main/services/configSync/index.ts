@@ -89,6 +89,7 @@ export const CONFIG_SYNC_FIELD_POLICY = {
   expandLiveEdits: { mode: 'portable' },
   chatWide: { mode: 'portable' },
   notifyMainAgentOnly: { mode: 'portable' },
+  maxActiveCoworkers: { mode: 'portable' },
   generationStallTimeoutMin: { mode: 'portable' },
   autoArchiveIdleDays: { mode: 'portable' },
   autoArchiveMergedWorktrees: { mode: 'portable' },

@@ -44,7 +44,7 @@ describe('looksLikeShellCommand', () => {
 });
 
 describe('createIsolatedSandboxTool', () => {
-  it('prompt 默认倾向 exec 做已知路径的聚合，探索/全文进上下文不要进沙箱', () => {
+  it('prompt 只鼓励 3+ 聚合，并写明单次包装、父级 hashline 与截断成本', () => {
     const tool = createIsolatedSandboxTool({ getTools: () => [] });
     const text = [tool.description, tool.promptSnippet, ...(tool.promptGuidelines ?? [])].join(
       '\n'
@@ -53,6 +53,10 @@ describe('createIsolatedSandboxTool', () => {
     expect(text).toMatch(/3\+ similar read\/grep\/find/i);
     expect(text).toMatch(/reduced result/i);
     expect(text).toMatch(/not for exploring/i);
+    expect(text).toMatch(/Do not wrap a single read\/grep\/find/i);
+    expect(text).toMatch(/parent hashline snapshot/i);
+    expect(text).toMatch(/JSON-serialized and truncated/i);
+    expect(text).not.toMatch(/Hashline headers require the Hashline setting/i);
     expect(text).toMatch(/No console/i);
     expect(text).toMatch(/isError: true/i);
     expect(text).toMatch(/listTools/i);

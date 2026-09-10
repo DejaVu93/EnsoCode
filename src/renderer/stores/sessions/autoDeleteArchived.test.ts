@@ -179,7 +179,7 @@ describe('autoDeleteStaleArchived', () => {
       15
     );
     action().autoDeleteStaleArchived?.(NOW);
-    expect(ids()).toEqual([]);
-    await vi.waitFor(() => expect(wtRemove).toHaveBeenCalledWith('iso'));
+    await vi.waitFor(() => expect(ids()).toEqual([]));
+    expect(wtRemove).toHaveBeenCalledWith('iso');
   });
 });
