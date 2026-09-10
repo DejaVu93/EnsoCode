@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { LlamaModel } from 'node-llama-cpp';
 import { acquireModel, type LlamaModelLike } from '../../llama/runtime';
 import type { EmbedKind } from '../types';
 import { withPrefix } from './prefix';
@@ -29,13 +30,30 @@ export async function createGgufEmbeddingProvider(
 
   const modelPath = path.join(ctx.modelDir, cfg.file);
   const acquire = ctx.acquire ?? ((p: string) => acquireModel('embedding', p));
-  const model = await acquire(modelPath);
+  const model = (await acquire(modelPath)) as unknown as Pick<
+    LlamaModel,
+    'createEmbeddingContext' | 'trainContextSize' | 'tokenizer' | 'tokens' | 'vocabularyType'
+  >;
 
-  // 上下文持有 KV cache，建一次复用：每条记忆都新建会让吞吐掉一个数量级。
-  // contextSize 取模型训练长度与 maxTokens 的较小值，交给 llama.cpp 按显存自适应。
-  const context = await model.createEmbeddingContext({
-    contextSize: { max: cfg.maxTokens },
-  });
+  // embedding context 不公开实际长度；固定请求大小，避免按自适应前的上限计算预算。
+  const contextSize = Math.min(cfg.maxTokens, model.trainContextSize);
+  const context = await model.createEmbeddingContext({ contextSize });
+  // 与 node-llama-cpp getEmbeddingFor 的首尾补齐规则一致，仅使用公开模型元数据。
+  const { tokens, vocabularyType } = model;
+  const beginning =
+    vocabularyType === 'rwkv' || vocabularyType === 'ugm'
+      ? null
+      : vocabularyType === 'wpm' || tokens.shouldPrependBosToken
+        ? tokens.bos
+        : null;
+  const ending =
+    vocabularyType === 'rwkv'
+      ? null
+      : vocabularyType === 'wpm'
+        ? tokens.sep
+        : vocabularyType === 'ugm' || tokens.shouldAppendEosToken
+          ? tokens.eos
+          : null;
 
   return {
     spec,
@@ -43,8 +61,19 @@ export async function createGgufEmbeddingProvider(
       const out: (Float32Array | null)[] = new Array(texts.length).fill(null);
       for (const [index, text] of texts.entries()) {
         if (!text.trim()) continue;
-        // 超长截断交给 llama.cpp（按 contextSize），不在这里按字符猜 token 数
-        const embedding = await context.getEmbeddingFor(withPrefix(spec, kind, text));
+        const input = withPrefix(spec, kind, text);
+        const inputTokens = model.tokenizer(input, false);
+        if (inputTokens.length === 0) continue;
+        const prepend = beginning != null && inputTokens[0] !== beginning ? 1 : 0;
+        const append = ending != null && inputTokens.at(-1) !== ending ? 1 : 0;
+        let bounded: string | typeof inputTokens = input;
+        if (inputTokens.length + prepend + append > contextSize) {
+          // 截断会丢掉原有结尾，所以必须重新预留结束 token；不要 detokenize 后再次分词。
+          const budget = contextSize - prepend - (ending != null ? 1 : 0);
+          if (budget <= 0) continue;
+          bounded = inputTokens.slice(0, budget);
+        }
+        const embedding = await context.getEmbeddingFor(bounded);
         out[index] = finalize(Float32Array.from(embedding.vector), cfg.truncateDim);
       }
       return out;

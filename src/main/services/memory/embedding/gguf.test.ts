@@ -1,3 +1,4 @@
+import type { Token } from 'node-llama-cpp';
 import { describe, expect, it, vi } from 'vitest';
 import type { LlamaEmbeddingContextLike, LlamaModelLike } from '../../llama/runtime';
 import { createGgufEmbeddingProvider } from './gguf';
@@ -32,6 +33,10 @@ function fakeModel(opts: {
     dispose: vi.fn(async () => opts.onDispose?.()),
   };
   return {
+    tokenizer: (input: string) => Array.from(input, (char) => char.codePointAt(0)),
+    trainContextSize: 512,
+    vocabularyType: 'bpe',
+    tokens: { bos: null, eos: null, sep: null },
     createEmbeddingContext: vi.fn(async () => ctx),
     dispose: vi.fn(async () => {}),
   } as unknown as LlamaModelLike;
@@ -43,6 +48,133 @@ function provider(model: LlamaModelLike, override: Partial<EmbeddingModelSpec> =
     { modelDir: '/models/qwen3', acquire: async () => model }
   );
 }
+
+function budgetModel(trainContextSize: number, vocabularyType = 'bpe') {
+  const seen: (string | Token[])[] = [];
+  const evaluated: number[][] = [];
+  // 多字节文本按 byte token 编码，确保字符数不是 token 预算。
+  const tokenizer = vi.fn((input: string) => Array.from(Buffer.from(input)) as Token[]);
+  const model = {
+    tokenizer,
+    trainContextSize,
+    vocabularyType,
+    tokens: {
+      bos: 1000,
+      eos: 1001,
+      sep: 1002,
+      shouldPrependBosToken: false,
+      shouldAppendEosToken: false,
+    },
+    createEmbeddingContext: vi.fn(async (options: { contextSize: number | { max: number } }) => {
+      const size = Math.min(
+        trainContextSize,
+        typeof options.contextSize === 'number' ? options.contextSize : options.contextSize.max
+      );
+      return {
+        getEmbeddingFor: vi.fn(async (input: string | Token[]) => {
+          seen.push(input);
+          const tokens: number[] = typeof input === 'string' ? tokenizer(input) : [...input];
+          if (tokens.length > size) throw new Error('input exceeds context');
+          if (vocabularyType === 'wpm') {
+            if (tokens[0] !== 1000) tokens.unshift(1000);
+            if (tokens.at(-1) !== 1002) tokens.push(1002);
+          } else if (vocabularyType === 'ugm' && tokens.at(-1) !== 1001) {
+            tokens.push(1001);
+          } else if (vocabularyType === 'bpe') {
+            if (model.tokens.shouldPrependBosToken && tokens[0] !== 1000) tokens.unshift(1000);
+            if (model.tokens.shouldAppendEosToken && tokens.at(-1) !== 1001) tokens.push(1001);
+          }
+          if (tokens.length > size) throw new Error('special tokens exceed context');
+          evaluated.push(tokens);
+          return { vector: ramp(1024) };
+        }),
+        dispose: vi.fn(async () => {}),
+      };
+    }),
+  };
+  return {
+    model: model as unknown as LlamaModelLike,
+    tokenizer,
+    seen,
+    evaluated,
+    tokens: model.tokens,
+  };
+}
+
+describe('createGgufEmbeddingProvider token budget', () => {
+  it.each(['passage', 'query'] as const)('按真实 token 截断长 %s，前缀也占预算', async (kind) => {
+    const fixture = budgetModel(512);
+    const p = await provider(fixture.model);
+    const text = '记忆'.repeat(300);
+    await expect(p.embed([text], kind)).resolves.toEqual([expect.any(Float32Array)]);
+    const prefixed = kind === 'query' ? `Query: ${text}` : text;
+    expect(fixture.evaluated).toEqual([Array.from(Buffer.from(prefixed)).slice(0, 512)]);
+    expect(fixture.tokenizer).toHaveBeenCalledWith(prefixed, false);
+  });
+
+  it.each(['bpe', 'wpm', 'ugm'])(
+    '%s 在训练长度边界为自动 special tokens 留位置',
+    async (vocabulary) => {
+      const fixture = budgetModel(10, vocabulary);
+      if (vocabulary === 'bpe') {
+        fixture.tokens.shouldPrependBosToken = true;
+        fixture.tokens.shouldAppendEosToken = true;
+      }
+      const p = await provider(fixture.model);
+      await expect(p.embed(['abcdefghij'], 'passage')).resolves.toEqual([expect.any(Float32Array)]);
+      const begin = vocabulary === 'ugm' ? [] : [1000];
+      const end = vocabulary === 'wpm' ? [1002] : [1001];
+      expect(fixture.evaluated).toEqual([
+        [
+          ...begin,
+          ...Array.from(Buffer.from('abcdefghij')).slice(0, 10 - begin.length - end.length),
+          ...end,
+        ],
+      ]);
+    }
+  );
+
+  it('恰好占满预算及短输入保持原字符串不变', async () => {
+    const fixture = budgetModel(10, 'wpm');
+    const p = await provider(fixture.model);
+    await p.embed(['abcdefgh', '短'], 'passage');
+    expect(fixture.seen).toEqual(['abcdefgh', '短']);
+  });
+
+  it('配置上限小于训练长度时仍遵守配置，边界输入不变', async () => {
+    const fixture = budgetModel(8192);
+    const p = await provider(fixture.model);
+    await p.embed(['x'.repeat(512), 'x'.repeat(513)], 'passage');
+    expect(fixture.seen[0]).toBe('x'.repeat(512));
+    expect(fixture.evaluated.map((tokens) => tokens.length)).toEqual([512, 512]);
+  });
+
+  it('已包含首尾特殊 token 时不重复扣预算，截断仍保留结尾位置', async () => {
+    const fixture = budgetModel(10, 'wpm');
+    const exact = [1000, ...Array(8).fill(7), 1002] as Token[];
+    const long = [1000, ...Array(9).fill(7), 1002] as Token[];
+    fixture.tokenizer.mockImplementation((input) => (input === 'exact' ? exact : long));
+    const p = await provider(fixture.model);
+    await p.embed(['exact', 'long'], 'passage');
+    expect(fixture.seen[0]).toBe('exact');
+    expect(fixture.evaluated).toEqual([exact, exact]);
+  });
+
+  it('tokenizer 没有返回内容时不调用 embedding', async () => {
+    const fixture = budgetModel(512);
+    fixture.tokenizer.mockReturnValue([]);
+    const p = await provider(fixture.model);
+    await expect(p.embed(['ignored'], 'passage')).resolves.toEqual([null]);
+    expect(fixture.seen).toEqual([]);
+  });
+
+  it('special token 耗尽上下文时不提交空内容向量', async () => {
+    const fixture = budgetModel(2, 'wpm');
+    const p = await provider(fixture.model);
+    await expect(p.embed(['x'], 'passage')).resolves.toEqual([null]);
+    expect(fixture.seen).toEqual([]);
+  });
+});
 
 describe('createGgufEmbeddingProvider', () => {
   it('returns one L2-normalized vector per input', async () => {
