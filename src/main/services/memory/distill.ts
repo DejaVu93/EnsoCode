@@ -254,8 +254,9 @@ export function toCreateInput(m: DistilledMemory, spaceId: string): CreateMemory
     confidence: m.confidence === null ? undefined : clamp01(m.confidence),
     spaceId,
     source: 'distill',
-    eventStart: start,
-    eventEnd: start ? end : null,
+    // 保留原始粒度，交由 createMemory 统一归一化并记录 precision。
+    eventStart: start ? m.temporal!.start : null,
+    eventEnd: start && end ? m.temporal!.end : null,
   };
 }
 

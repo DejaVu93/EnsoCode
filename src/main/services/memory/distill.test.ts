@@ -205,7 +205,7 @@ describe('toCreateInput（写入映射）', () => {
     expect(noType?.unitTypeSource).toBeUndefined();
     expect(
       toCreateInput(mem({ temporal: { start: '2024-03', end: '2024-05' } }), 'global')
-    ).toMatchObject({ eventStart: '2024-03-01', eventEnd: '2024-05-01' });
+    ).toMatchObject({ eventStart: '2024-03', eventEnd: '2024-05' });
     expect(
       toCreateInput(mem({ temporal: { start: 'yesterday', end: null } }), 'global')
     ).toMatchObject({ eventStart: null, eventEnd: null });
@@ -412,6 +412,38 @@ describe('蒸馏任务（memory_jobs kind=distill）', () => {
     expect(consolidation[0]).toContain('Config {"apiKey":"[REDACTED]"}');
     expect(rows()[0].content).toBe('Config {"password":"[REDACTED]"}');
   });
+
+  it.each([
+    ['2024', null, '2024-01-01', null, 'year'],
+    ['2024-03', '2024-05', '2024-03-01', '2024-05-01', 'month'],
+    ['2024-03-15', null, '2024-03-15', null, 'day'],
+  ])(
+    '提炼日期 %s 与直接 capture 保持相同日期和精度',
+    async (start, end, date, endDate, precision) => {
+      const direct = await createMemory(db, {
+        content: 'Direct capture of the migration plan.',
+        spaceId: 'global',
+        eventStart: start,
+        eventEnd: end,
+      });
+      expect(direct.status).toBe('inserted');
+      const job = ensureDistillJob(db, payload, distillFingerprint('s1', transcript))!;
+      const done = await runDistillJob(db, job, {
+        transcript,
+        complete: async () => json([mem({ temporal: { start, end } })]),
+      });
+      expect(done).toMatchObject({ status: 'done', done: 1 });
+      const stored = listMemories(db, { spaceIds: ['global'] });
+      expect(stored).toHaveLength(2);
+      for (const memory of stored) {
+        expect(memory).toMatchObject({
+          eventStart: date,
+          eventEnd: endDate,
+          temporalPrecision: precision,
+        });
+      }
+    }
+  );
 
   it('幂等：同会话同内容只建一个任务；内容变了才建新任务；跑完写入 source=distill 且过闭集校验', async () => {
     const fp = distillFingerprint(payload.sessionId, transcript);
