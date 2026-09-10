@@ -219,12 +219,30 @@ export function MemoryLibrary({ revision = 0 }: { revision?: number } = {}) {
   const [busy, setBusy] = React.useState(false);
   const [pendingEdges, setPendingEdges] = React.useState<EvolvesEdgeDto[]>([]);
 
+  const mounted = React.useRef(false);
+  const listRequest = React.useRef(0);
+  const detailRequest = React.useRef(0);
+
+  React.useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      listRequest.current++;
+      detailRequest.current++;
+    };
+  }, []);
+
   const reload = React.useCallback(() => {
+    if (!mounted.current) return;
+    // 包括不发 IPC 的空查询，也必须让此前在途的结果过期。
+    const request = ++listRequest.current;
+    const isCurrent = () => mounted.current && request === listRequest.current;
     // 语义模式没有查询词时后端必然返回空，别白跑一次 IPC（还会顺带加载 embedder）
     if (mode === 'semantic' && !query.trim()) {
       setItems([]);
       setTotal(0);
       setApproximate(true);
+      setVectorsUsed(true);
       return;
     }
     void window.electronAPI.memory
@@ -238,21 +256,31 @@ export function MemoryLibrary({ revision = 0 }: { revision?: number } = {}) {
         mode,
       })
       .then((result) => {
+        if (!isCurrent()) return;
         setItems(result.items);
         setTotal(result.total);
         setApproximate(result.approximate === true);
         setVectorsUsed(result.vectorsUsed !== false);
       });
+    // 全库统计与待审阅不属于列表筛选，不能随空查询一起作废。
     void window.electronAPI.memory.stats().then((stats) => {
+      if (!mounted.current) return;
       setSpaces(
         Object.keys(stats.bySpace).map((id) => ({ id, label: stats.spaceLabels[id] ?? id }))
       );
       setLibraryExists(stats.total > 0);
     });
-    void window.electronAPI.memory.evolvesPending().then(setPendingEdges);
+    void window.electronAPI.memory.evolvesPending().then((edges) => {
+      if (mounted.current) setPendingEdges(edges);
+    });
   }, [query, spaceId, unitType, includeArchived, offset, mode]);
 
-  React.useEffect(reload, [reload]);
+  React.useEffect(() => {
+    reload();
+    return () => {
+      listRequest.current++;
+    };
+  }, [reload]);
   // Main 在任何写入后广播（包括 agent 通过工具写的），比靠组件树传 revision 可靠
   const reloadRef = React.useRef(reload);
   reloadRef.current = reload;
@@ -265,7 +293,15 @@ export function MemoryLibrary({ revision = 0 }: { revision?: number } = {}) {
   }, [revision, reload]);
 
   const openDetail = (id: string) => {
-    void window.electronAPI.memory.detail(id).then(setDetail);
+    const request = ++detailRequest.current;
+    void window.electronAPI.memory.detail(id).then((result) => {
+      if (mounted.current && request === detailRequest.current) setDetail(result);
+    });
+  };
+
+  const closeDetail = () => {
+    detailRequest.current++;
+    setDetail(null);
   };
 
   // 串行：每次变更都要重新拉列表，并发会让分页与 total 错位
@@ -274,10 +310,12 @@ export function MemoryLibrary({ revision = 0 }: { revision?: number } = {}) {
     try {
       for (const id of selected) await run(id);
     } finally {
-      setBusy(false);
-      setSelected(new Set());
-      setConfirmBulkDelete(false);
-      reload();
+      if (mounted.current) {
+        setBusy(false);
+        setSelected(new Set());
+        setConfirmBulkDelete(false);
+        reloadRef.current();
+      }
     }
   };
 
@@ -286,9 +324,10 @@ export function MemoryLibrary({ revision = 0 }: { revision?: number } = {}) {
 
   const runMutation = (action: Promise<{ ok: boolean }>) => {
     void action.then(() => {
-      setDetail(null);
+      if (!mounted.current) return;
+      closeDetail();
       setConfirmDeleteId(null);
-      reload();
+      reloadRef.current();
     });
   };
 
@@ -494,7 +533,7 @@ export function MemoryLibrary({ revision = 0 }: { revision?: number } = {}) {
         onReview={(id, state) => runMutation(window.electronAPI.memory.evolvesReview(id, state))}
       />
 
-      <Dialog open={detail !== null} onOpenChange={(open) => !open && setDetail(null)}>
+      <Dialog open={detail !== null} onOpenChange={(open) => !open && closeDetail()}>
         <DialogContent>
           {detail && (
             <>
