@@ -40,6 +40,14 @@ export const SETTINGS_DATA_COVERAGE = {
   exploreFoldEnabled: excluded(
     'Explore-fold is a desktop session preference, not an Enso capability.'
   ),
+  memoryEmbeddingModel: excluded('Memory embedding model choice is a desktop preference.'),
+  memoryEmbeddingAutoDownload: excluded('Memory model download policy is a device preference.'),
+  memoryEmbeddingRemoteProviderId: excluded(
+    'Memory remote embedding provider is a device-local reference.'
+  ),
+  memoryDistillEnabled: excluded('Memory auto-distillation preference; not an Enso capability.'),
+  memoryKgEnabled: excluded('Memory entity-graph extraction preference; not an Enso capability.'),
+  memoryWorkingFileEnabled: excluded('Memory working-file preference; not an Enso capability.'),
   bashInterceptEnabled: excluded(
     'Bash intercept is a desktop session preference, not an Enso capability.'
   ),
@@ -77,6 +85,9 @@ export const SETTINGS_DATA_COVERAGE = {
   defaultThinkingLevel: surfaces('providers.default-model'),
   titleSummaryEnabled: excluded('Conversation title summary preference; not an Enso capability.'),
   titleSummaryModel: excluded('Conversation title summary preference; not an Enso capability.'),
+  memoryDistillModel: excluded('Memory distillation model preference; not an Enso capability.'),
+  memoryLanguage: excluded('Memory output language preference; not an Enso capability.'),
+  memoryChatModel: excluded('Memory local/remote chat model preference; not an Enso capability.'),
   approvalReviewer: excluded('Assistant approval reviewer model; desktop settings only.'),
   lastApprovalMode: excluded('Last used approval mode is a desktop session preference.'),
   skills: surfaces('skills.list'),
@@ -132,6 +143,16 @@ export const SETTINGS_ACTION_COVERAGE = {
   setExploreFoldEnabled: excluded(
     'Explore-fold is a desktop session preference, not an Enso capability.'
   ),
+  setMemoryEmbeddingModel: excluded('Memory embedding model choice is a desktop preference.'),
+  setMemoryEmbeddingAutoDownload: excluded('Memory model download policy is a device preference.'),
+  setMemoryEmbeddingRemoteProviderId: excluded(
+    'Memory remote embedding provider is a device-local reference.'
+  ),
+  setMemoryDistillEnabled: excluded('Memory auto-distillation preference; not an Enso capability.'),
+  setMemoryKgEnabled: excluded(
+    'Memory entity-graph extraction preference; not an Enso capability.'
+  ),
+  setMemoryWorkingFileEnabled: excluded('Memory working-file preference; not an Enso capability.'),
   setBashInterceptEnabled: excluded(
     'Bash intercept is a desktop session preference, not an Enso capability.'
   ),
@@ -178,6 +199,11 @@ export const SETTINGS_ACTION_COVERAGE = {
     'Conversation title summary preference; not an Enso capability.'
   ),
   setTitleSummaryModel: excluded('Conversation title summary preference; not an Enso capability.'),
+  setMemoryDistillModel: excluded('Memory distillation model preference; not an Enso capability.'),
+  setMemoryLanguage: excluded('Memory output language preference; not an Enso capability.'),
+  setMemoryChatModel: excluded(
+    'Memory local/remote chat model preference; not an Enso capability.'
+  ),
   setApprovalReviewer: excluded('Assistant approval reviewer model; desktop settings only.'),
   setLastApprovalMode: excluded('Last used approval mode is a desktop session preference.'),
   revalidateDefaultModel: surfaces('providers.default-model'),
@@ -254,6 +280,7 @@ export const BUILTIN_TOOL_COVERAGE: Readonly<Record<string, CoverageDisposition>
   background_tasks: surfaces('coding-tools.background-task'),
   browser: surfaces('coding-tools.browser'),
   isolated_sandbox: surfaces('coding-tools.isolated-sandbox'),
+  memory: surfaces('coding-tools.memory'),
 };
 
 export const BUILTIN_AGENT_TYPE_COVERAGE: Readonly<Record<string, CoverageDisposition>> = {
@@ -513,6 +540,35 @@ export const IPC_PRODUCT_COVERAGE = {
   USAGE_SUMMARY: excluded(
     'Read-only local token usage aggregation for the Settings → Usage panel.'
   ),
+  MEMORY_LIST: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_DETAIL: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_ARCHIVE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_RESTORE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_DELETE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_STATS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_JOBS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_JOBS_CLEAR: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_EVOLVES_PENDING: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_EVOLVES_REVIEW: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_MODELS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_MODEL_DOWNLOAD: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_MODEL_CANCEL: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_MODEL_DELETE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_MODEL_PROGRESS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CHAT_MODELS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CHAT_MODEL_DOWNLOAD: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CHAT_MODEL_CANCEL: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CHAT_MODEL_DELETE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CHAT_MODEL_PROGRESS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_REEMBED: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CHANGED: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_GRAPH: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_GRAPH_ENTITY: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_TREE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_INSIGHT: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_CRYSTALLIZE: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_DISTILLABLE_SESSIONS: excluded('Memory desktop UI; not an Enso capability.'),
+  MEMORY_DISTILL_SESSION: excluded('Memory desktop UI; not an Enso capability.'),
 } satisfies Record<keyof typeof IPC_CHANNELS, CoverageDisposition>;
 
 export const AUTHORITATIVE_COVERAGE_SOURCES = {

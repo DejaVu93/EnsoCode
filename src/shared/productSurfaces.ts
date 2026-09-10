@@ -487,6 +487,11 @@ export const PRODUCT_SURFACE_INVENTORY = {
     kind: 'action',
     label: 'Run isolated sandbox',
   },
+  'coding-tools.memory': {
+    domain: 'coding-tools',
+    kind: 'action',
+    label: 'Search and capture long-term memory',
+  },
 } as const satisfies Record<string, ProductSurfaceInventoryItem>;
 
 export type ProductSurfaceId = keyof typeof PRODUCT_SURFACE_INVENTORY;

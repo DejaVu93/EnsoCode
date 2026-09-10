@@ -156,6 +156,7 @@ import { createTodoTool } from './todo';
 import { BrowserInvoker, createBrowserTools, withNavigateApproval } from './tools/browser';
 import { createEnsoAppTool, EnsoAppInvoker } from './tools/ensoApp';
 import { createEnsoCapabilitiesTool } from './tools/ensoCapabilities';
+import { createMemoryTools, MemoryInvoker } from './tools/memory';
 import { transcriptMessages } from './transcript';
 import { withWriteScope } from './writeScope';
 
@@ -213,6 +214,7 @@ interface ManagedSession {
   promptedRequestIds: Set<string>;
   ensoApp?: EnsoAppInvoker;
   browser?: BrowserInvoker;
+  memory?: MemoryInvoker;
   adaptiveDowngraded: boolean;
   /** 最近一次 auto_retry_start 携带的原始错误（取消重试时的终态错误文案） */
   lastRetryError?: string;
@@ -562,6 +564,7 @@ export class SessionSupervisor {
         managed.asks.snapshot().length > 0 ||
         (managed.ensoApp?.pendingCount ?? 0) > 0 ||
         (managed.browser?.pendingCount ?? 0) > 0 ||
+        (managed.memory?.pendingCount ?? 0) > 0 ||
         managed.pendingTaskReminders.length > 0 ||
         this.bgTasks.snapshot(id).some((task) => task.status === 'running'),
       hasChildren:
@@ -618,6 +621,7 @@ export class SessionSupervisor {
     managed.asks.cancelAll();
     managed.ensoApp?.cancelAll('Session released');
     managed.browser?.cancelAll('Session released');
+    managed.memory?.cancelAll('Session released');
     try {
       await managed.session.abort();
     } catch {}
@@ -679,6 +683,16 @@ export class SessionSupervisor {
       void this.summarizeTitle(command).catch(() => {});
       return;
     }
+    if (command.type === 'complete-text') {
+      void this.completeText(command).catch((error) =>
+        this.options.emit({
+          type: 'text-failed',
+          requestId: command.requestId,
+          error: toErrorMessage(error),
+        })
+      );
+      return;
+    }
     if (command.type === 'set-proxy-env') {
       applyWorkerProxyEnv(command.env);
       return;
@@ -690,7 +704,7 @@ export class SessionSupervisor {
     const identity =
       command.type === 'capability-result'
         ? command.child
-        : command.type === 'browser-result'
+        : command.type === 'browser-result' || command.type === 'memory-result'
           ? command.identity
           : command.type === 'dismiss-child' ||
               command.type === 'dismiss-coworker' ||
@@ -777,7 +791,8 @@ export class SessionSupervisor {
           command.hashlineEditEnabled,
           command.smartCompactEnabled,
           command.smartCompactSummaryModel,
-          command.smartCompactMode
+          command.smartCompactMode,
+          command.memoryLanguage
         );
         return;
       case 'spawn-child':
@@ -985,6 +1000,13 @@ export class SessionSupervisor {
         }
         return;
       }
+      case 'memory-result': {
+        const managed = this.must(command.identity);
+        if (!managed.memory?.resolve(command)) {
+          console.warn(`[memory] dropped result for unknown request ${command.requestId}`);
+        }
+        return;
+      }
       case 'append-session-custom-entry': {
         const managed = this.must(command.identity);
         managed.session.sessionManager.appendCustomEntry('enso-agent-session', command.entry);
@@ -1125,6 +1147,7 @@ export class SessionSupervisor {
         managed.asks.cancelAll();
         managed.ensoApp?.cancelAll('Enso capability invocation aborted');
         managed.browser?.cancelAll('Browser action aborted');
+        managed.memory?.cancelAll('Memory action aborted');
         managed.currentTurnId = undefined;
         // 立即收口投影：不 await session.abort()（内部 waitForIdle 会一直等到工具/流
         // 真正结束，工具不响应 signal 时永远等不到，UI 就卡在 running 上）。
@@ -1164,7 +1187,8 @@ export class SessionSupervisor {
     hashlineEditEnabled = false,
     smartCompactEnabled = false,
     smartCompactSummaryModel?: SpawnModelConfig,
-    smartCompactMode?: SmartCompactMode
+    smartCompactMode?: SmartCompactMode,
+    memoryLanguage?: string
   ): Promise<void> {
     const sessionId = identity.sessionId;
     const toolEnabled = (id: string) => !disabledTools.includes(id);
@@ -1700,6 +1724,21 @@ export class SessionSupervisor {
           });
         })
       : undefined;
+    // 记忆库活在 Main（better-sqlite3），worker 只发 memory-invoke 事件，同 browser 桥。
+    const memory = toolEnabled('memory')
+      ? new MemoryInvoker(identity, (request) => {
+          const managed = managedRef ?? this.sessions.get(sessionId);
+          if (!managed) throw new Error('Session is not ready for memory actions.');
+          this.options.emit({
+            type: 'memory-invoke',
+            identity: managed.identity,
+            seq: ++managed.seq,
+            requestId: request.requestId,
+            op: request.op,
+            params: request.params,
+          });
+        })
+      : undefined;
     const catalogRef: { current: Def[] } = { current: [] };
     const sandboxStore = new Map<string, unknown>();
     const sessionTools = [
@@ -1707,6 +1746,7 @@ export class SessionSupervisor {
       ...(browser
         ? createBrowserTools(browser).map((tool) => withNavigateApproval(gate, tool))
         : []),
+      ...(memory ? createMemoryTools(memory, { language: memoryLanguage }) : []),
       ...(toolEnabled('todo') ? [createTodoTool()] : []),
       ...(toolEnabled('ask_user') ? [createAskTool(askManager)] : []),
       ...(toolEnabled('subagent') ? [taskTool] : []),
@@ -1763,6 +1803,7 @@ export class SessionSupervisor {
       checkpoints,
     });
     managedRef.browser = browser;
+    managedRef.memory = memory;
     this.options.emit({
       type: 'parent-ready',
       identity,
@@ -3060,6 +3101,7 @@ export class SessionSupervisor {
     for (const managed of this.sessions.values()) {
       managed.ensoApp?.cancelAll('Enso worker shutdown');
       managed.browser?.cancelAll('Enso worker shutdown');
+      managed.memory?.cancelAll('Enso worker shutdown');
       managed.currentTurnId = undefined;
     }
     return this.mcp.closeAll();
@@ -3149,6 +3191,54 @@ export class SessionSupervisor {
       clearTimeout(timeout);
       signal?.removeEventListener('abort', onParentAbort);
     }
+  }
+
+  /**
+   * 通用一次性文本补全（记忆蒸馏）：与 summarizeTitle 同样的候选链，但不对输出做形状判定，
+   * 原文回 Main 由调用方容错解析。每个候选共用同一上限超时。
+   */
+  private async completeText(
+    command: Extract<AgentCommand, { type: 'complete-text' }>
+  ): Promise<void> {
+    const runtime = await this.getRuntime();
+    const context = {
+      systemPrompt: command.systemPrompt,
+      messages: [{ role: 'user' as const, content: command.userText, timestamp: Date.now() }],
+    };
+    let lastError = 'no candidates';
+    for (const candidate of command.candidates) {
+      const label = describeTitleModel(candidate);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), command.timeoutMs);
+      try {
+        const model = await resolveBaseModelOrRefresh(runtime, candidate);
+        const message = await runtime.completeSimple(model, context, {
+          signal: controller.signal,
+        });
+        if (message.stopReason === 'aborted') {
+          lastError = `${label}: timed out after ${Math.round(command.timeoutMs / 1000)}s`;
+          continue;
+        }
+        if (message.stopReason === 'error') {
+          lastError = `${label}: ${message.errorMessage?.trim() || 'model error'}`;
+          continue;
+        }
+        const text = message.content
+          .map((part) => (part.type === 'text' ? part.text : ''))
+          .join('');
+        if (!text.trim()) {
+          lastError = `${label}: empty completion`;
+          continue;
+        }
+        this.options.emit({ type: 'text-completed', requestId: command.requestId, text });
+        return;
+      } catch (error) {
+        lastError = `${label}: ${toErrorMessage(error)}`;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    this.options.emit({ type: 'text-failed', requestId: command.requestId, error: lastError });
   }
 
   /**

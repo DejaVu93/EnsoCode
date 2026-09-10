@@ -17,6 +17,7 @@
 | [cdp-hidden-window-input.md](cdp-hidden-window-input.md) | CDP 拖拽/点击时好时坏，eval/截图全正常，极易误判为产品 bug |
 | [optimistic-echo-blocks-snapshot.md](optimistic-echo-blocks-snapshot.md) | 冷会话回来先发一句后，聊天区只剩这一句、计时器在走、工具卡不出现；worker 其实在正常干活 |
 | [enso-compact-token-limit-fallback.md](enso-compact-token-limit-fallback.md) | Smart Compact 开着仍报 Auto-compaction failed: Summarization failed: Input token limit exceeded |
+| [tool-prepare-arguments-schema-drift.md](tool-prepare-arguments-schema-drift.md) | 工具单测全绿，真机上模型每次调用都被判参数不合法 |
 
 ## 共同教训
 

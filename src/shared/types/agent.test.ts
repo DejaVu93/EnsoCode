@@ -1312,6 +1312,45 @@ describe('browser-invoke / browser-result', () => {
   });
 });
 
+describe('memory-invoke / memory-result', () => {
+  const invoke = {
+    type: 'memory-invoke',
+    identity: parent,
+    seq: 5,
+    requestId: 'mem-1',
+    op: 'search',
+    params: { query: 'pg', limit: 10, spaceId: 'all' },
+  };
+  const result = {
+    type: 'memory-result',
+    identity: parent,
+    requestId: 'mem-1',
+    ok: true,
+    result: { results: [] },
+  };
+
+  it('memory-invoke 只接受 search/capture，identity 可为 parent 或 child', () => {
+    expect(parseAgentWorkerEvent(invoke)).toEqual(invoke);
+    expect(parseAgentWorkerEvent({ ...invoke, identity: child })).not.toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, op: 'capture' })).not.toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, op: 'delete' })).toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, requestId: '' })).toBeNull();
+    const { params: _p, ...noParams } = invoke;
+    expect(parseAgentWorkerEvent(noParams)).toBeNull();
+    expect(parseAgentWorkerEvent({ ...invoke, extra: 1 })).toBeNull();
+  });
+
+  it('memory-result 成功带 result，失败带 error，字段互斥', () => {
+    expect(parseAgentCommand(result)).toEqual(result);
+    const failed = { ...result, ok: false, error: 'boom', result: undefined };
+    delete (failed as { result?: unknown }).result;
+    expect(parseAgentCommand(failed)).toEqual(failed);
+    expect(parseAgentCommand({ ...failed, error: '' })).toBeNull();
+    expect(parseAgentCommand({ ...result, ok: false })).toBeNull();
+    expect(parseAgentCommand({ ...result, extra: 1 })).toBeNull();
+  });
+});
+
 describe('tool-output 事件跨进程边界', () => {
   const event = {
     type: 'tool-output',

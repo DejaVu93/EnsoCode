@@ -168,6 +168,7 @@ export function startAgentWorker(): void {
       // 手动重读结果只回给发起 invoke 的等待者，不进普通事件流（renderer 的通用
       // snapshot 分支会顺手改 started / 清 asks，手动刷新不能有这些副作用）
       if (pendingReloads.settle(event)) return;
+      if (settleCompletion(event)) return;
       onEvent?.(event);
     }
   });
@@ -178,6 +179,10 @@ export function startAgentWorker(): void {
       workerExited = true;
     }
     pendingReloads.failAll('agent worker exited');
+    for (const [id, p] of pendingCompletions) {
+      pendingCompletions.delete(id);
+      p.reject(new Error('agent worker exited'));
+    }
     onEvent?.({ type: 'worker-exited' });
   });
 }
@@ -414,6 +419,8 @@ export function spawnSession(
     ? smartCompactSummary.selection.config
     : undefined;
   const smartCompactMode = parseSmartCompactMode(state?.smartCompactMode) ?? undefined;
+  // 记忆存储语言下发给 worker：memory_search 的描述据此告诉模型该用哪种语言查
+  const memoryLanguage = typeof state?.memoryLanguage === 'string' ? state.memoryLanguage : 'en';
   // worker 崩溃/退出后不自动拉起的话，所有会话都只能靠重启 app 恢复；在 spawn 入口按需重建
   if (!worker && workerExited) startAgentWorker();
   return sendAgentCommand({
@@ -433,6 +440,7 @@ export function spawnSession(
     ...(smartCompactEnabled ? { smartCompactEnabled: true } : {}),
     ...(smartCompactSummaryModel ? { smartCompactSummaryModel } : {}),
     ...(smartCompactMode ? { smartCompactMode } : {}),
+    ...(disabledTools.includes('memory') ? {} : { memoryLanguage }),
     ...(skillPaths.length > 0 ? { skillPaths } : {}),
     ...(mcpServers.length > 0 ? { mcpServers } : {}),
     ...(request.approvalMode ? { approvalMode: request.approvalMode } : {}),
@@ -553,6 +561,14 @@ export function sendBrowserResultToSession(
   return sendAgentCommand({ type: 'browser-result', identity, requestId, ...outcome });
 }
 
+export function sendMemoryResultToSession(
+  identity: SessionIdentity | ChildSessionIdentity,
+  requestId: string,
+  outcome: { ok: true; result: unknown } | { ok: false; error: string }
+): { ok: boolean; error?: string } {
+  return sendAgentCommand({ type: 'memory-result', identity, requestId, ...outcome });
+}
+
 export function sendCapabilityResultToSession(
   child: ChildSessionIdentity,
   turnId: string,
@@ -605,6 +621,65 @@ export function steerSession(
     identity,
     text,
     ...(images?.length ? { images } : {}),
+  });
+}
+
+const pendingCompletions = new Map<
+  string,
+  { resolve: (text: string) => void; reject: (error: Error) => void }
+>();
+
+function settleCompletion(event: AgentWorkerEvent): boolean {
+  if (event.type !== 'text-completed' && event.type !== 'text-failed') return false;
+  const p = pendingCompletions.get(event.requestId);
+  if (!p) return true;
+  pendingCompletions.delete(event.requestId);
+  if (event.type === 'text-completed') p.resolve(event.text);
+  else p.reject(new Error(event.error));
+  return true;
+}
+
+/** 后台任务（记忆蒸馏）用：worker 不在线时保留任务而不是白跑一次失败 */
+export function isAgentWorkerReady(): boolean {
+  return Boolean(worker && workerReady);
+}
+
+/**
+ * 通用一次性文本补全（记忆蒸馏用）：只在 worker 在线时下发，结果按 requestId 回流；
+ * worker 不在 / 退出 / 超时都以 reject 收尾，调用方自己决定重试。
+ */
+export function completeText(input: {
+  systemPrompt: string;
+  userText: string;
+  candidates: SpawnModelConfig[];
+  timeoutMs: number;
+}): Promise<string> {
+  if (!worker || !workerReady) return Promise.reject(new Error('Agent worker is not running.'));
+  const requestId = randomUUID();
+  return new Promise<string>((resolve, reject) => {
+    // 每个候选各自 timeoutMs，整体再留一点余量做兑底
+    const timer = setTimeout(
+      () => {
+        pendingCompletions.delete(requestId);
+        reject(new Error('completion timed out'));
+      },
+      input.timeoutMs * input.candidates.length + 5_000
+    );
+    pendingCompletions.set(requestId, {
+      resolve: (text) => {
+        clearTimeout(timer);
+        resolve(text);
+      },
+      reject: (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    });
+    const posted = sendAgentCommand({ type: 'complete-text', requestId, ...input });
+    if (!posted.ok) {
+      pendingCompletions.get(requestId)?.reject(new Error(posted.error ?? 'post failed'));
+      pendingCompletions.delete(requestId);
+    }
   });
 }
 
