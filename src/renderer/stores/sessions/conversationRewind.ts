@@ -50,7 +50,9 @@ export function shouldSendRewindCommand(conversation: ConversationRewindView | u
     conversation?.started &&
       !conversation.spawning &&
       conversation.status !== 'running' &&
-      !conversation.historyOnly
+      !conversation.historyOnly &&
+      !conversation.worktreeMissing &&
+      !conversation.workspaceMigrating
   );
 }
 

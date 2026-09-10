@@ -2893,6 +2893,40 @@ describe('rewind 在 failed 状态放行、running 仍拦截', () => {
     await vi.waitFor(() => expect(agentRewind).toHaveBeenCalledTimes(1));
   });
 
+  it.each(['workspaceMigrating', 'worktreeMissing'] as const)(
+    'ready 到实际下发之间出现 %s 时取消回退',
+    async (flag) => {
+      const store = sessionsModule.useSessionsStore;
+      store.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          parent: {
+            ...state.conversations.parent,
+            started: true,
+            spawning: true,
+            status: 'idle' as const,
+            sessionFile: '/tmp/cold.jsonl',
+          },
+        },
+      }));
+      store.getState().rewind('parent', 0, true);
+      store.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          parent: { ...state.conversations.parent, spawning: false },
+        },
+      }));
+      store.setState((state) => ({
+        conversations: {
+          ...state.conversations,
+          parent: { ...state.conversations.parent, [flag]: true },
+        },
+      }));
+      await Promise.resolve();
+      expect(agentRewind).not.toHaveBeenCalled();
+    }
+  );
+
   it('冷加载历史主会话 spawn ack 不下发，含该会话 snapshot 后才 rewind', async () => {
     enableRewindResumeModel();
     let finishSpawn: ((value: { ok: true }) => void) | undefined;
