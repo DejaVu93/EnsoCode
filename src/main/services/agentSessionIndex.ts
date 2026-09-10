@@ -153,6 +153,10 @@ export class AgentSessionIndex {
     return this.sessions.get(sessionId)?.identity;
   }
 
+  isAlive(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.alive === true;
+  }
+
   isCurrent(identity: SessionIdentity): boolean {
     const current = this.sessions.get(identity.sessionId);
     return Boolean(current && isSameGeneration(current.identity, identity));

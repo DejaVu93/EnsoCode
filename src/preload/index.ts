@@ -546,6 +546,16 @@ const electronAPI = {
   },
 
   worktree: {
+    bind: (
+      conversationId: string,
+      sourceConversationId: string
+    ): Promise<{ ok: true; value: SessionWorktree } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_BIND, conversationId, sourceConversationId),
+    rename: (
+      conversationId: string,
+      name: string
+    ): Promise<{ ok: true; value: SessionWorktree[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke(IPC_CHANNELS.WORKTREE_RENAME, conversationId, name),
     create: (
       conversationId: string,
       projectId: string

@@ -18,7 +18,8 @@ export class WorktreeRegistry {
         for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
           const r = value as SessionWorktree;
           if (r && typeof r.path === 'string' && typeof r.branch === 'string') {
-            this.records.set(id, r);
+            const name = typeof r.name === 'string' ? r.name.trim() : '';
+            this.records.set(id, { ...r, name: name && name.length <= 80 ? name : undefined });
           }
         }
       }
@@ -39,12 +40,57 @@ export class WorktreeRegistry {
   share(fromConversationId: string, toConversationId: string): void {
     const source = this.records.get(fromConversationId);
     if (!source) return;
+    const previous = this.records.get(toConversationId);
     this.records.set(toConversationId, { ...source, conversationId: toConversationId });
-    this.flush();
+    try {
+      this.flush();
+    } catch (error) {
+      if (previous) this.records.set(toConversationId, previous);
+      else this.records.delete(toConversationId);
+      throw error;
+    }
+  }
+
+  bindings(record: SessionWorktree): SessionWorktree[] {
+    return this.list(record.projectId).filter(
+      (candidate) => candidate.repoPath === record.repoPath && candidate.path === record.path
+    );
+  }
+
+  replaceBindings(previous: SessionWorktree, replacement: SessionWorktree): SessionWorktree[] {
+    const bindings = this.bindings(previous);
+    const updated = bindings.map((record) => ({
+      ...replacement,
+      conversationId: record.conversationId,
+    }));
+    for (const record of updated) this.records.set(record.conversationId, record);
+    try {
+      this.flush();
+    } catch (error) {
+      for (const record of bindings) this.records.set(record.conversationId, record);
+      throw error;
+    }
+    return updated;
+  }
+
+  rename(conversationId: string, value: string): SessionWorktree[] {
+    const record = this.get(conversationId);
+    if (!record) throw new Error('no worktree for conversation');
+    const name = value.trim();
+    if (name.length > 80) throw new Error('worktree name must be at most 80 characters');
+    return this.replaceBindings(record, { ...record, name: name || undefined });
   }
 
   delete(conversationId: string): void {
-    if (this.records.delete(conversationId)) this.flush();
+    const previous = this.records.get(conversationId);
+    if (!previous) return;
+    this.records.delete(conversationId);
+    try {
+      this.flush();
+    } catch (error) {
+      this.records.set(conversationId, previous);
+      throw error;
+    }
   }
 
   list(projectId?: string): SessionWorktree[] {

@@ -110,6 +110,8 @@ export const IPC_CHANNELS = {
   AGENT_RELEASE: 'agent:release',
 
   WORKTREE_CREATE: 'worktree:create',
+  WORKTREE_BIND: 'worktree:bind',
+  WORKTREE_RENAME: 'worktree:rename',
   WORKTREE_GET: 'worktree:get',
   WORKTREE_LIST: 'worktree:list',
   WORKTREE_STATUS: 'worktree:status',

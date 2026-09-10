@@ -22,6 +22,13 @@ const mocks = vi.hoisted(() => ({
   abortSession: vi.fn(),
   setPairAgentBridge: vi.fn(),
   setSessionModel: vi.fn(() => ({ ok: true })),
+  forkSession: vi.fn(() => ({ ok: true })),
+  sessionWorktree: vi.fn(),
+  sessionWorktreeBusy: vi.fn(() => false),
+  shareSessionWorktree: vi.fn(),
+  removeRegisteredWorktree: vi.fn(async () => {}),
+  cleanupSessionFiles: vi.fn(),
+  credentials: vi.fn(async () => new Set<string>()),
 }));
 
 vi.mock('electron', () => ({
@@ -35,9 +42,12 @@ vi.mock('electron', () => ({
   },
 }));
 
+vi.mock('../services/sessionFileCleanup', () => ({
+  removeConversationSessionFiles: mocks.cleanupSessionFiles,
+}));
 vi.mock('../windows/MainWindow', () => ({ isMainWebContents: mocks.isMainWebContents }));
 vi.mock('../services/oauthProviders', () => ({
-  readStoredOauthCredentialKeys: vi.fn(async () => new Set<string>()),
+  readStoredOauthCredentialKeys: mocks.credentials,
 }));
 vi.mock('../services/agentHost', () => ({
   abortSession: mocks.abortSession,
@@ -67,6 +77,7 @@ vi.mock('../services/agentHost', () => ({
   respondApproval: vi.fn(),
   respondAsk: vi.fn(),
   rewindSession: vi.fn(),
+  forkSession: mocks.forkSession,
   setAgentEventListener: mocks.setAgentEventListener,
   setSessionApprovalMode: vi.fn(),
   setSessionModel: mocks.setSessionModel,
@@ -115,7 +126,14 @@ vi.mock('../services/sessionImport', () => ({
   readExternalSession: vi.fn(() => []),
 }));
 
-import { registerAgentHandlers } from './agent';
+vi.mock('./worktree', () => ({
+  sessionWorktree: mocks.sessionWorktree,
+  sessionWorktreeBusy: mocks.sessionWorktreeBusy,
+  shareSessionWorktree: mocks.shareSessionWorktree,
+  removeRegisteredWorktree: mocks.removeRegisteredWorktree,
+}));
+
+import { getSourceAuthorityRegistry, registerAgentHandlers } from './agent';
 
 const sender = {
   id: 1,
@@ -139,7 +157,132 @@ describe('agent IPC Main identity boundary', () => {
     mocks.coworkerOf.mockReset();
     mocks.dismissChildSession.mockClear();
     mocks.dismissCoworkerSession.mockClear();
+    mocks.credentials.mockReset().mockResolvedValue(new Set());
+    mocks.sessionWorktree.mockReset();
+    mocks.sessionWorktreeBusy.mockReset().mockReturnValue(false);
     registerAgentHandlers();
+  });
+
+  it.each(['busy', 'ended', 'rebound'])(
+    'revalidates spawn after credentials: %s',
+    async (change) => {
+      const authority = getSourceAuthorityRegistry()!;
+      const conversation = {
+        conversationId: 'spawn-target',
+        projectId: 'p',
+        kind: 'root' as const,
+        lifecycle: 'draft' as 'draft' | 'ended',
+        version: 1,
+      };
+      vi.spyOn(authority, 'conversation').mockReturnValue(conversation);
+      vi.spyOn(authority, 'project').mockReturnValue({
+        projectId: 'p',
+        canonicalPath: '/repo',
+        state: 'active',
+        version: 1,
+      });
+      mocks.credentials.mockImplementationOnce(async () => {
+        if (change === 'busy') mocks.sessionWorktreeBusy.mockReturnValue(true);
+        else if (change === 'ended') conversation.lifecycle = 'ended';
+        else mocks.sessionWorktree.mockReturnValue({ path: '/worktree' });
+        return new Set();
+      });
+      const result = await mocks.handlers.get(IPC_CHANNELS.AGENT_SPAWN)!(event, {
+        sessionId: 'spawn-target',
+        providerId: 'provider',
+        modelId: 'model',
+        cwd: '/repo',
+      });
+      if (change === 'rebound') expect(mocks.spawnSession.mock.calls[0][1].cwd).toBe('/worktree');
+      else {
+        expect(result).toMatchObject({ ok: false });
+        expect(mocks.spawnSession).not.toHaveBeenCalled();
+      }
+    }
+  );
+
+  it('cleans a late fork file if the target was removed before completion', () => {
+    const sourceId = '11111111-1111-4111-8111-111111111111';
+    const targetId = '33333333-3333-4333-8333-333333333333';
+    mocks.currentIdentity.mockReturnValue({ sessionId: sourceId, generation: 'g' });
+    const authority = getSourceAuthorityRegistry()!;
+    const lookup = vi.spyOn(authority, 'conversation').mockImplementation((id) => ({
+      conversationId: id,
+      projectId: 'p',
+      kind: 'root',
+      lifecycle: id === sourceId ? 'ready' : 'draft',
+      version: 1,
+      ...(id === targetId ? { forkedFrom: { conversationId: sourceId, entryId: 'entry' } } : {}),
+    }));
+    mocks.handlers.get(IPC_CHANNELS.AGENT_FORK)!(event, sourceId, targetId, { entryId: 'entry' });
+    lookup.mockReturnValue(undefined);
+    mocks.cleanupSessionFiles.mockClear();
+    const listener = mocks.setAgentEventListener.mock.calls.at(-1)![0];
+    listener({
+      type: 'fork-done',
+      identity: { sessionId: sourceId, generation: 'g' },
+      seq: 1,
+      targetConversationId: targetId,
+      sessionFile: '/tmp/agent/sessions/fork.jsonl',
+      entryId: 'entry',
+    });
+    expect(mocks.cleanupSessionFiles).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: targetId,
+        sessionFile: '/tmp/agent/sessions/fork.jsonl',
+      })
+    );
+  });
+
+  it('reserves a worktree reference before posting fork and releases failed reservations', async () => {
+    const sourceId = '11111111-1111-4111-8111-111111111111';
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    mocks.currentIdentity.mockReturnValue({ sessionId: sourceId, generation: 'g' });
+    const worktree = { path: '/reserved' };
+    mocks.sessionWorktree.mockReturnValue(worktree);
+    const authority = getSourceAuthorityRegistry()!;
+    vi.spyOn(authority, 'conversation').mockImplementation((id) => ({
+      conversationId: id,
+      projectId: 'p',
+      kind: 'root',
+      lifecycle: id === sourceId ? 'ready' : 'draft',
+      version: 1,
+      ...(id === targetId ? { forkedFrom: { conversationId: sourceId, entryId: 'entry' } } : {}),
+    }));
+    mocks.forkSession.mockImplementationOnce(() => {
+      expect(mocks.shareSessionWorktree).toHaveBeenCalledWith(sourceId, targetId);
+      return { ok: false };
+    });
+    const result = mocks.handlers.get(IPC_CHANNELS.AGENT_FORK)!(event, sourceId, targetId, {
+      entryId: 'entry',
+    });
+    expect(result).toEqual({ ok: false });
+    await vi.waitFor(() =>
+      expect(mocks.removeRegisteredWorktree).toHaveBeenCalledWith(targetId, worktree)
+    );
+  });
+
+  it('rejects fork when worktree reservation fails without posting to worker', () => {
+    const sourceId = '11111111-1111-4111-8111-111111111111';
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    mocks.currentIdentity.mockReturnValue({ sessionId: sourceId, generation: 'g' });
+    vi.spyOn(getSourceAuthorityRegistry()!, 'conversation').mockImplementation((id) => ({
+      conversationId: id,
+      projectId: 'p',
+      kind: 'root',
+      lifecycle: id === sourceId ? 'ready' : 'draft',
+      version: 1,
+      ...(id === targetId ? { forkedFrom: { conversationId: sourceId, entryId: 'entry' } } : {}),
+    }));
+    mocks.forkSession.mockClear();
+    mocks.shareSessionWorktree.mockImplementationOnce(() => {
+      throw new Error('worktree busy');
+    });
+    const result = mocks.handlers.get(IPC_CHANNELS.AGENT_FORK)!(event, sourceId, targetId, {
+      entryId: 'entry',
+    });
+    expect(result).toMatchObject({ ok: false });
+    expect(mocks.forkSession).not.toHaveBeenCalled();
   });
 
   it('exposes the Main agent type registry snapshot on the three-point list channel', () => {

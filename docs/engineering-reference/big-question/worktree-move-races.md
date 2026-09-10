@@ -39,6 +39,16 @@ renderer 的状态永远可能陈旧（HMR、事件竞态、多入口 resume）�
 参数不要依赖 renderer 传对：main 在 AGENT_SPAWN 里按 worktree registry
 **无条件覆写** cwd，整类「陈旧 cwd 抢跑」从有害降级为无害。
 
+同一 worktree 可被多个会话引用，不能把会话 ID 当作物理目录身份：
+
+- 新会话须先完成 Main 绑定，再发布为 active；绑定失败不得静默落回主树。
+- 清理只解除当前绑定，最后引用才删除目录；共享、创建与删除必须使用同一操作门，异步后重读引用。
+- 名称与重建路径同步同一 `projectId + repoPath + path` 的绑定，保留每条记录自己的会话 ID。
+- typed dispatch、hire、restore 的 parent/child spawn 也要读 Main 当前绑定；文件引用快照必须使用同一 cwd，不能只修 spawn 路径。
+
+回归位置：`src/main/ipc/worktree.test.ts`、`src/main/services/agentDispatchService.test.ts`、
+`src/renderer/stores/sessions/worktree.test.ts`。
+
 ## 排障手段备忘
 
 - supervisor `[spawn]` 日志带 cwd 是定位关键（本次顺手加上了，别删）。

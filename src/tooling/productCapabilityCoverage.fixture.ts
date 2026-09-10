@@ -369,6 +369,10 @@ export const IPC_PRODUCT_COVERAGE = {
   AGENT_ASK_RESPOND: surfaces('conversations.ask.respond'),
   AGENT_RELEASE: surfaces('conversations.worktree.release'),
   WORKTREE_CREATE: surfaces('conversations.worktree.create'),
+  WORKTREE_BIND: excluded(
+    'Desktop workspace selection for a fresh conversation; no Enso capability.'
+  ),
+  WORKTREE_RENAME: excluded('Desktop worktree display name; no Enso capability.'),
   WORKTREE_GET: surfaces('conversations.worktree.status'),
   WORKTREE_LIST: surfaces('conversations.worktree.status'),
   WORKTREE_STATUS: surfaces('conversations.worktree.status'),

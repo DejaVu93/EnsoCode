@@ -760,13 +760,28 @@ export const zhTranslations: Record<string, string> = {
   'Failed to reload conversation': '重新读取会话失败',
   'Clean up': '清理',
   'Archive session and clean up worktree?': '归档会话并清理 worktree？',
-  'The isolated worktree has unfinished work: {{warning}}. The session falls back to the main working tree.':
-    '隔离 worktree 里还有未落地的工作：{{warning}}。清理后会话回退主工作树。',
+  'Pending work: {{warning}}. This session returns to the main working tree. The worktree directory and uncommitted changes are removed only when no other sessions use it. The branch is kept.':
+    '待处理工作：{{warning}}。本会话将回退主工作树。仅在没有其他会话使用此 worktree 时，才删除目录及未提交改动；分支会保留。',
   'uncommitted changes will be lost': '未提交改动将丢失',
   '{{n}} unmerged commits (branch is kept)': '{{n}} 个未合并提交（分支会保留）',
-  'This conversation and its isolated worktree will be removed: {{warning}}.':
-    '会话及其隔离 worktree 将被移除：{{warning}}。',
+  'Pending work: {{warning}}. This conversation will be removed. Its worktree directory and uncommitted changes are removed only when no other sessions use it. The branch is kept.':
+    '待处理工作：{{warning}}。本会话将被移除。仅在没有其他会话使用此 worktree 时，才删除目录及未提交改动；分支会保留。',
   'Isolated worktree': '隔离 worktree',
+  'New isolated worktree': '新建隔离 worktree',
+  'Existing worktrees': '已有 worktree',
+  'New conversation in this worktree': '在此 worktree 新建会话',
+  'Rename worktree': '重命名 worktree',
+  'Worktree name': 'Worktree 名称',
+  'Only the display name changes, for all sessions in this worktree. Leave empty to use the branch name.':
+    '仅修改此 worktree 所有会话的显示名称，不改变分支或目录。留空恢复分支名。',
+  'Failed to rename worktree': '重命名 worktree 失败',
+  'Failed to use worktree': '使用 worktree 失败',
+  'Failed to create conversation': '新建会话失败',
+  'Worktree missing': 'Worktree 已丢失',
+  'Worktree status unknown': 'Worktree 状态未知',
+  'Uncommitted changes': '有未提交改动',
+  'Working tree clean': '工作区干净',
+  '{{n}} unmerged commits': '{{n}} 个未合并提交',
   'Isolated worktree · uncommitted changes': '隔离 worktree · 有未提交改动',
   'Isolated worktree · {{n}} unmerged commits': '隔离 worktree · {{n}} 个未合并提交',
   'Isolated worktree is missing': '隔离 worktree 已丢失',

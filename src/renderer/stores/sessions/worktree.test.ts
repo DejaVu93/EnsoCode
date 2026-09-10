@@ -3,7 +3,7 @@
  * 产品决策见 docs/plans/2026-08-22-enso-code-design.md「trust 与 isolation」。
  */
 
-import type { SourceAuthorityProjection } from '@shared/types/agent';
+import type { RendererAgentEvent, SourceAuthorityProjection } from '@shared/types/agent';
 import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as SettingsModule from '../settings';
@@ -32,6 +32,17 @@ const record = (conversationId: string): SessionWorktree => ({
   createdAt: 1,
 });
 
+const { addToast } = vi.hoisted(() => ({ addToast: vi.fn() }));
+vi.mock('@/components/ui/toast', () => ({ addToast }));
+
+let onAgentEvent: (event: RendererAgentEvent) => void;
+const wtGet = vi.fn(async (_id: string): Promise<SessionWorktree | null> => null);
+const wtList = vi.fn(
+  async (): Promise<SessionWorktree[]> =>
+    Object.values(sessions.useSessionsStore.getState().conversations).flatMap((conversation) =>
+      conversation.worktree ? [conversation.worktree] : []
+    )
+);
 const agentSpawn = vi.fn(async () => ({ ok: true }));
 const agentPrompt = vi.fn(async () => ({ ok: true }));
 const agentRelease = vi.fn(async () => ({ ok: true }));
@@ -52,9 +63,18 @@ const wtRebuild = vi.fn(async (conversationId: string) => ({
 }));
 const wtRepoClean = vi.fn(async () => ({ ok: true as const, value: true }));
 
+const wtBind = vi.fn(async (id: string, source: string) => ({
+  ok: true as const,
+  value: { ...record(source), conversationId: id },
+}));
+const wtRename = vi.fn(async (_id: string, _name: string) => ({
+  ok: true as const,
+  value: [] as SessionWorktree[],
+}));
+const removeAuthority = vi.fn(async () => ({ accepted: true as const }));
 const createConversation = vi.fn(async () => {
   const value = {
-    conversationId: 'conv-1',
+    conversationId: `conv-${sourceProjection.conversations.length + 1}`,
     projectId: 'project',
     kind: 'root' as const,
     lifecycle: 'draft' as const,
@@ -86,7 +106,10 @@ vi.stubGlobal('window', {
     capabilities: { onAsk: vi.fn(() => vi.fn()), respond: vi.fn(async () => ({ ok: true })) },
     agent: {
       onFocusSession: vi.fn(),
-      onEvent: vi.fn(() => vi.fn()),
+      onEvent: vi.fn((listener: (event: RendererAgentEvent) => void) => {
+        onAgentEvent = listener;
+        return vi.fn();
+      }),
       requestSnapshot: vi.fn(async () => ({ ok: true })),
       spawn: agentSpawn,
       prompt: agentPrompt,
@@ -118,14 +141,19 @@ vi.stubGlobal('window', {
           (conversation) => conversation.conversationId === request.conversationId
         )!,
       })),
-      endConversation: vi.fn(async () => ({ accepted: false as const, error: 'test' })),
-      removeConversation: vi.fn(async () => ({ accepted: false as const, error: 'test' })),
+      endConversation: vi.fn(async (request: { conversationId: string; version: number }) => ({
+        accepted: true as const,
+        value: { conversationId: request.conversationId, version: request.version + 1 },
+      })),
+      removeConversation: removeAuthority,
       updateConversationSelection: vi.fn(),
     },
     worktree: {
       create: wtCreate,
-      get: vi.fn(async () => null),
-      list: vi.fn(async () => []),
+      bind: wtBind,
+      rename: wtRename,
+      get: wtGet,
+      list: wtList,
       status: wtStatus,
       remove: wtRemove,
       rebuild: wtRebuild,
@@ -432,6 +460,37 @@ describe('resumeConversation 的 worktree 校验', () => {
 });
 
 describe('removeConversation 连带清理 worktree', () => {
+  it('waits for worker release before removing the worktree and preserves metadata on failure', async () => {
+    const id = await seedIsolatedConversation();
+    sessions.useSessionsStore.setState((state) => ({
+      conversations: {
+        ...state.conversations,
+        [id]: { ...state.conversations[id], started: true },
+      },
+    }));
+    let finish!: () => void;
+    agentRelease.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ ok: false });
+        })
+    );
+    sessions.useSessionsStore.getState().removeConversation(id);
+    expect(wtRemove).not.toHaveBeenCalled();
+    expect(sessions.useSessionsStore.getState().conversations[id].worktree).toBeDefined();
+    finish();
+    await vi.waitFor(() =>
+      expect(sessions.useSessionsStore.getState().conversations[id]?.error).toBeTruthy()
+    );
+    expect(wtRemove).not.toHaveBeenCalled();
+    expect(sessions.useSessionsStore.getState().conversations[id].worktree).toBeDefined();
+    expect(addToast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        description: sessions.useSessionsStore.getState().conversations[id].error,
+      })
+    );
+  });
   it('删除隔离会话时调用 worktree.remove', async () => {
     const id = await seedIsolatedConversation();
     sessions.useSessionsStore.getState().removeConversation(id);
@@ -440,6 +499,55 @@ describe('removeConversation 连带清理 worktree', () => {
 });
 
 describe('refreshWorktreeStatuses', () => {
+  it('repairs stale name and path from the Main registry', async () => {
+    const id = await seedIsolatedConversation();
+    const current = { ...record(id), name: 'Main name', path: '/rebuilt' };
+    wtList.mockResolvedValueOnce([current]);
+    await sessions.useSessionsStore.getState().refreshWorktreeStatuses();
+    expect(sessions.useSessionsStore.getState().conversations[id].worktree).toEqual(current);
+  });
+
+  it('does not resurrect a fork target deleted during registry hydration', async () => {
+    const id = await seedLocalConversation();
+    let finish!: () => void;
+    wtGet.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = () => resolve(record(id));
+        })
+    );
+    onAgentEvent({
+      type: 'fork-done',
+      identity: { sessionId: 'source', generation: 'g' },
+      seq: 1,
+      targetConversationId: id,
+      sessionFile: '/fork.jsonl',
+      entryId: 'entry',
+    });
+    sessions.useSessionsStore.getState().removeConversation(id);
+    finish();
+    await Promise.resolve();
+    expect(sessions.useSessionsStore.getState().conversations[id]).toBeUndefined();
+    expect(agentSpawn).not.toHaveBeenCalled();
+  });
+
+  it('fork completion restores the target registry even if its source was removed', async () => {
+    const id = await seedIsolatedConversation();
+    const current = { ...record('removed-source'), conversationId: id };
+    wtGet.mockResolvedValueOnce(current);
+    onAgentEvent({
+      type: 'fork-done',
+      identity: { sessionId: 'removed-source', generation: 'g' },
+      seq: 1,
+      targetConversationId: id,
+      sessionFile: '/fork.jsonl',
+      entryId: 'entry',
+    });
+    await vi.waitFor(() =>
+      expect(sessions.useSessionsStore.getState().conversations[id].worktree).toEqual(current)
+    );
+  });
+
   it('拉取所有隔离会话状态进 worktreeStatuses', async () => {
     const id = await seedIsolatedConversation();
     wtStatus.mockResolvedValueOnce({ ok: true, value: { exists: true, dirty: true, ahead: 3 } });
@@ -457,5 +565,127 @@ describe('refreshWorktreeStatuses', () => {
     await sessions.useSessionsStore.getState().refreshWorktreeStatuses();
     expect(wtRemove).not.toHaveBeenCalled();
     expect(sessions.useSessionsStore.getState().conversations[id].archived).toBeUndefined();
+  });
+});
+
+describe('existing worktree conversations', () => {
+  it('binding gates sends before optimistic echo and does not resurrect a removed draft', async () => {
+    const source = await seedIsolatedConversation();
+    const id = (await sessions.useSessionsStore.getState().newConversation('project'))!;
+    wtBind.mockImplementationOnce(async (targetId, sourceId) => {
+      const error = await sessions.useSessionsStore
+        .getState()
+        .send('hello', { providerId: 'p', modelId: 'm', cwd: '/workspace' });
+      expect(error).toBeTruthy();
+      expect(sessions.useSessionsStore.getState().conversations[id].messages).toEqual([]);
+      expect(agentSpawn).not.toHaveBeenCalled();
+      sessions.useSessionsStore.getState().removeConversation(id);
+      return { ok: true, value: { ...record(sourceId), conversationId: targetId } };
+    });
+    expect(
+      await sessions.useSessionsStore.getState().attachConversationToWorktree(id, source)
+    ).toBeTruthy();
+    expect(sessions.useSessionsStore.getState().conversations[id]).toBeUndefined();
+    expect(wtRemove).toHaveBeenCalledWith(id);
+  });
+
+  it('new local drafts never reuse isolated drafts', async () => {
+    const source = await seedIsolatedConversation();
+    const id = await sessions.useSessionsStore.getState().newConversation('project');
+    expect(id).not.toBe(source);
+    expect(sessions.useSessionsStore.getState().conversations[id!].worktree).toBeUndefined();
+  });
+
+  it('creates a distinct empty conversation and binds before publishing active', async () => {
+    const source = await seedIsolatedConversation();
+    wtBind.mockImplementationOnce(async (id, sourceId) => {
+      expect(sessions.useSessionsStore.getState().activeId).toBe(source);
+      expect(sessions.useSessionsStore.getState().conversations[id]).toBeUndefined();
+      return { ok: true, value: { ...record(sourceId), conversationId: id } };
+    });
+    const id = await sessions.useSessionsStore
+      .getState()
+      .newConversation('project', { worktreeFromConversationId: source });
+    expect(id).not.toBe(source);
+    const created = sessions.useSessionsStore.getState().conversations[id!];
+    expect(created.worktree?.path).toBe(record(source).path);
+    expect(created.messages).toEqual([]);
+    expect(created.sessionFile).toBeUndefined();
+    expect(created.pendingWorkspaceNote).toBeUndefined();
+    expect(created.forkedFromConversationId).toBeUndefined();
+    expect(sessions.useSessionsStore.getState().activeId).toBe(id);
+  });
+
+  it('binding failure leaves the active session unchanged and purges the temporary authority', async () => {
+    const source = await seedIsolatedConversation();
+    wtBind.mockResolvedValueOnce({ ok: false, error: 'missing' } as never);
+    const id = await sessions.useSessionsStore
+      .getState()
+      .newConversation('project', { worktreeFromConversationId: source });
+    expect(id).toBeNull();
+    expect(sessions.useSessionsStore.getState().activeId).toBe(source);
+    expect(sessions.useSessionsStore.getState().order).toEqual([source]);
+    expect(removeAuthority).toHaveBeenCalledWith(
+      expect.objectContaining({ conversationId: 'conv-2' })
+    );
+  });
+
+  it('attaches only fresh local drafts without migrating history', async () => {
+    const source = await seedIsolatedConversation();
+    const id = (await sessions.useSessionsStore.getState().newConversation('project'))!;
+    expect(
+      await sessions.useSessionsStore.getState().attachConversationToWorktree(id, source)
+    ).toBeNull();
+    const target = sessions.useSessionsStore.getState().conversations[id];
+    expect(target.worktree?.path).toBe(record(source).path);
+    expect(target.pendingWorkspaceNote).toBeUndefined();
+    expect(target.workspaceMigrating).toBeUndefined();
+    expect(agentRelease).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { started: true },
+    { spawning: true },
+    { workspaceMigrating: true },
+    { sessionFile: '/s' },
+    { parentId: 'parent' },
+    { historyOnly: true },
+  ])('rejects nonfresh targets: %j', async (patch) => {
+    const source = await seedIsolatedConversation();
+    const id = (await sessions.useSessionsStore.getState().newConversation('project'))!;
+    sessions.useSessionsStore.setState((state) => ({
+      conversations: { ...state.conversations, [id]: { ...state.conversations[id], ...patch } },
+    }));
+    expect(
+      await sessions.useSessionsStore.getState().attachConversationToWorktree(id, source)
+    ).toBeTruthy();
+    expect(wtBind).not.toHaveBeenCalled();
+  });
+
+  it('rename updates every returned shared binding and rebuild synchronizes their paths', async () => {
+    const source = await seedIsolatedConversation();
+    const id = (await sessions.useSessionsStore
+      .getState()
+      .newConversation('project', { worktreeFromConversationId: source }))!;
+    wtRename.mockResolvedValueOnce({
+      ok: true,
+      value: [source, id].map((conversationId) => ({
+        ...record(source),
+        conversationId,
+        name: 'Feature',
+      })),
+    });
+    expect(await sessions.useSessionsStore.getState().renameWorktree(id, 'Feature')).toBeNull();
+    expect(sessions.useSessionsStore.getState().conversations[source].worktree?.name).toBe(
+      'Feature'
+    );
+    expect(sessions.useSessionsStore.getState().conversations[id].worktree?.name).toBe('Feature');
+    await sessions.useSessionsStore.getState().rebuildWorktree(source);
+    expect(sessions.useSessionsStore.getState().conversations[id].worktree?.path).toBe(
+      `/managed/rebuilt-${source}`
+    );
+    expect(sessions.useSessionsStore.getState().conversations[id].worktree?.conversationId).toBe(
+      id
+    );
   });
 });

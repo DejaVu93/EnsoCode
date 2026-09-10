@@ -17,7 +17,7 @@ import {
 } from '@shared/projectGroups';
 import { projectDisplayName, projectNameFromPath } from '@shared/projectName';
 import type { Project } from '@shared/types';
-import type { WorktreeStatus } from '@shared/types/worktree';
+import type { SessionWorktree, WorktreeStatus } from '@shared/types/worktree';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   Activity,
@@ -29,7 +29,6 @@ import {
   FileText,
   FolderGit2,
   FolderPlus,
-  GitBranch,
   GitBranchPlus,
   HardDriveDownload,
   Layers,
@@ -116,6 +115,8 @@ import {
   readSidebarOrder,
   writeSidebarOrder,
 } from '@/stores/settings/sidebarOrderStorage';
+import { WorktreeBadge } from './WorktreeBadge';
+import { WorktreeRenameDialog } from './WorktreeRenameDialog';
 
 const ARCHIVE_PURGE_DAYS = [7, 15, 30] as const;
 
@@ -611,7 +612,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
 
   const worktreeWarningText = (status?: WorktreeStatus): string => {
     const parts: string[] = [];
-    if (status?.dirty) parts.push(t('uncommitted changes will be lost'));
+    if (status?.dirty) parts.push(t('Uncommitted changes'));
     if (status && status.ahead > 0)
       parts.push(t('{{n}} unmerged commits (branch is kept)', { n: status.ahead }));
     return parts.join('; ');
@@ -1479,7 +1480,7 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
             : t('Clean up worktree?')
         }
         description={t(
-          'The isolated worktree has unfinished work: {{warning}}. The session falls back to the main working tree.',
+          'Pending work: {{warning}}. This session returns to the main working tree. The worktree directory and uncommitted changes are removed only when no other sessions use it. The branch is kept.',
           { warning: worktreeWarningText(pendingWorktreeAction?.status) }
         )}
         confirmLabel={pendingWorktreeAction?.kind === 'archive' ? t('Archive') : t('Clean up')}
@@ -1550,9 +1551,12 @@ export function Sidebar({ width, collapsed, onToggleCollapse, onOpenSearch }: Si
                       { count: pendingRemove.conversationIds.length, days: pendingRemove.days }
                     )
               : pendingRemove?.kind === 'conversation' && pendingRemove.worktreeWarning
-                ? t('This conversation and its isolated worktree will be removed: {{warning}}.', {
-                    warning: pendingRemove.worktreeWarning,
-                  })
+                ? t(
+                    'Pending work: {{warning}}. This conversation will be removed. Its worktree directory and uncommitted changes are removed only when no other sessions use it. The branch is kept.',
+                    {
+                      warning: pendingRemove.worktreeWarning,
+                    }
+                  )
                 : t('This conversation will be removed from the list.')
         }
         confirmLabel={t('Remove')}
@@ -1920,6 +1924,40 @@ function ConversationRow({
 }: ConversationRowProps) {
   const { t } = useI18n();
   const [renaming, setRenaming] = useState(false);
+  const worktree = useSessionsStore((state) => state.conversations[id]?.worktree);
+  const workspaceBusy = useSessionsStore((state) =>
+    Boolean(state.conversations[id]?.workspaceMigrating)
+  );
+  const worktreeMissing = useSessionsStore((state) => state.conversations[id]?.worktreeMissing);
+  const [worktreeBusy, setWorktreeBusy] = useState(false);
+  const [renameEntity, setRenameEntity] = useState<{
+    conversationId: string;
+    worktree: SessionWorktree;
+  } | null>(null);
+  const worktreeDisabled =
+    worktreeBusy ||
+    workspaceBusy ||
+    conversation.spawning ||
+    conversation.status === 'running' ||
+    conversation.reloading === true;
+  const newInWorktree = async () => {
+    if (worktreeDisabled) return;
+    setWorktreeBusy(true);
+    try {
+      const created = await useSessionsStore
+        .getState()
+        .newConversation(conversation.projectId, { worktreeFromConversationId: id });
+      if (!created) addToast({ type: 'error', title: t('Failed to create conversation') });
+    } catch (error) {
+      addToast({
+        type: 'error',
+        title: t('Failed to create conversation'),
+        description: String(error),
+      });
+    } finally {
+      setWorktreeBusy(false);
+    }
+  };
   const pinned = conversation.pinned === true;
   const archived = conversation.archived === true;
   const PinIcon = pinned ? PinOff : Pin;
@@ -1933,7 +1971,7 @@ function ConversationRow({
       data-pinned={pinned ? 'true' : 'false'}
       className={cn(
         // 会话行:标题对齐到项目名之下(chevron 槽 + 图标宽度),并用弱色与加粗的项目名区分
-        'group flex cursor-pointer items-center gap-2 rounded-lg py-1.5 pr-2 pl-10 text-sm transition-colors',
+        'group grid cursor-pointer grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-0.5 rounded-lg py-1.5 pr-2 pl-10 text-sm transition-colors',
         active
           ? 'bg-muted text-foreground'
           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground'
@@ -1954,169 +1992,184 @@ function ConversationRow({
       title={hoverTitle}
     >
       <ConversationDot conversation={conversation} />
-      {isolated && <WorktreeBadge status={worktreeStatus} />}
-      {sourceTitle && (
-        <span className="truncate text-[10px] text-muted-foreground/70">
-          {t('Branched from {{title}}', { title: sourceTitle })}
-        </span>
-      )}
-      {renaming ? (
-        <ConversationTitleEdit
-          title={displayTitle}
-          onCommit={(title) => {
-            useSessionsStore.getState().renameConversation(id, title);
-            setRenaming(false);
-          }}
-          onCancel={() => setRenaming(false)}
-        />
-      ) : (
-        <span className="min-w-0 flex-1 truncate">
-          {displayTitle}
-          {subtitle && <span className="ml-1.5 text-[10px] text-muted-foreground">{subtitle}</span>}
-        </span>
-      )}
-      {!renaming && (
-        <TitleSummaryBadge
-          pending={conversation.titleSummaryPending}
-          error={conversation.titleSummaryError}
-          onRetry={() => useSessionsStore.getState().retryTitleSummary(id)}
-        />
-      )}
-      {!renaming &&
-        (switchHint ? (
-          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-            {switchHint}
-          </span>
-        ) : (
-          <>
-            {pinned && !archived && (
-              <Pin
-                className="h-3 w-3 shrink-0 text-muted-foreground/70 group-hover:hidden"
-                aria-hidden
-              />
-            )}
-            <span className="shrink-0 text-[10px] text-muted-foreground group-hover:hidden">
-              {formatRelativeTime(
-                conversation.lastActiveAt ?? conversation.createdAt,
-                locale,
-                nowTick
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+          {sourceTitle && (
+            <span className="max-w-1/3 truncate text-[10px] text-muted-foreground/70">
+              {t('Branched from {{title}}', { title: sourceTitle })}
+            </span>
+          )}
+          {renaming ? (
+            <ConversationTitleEdit
+              title={displayTitle}
+              onCommit={(title) => {
+                useSessionsStore.getState().renameConversation(id, title);
+                setRenaming(false);
+              }}
+              onCancel={() => setRenaming(false)}
+            />
+          ) : (
+            <span className="min-w-0 flex-1 truncate">
+              {displayTitle}
+              {subtitle && (
+                <span className="ml-1.5 text-[10px] text-muted-foreground">{subtitle}</span>
               )}
             </span>
-            {!archived && (
+          )}
+        </div>
+        {!renaming && (
+          <TitleSummaryBadge
+            pending={conversation.titleSummaryPending}
+            error={conversation.titleSummaryError}
+            onRetry={() => useSessionsStore.getState().retryTitleSummary(id)}
+          />
+        )}
+        {!renaming &&
+          (switchHint ? (
+            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+              {switchHint}
+            </span>
+          ) : (
+            <>
+              {pinned && !archived && (
+                <Pin
+                  className="h-3 w-3 shrink-0 text-muted-foreground/70 group-hover:hidden"
+                  aria-hidden
+                />
+              )}
+              <span className="shrink-0 text-[10px] text-muted-foreground group-hover:hidden">
+                {formatRelativeTime(
+                  conversation.lastActiveAt ?? conversation.createdAt,
+                  locale,
+                  nowTick
+                )}
+              </span>
+              {!archived && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onTogglePin(id);
+                  }}
+                  className="hidden shrink-0 rounded p-0.5 text-muted-foreground group-hover:block hover:text-foreground"
+                  title={pinned ? t('Unpin') : t('Pin')}
+                >
+                  <PinIcon className="h-3.5 w-3.5" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  onTogglePin(id);
+                  onToggleArchive(id);
                 }}
                 className="hidden shrink-0 rounded p-0.5 text-muted-foreground group-hover:block hover:text-foreground"
-                title={pinned ? t('Unpin') : t('Pin')}
+                title={archived ? t('Unarchive') : t('Archive')}
               >
-                <PinIcon className="h-3.5 w-3.5" />
+                {archived ? (
+                  <ArchiveRestore className="h-3.5 w-3.5" />
+                ) : (
+                  <Archive className="h-3.5 w-3.5" />
+                )}
               </button>
-            )}
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleArchive(id);
-              }}
-              className="hidden shrink-0 rounded p-0.5 text-muted-foreground group-hover:block hover:text-foreground"
-              title={archived ? t('Unarchive') : t('Archive')}
-            >
-              {archived ? (
-                <ArchiveRestore className="h-3.5 w-3.5" />
-              ) : (
-                <Archive className="h-3.5 w-3.5" />
+              {archived && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRemove(id);
+                  }}
+                  className="hidden shrink-0 rounded p-0.5 text-muted-foreground group-hover:block hover:text-destructive"
+                  title={t('Delete')}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
               )}
-            </button>
-            {archived && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove(id);
-                }}
-                className="hidden shrink-0 rounded p-0.5 text-muted-foreground group-hover:block hover:text-destructive"
-                title={t('Delete')}
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </>
-        ))}
+            </>
+          ))}
+      </div>
+      {isolated && worktree && (
+        <div
+          data-slot="conversation-worktree-row"
+          className="col-span-2 grid min-w-0 grid-cols-subgrid"
+        >
+          <WorktreeBadge worktree={worktree} status={worktreeStatus} />
+        </div>
+      )}
     </div>
   );
   return (
-    <ContextMenu>
-      <ContextMenuTrigger render={row as React.ReactElement<Record<string, unknown>>} />
-      <ContextMenuPopup className="min-w-36">
-        <ContextMenuItem onClick={() => setRenaming(true)}>
-          <Pencil />
-          {t('Rename')}
-        </ContextMenuItem>
-        <ContextMenuItem
-          disabled={conversation.reloading === true || conversation.spawning}
-          onClick={() => void reloadConversationFromMenu(id, t)}
-        >
-          <RefreshCw className={conversation.reloading ? 'animate-spin' : undefined} />
-          {t('Reload conversation')}
-        </ContextMenuItem>
-        {!archived && (
-          <ContextMenuItem onClick={() => onTogglePin(id)}>
-            <PinIcon />
-            {pinned ? t('Unpin') : t('Pin')}
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger render={row as React.ReactElement<Record<string, unknown>>} />
+        <ContextMenuPopup className="min-w-36">
+          <ContextMenuItem onClick={() => setRenaming(true)}>
+            <Pencil />
+            {t('Rename')}
           </ContextMenuItem>
-        )}
-        <ContextMenuItem onClick={() => onToggleArchive(id)}>
-          {archived ? <ArchiveRestore /> : <Archive />}
-          {archived ? t('Unarchive') : t('Archive')}
-        </ContextMenuItem>
-        {!archived &&
-          (isolated
-            ? onCleanupWorktree && (
-                <ContextMenuItem onClick={() => onCleanupWorktree(id)}>
-                  <Eraser />
-                  {t('Clean up worktree')}
-                </ContextMenuItem>
-              )
-            : onMoveToWorktree &&
-              useSettingsStore.getState().projects.find((p) => p.id === conversation.projectId)
-                ?.kind !== 'ssh' && (
-                <ContextMenuItem onClick={() => onMoveToWorktree(id)}>
-                  <GitBranchPlus />
-                  {t('Move to worktree')}
-                </ContextMenuItem>
-              ))}
-        <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={() => onRemove(id)}>
-          <Trash2 />
-          {t('Delete')}
-        </ContextMenuItem>
-      </ContextMenuPopup>
-    </ContextMenu>
-  );
-}
-
-/** 隔离会话徽标：分支图标，未提交改动琥珀色、未合并蓝色、干净灰色 */
-function WorktreeBadge({ status }: { status?: WorktreeStatus }) {
-  const { t } = useI18n();
-  const dirty = status?.dirty === true;
-  const unmerged = !dirty && (status?.ahead ?? 0) > 0;
-  const title = dirty
-    ? t('Isolated worktree · uncommitted changes')
-    : unmerged
-      ? t('Isolated worktree · {{n}} unmerged commits', { n: status?.ahead ?? 0 })
-      : t('Isolated worktree');
-  return (
-    <span title={title} className="flex shrink-0 items-center">
-      <GitBranch
-        className={cn(
-          'h-3 w-3',
-          dirty ? 'text-amber-500' : unmerged ? 'text-blue-500' : 'text-muted-foreground/60'
-        )}
-      />
-    </span>
+          <ContextMenuItem
+            disabled={conversation.reloading === true || conversation.spawning}
+            onClick={() => void reloadConversationFromMenu(id, t)}
+          >
+            <RefreshCw className={conversation.reloading ? 'animate-spin' : undefined} />
+            {t('Reload conversation')}
+          </ContextMenuItem>
+          {!archived && (
+            <ContextMenuItem onClick={() => onTogglePin(id)}>
+              <PinIcon />
+              {pinned ? t('Unpin') : t('Pin')}
+            </ContextMenuItem>
+          )}
+          <ContextMenuItem onClick={() => onToggleArchive(id)}>
+            {archived ? <ArchiveRestore /> : <Archive />}
+            {archived ? t('Unarchive') : t('Archive')}
+          </ContextMenuItem>
+          {worktree && (
+            <>
+              <ContextMenuItem
+                disabled={worktreeDisabled || worktreeMissing || worktreeStatus?.exists === false}
+                onClick={() => void newInWorktree()}
+              >
+                {worktreeBusy ? <Loader2 className="animate-spin" /> : <MessageSquarePlus />}
+                {t('New conversation in this worktree')}
+              </ContextMenuItem>
+              <ContextMenuItem
+                disabled={worktreeDisabled || worktreeMissing || worktreeStatus?.exists === false}
+                onClick={() => setRenameEntity({ conversationId: id, worktree })}
+              >
+                <Pencil />
+                {t('Rename worktree')}
+              </ContextMenuItem>
+            </>
+          )}
+          {!archived &&
+            (isolated
+              ? onCleanupWorktree && (
+                  <ContextMenuItem
+                    disabled={worktreeDisabled}
+                    onClick={() => onCleanupWorktree(id)}
+                  >
+                    <Eraser />
+                    {t('Clean up worktree')}
+                  </ContextMenuItem>
+                )
+              : onMoveToWorktree &&
+                useSettingsStore.getState().projects.find((p) => p.id === conversation.projectId)
+                  ?.kind !== 'ssh' && (
+                  <ContextMenuItem disabled={worktreeDisabled} onClick={() => onMoveToWorktree(id)}>
+                    <GitBranchPlus />
+                    {t('Move to worktree')}
+                  </ContextMenuItem>
+                ))}
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" onClick={() => onRemove(id)}>
+            <Trash2 />
+            {t('Delete')}
+          </ContextMenuItem>
+        </ContextMenuPopup>
+      </ContextMenu>
+      <WorktreeRenameDialog entity={renameEntity} onClose={() => setRenameEntity(null)} />
+    </>
   );
 }
 

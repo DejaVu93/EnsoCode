@@ -35,6 +35,16 @@ function readyChild(child: ChildSessionIdentity) {
 }
 
 describe('AgentSessionIndex generation and reservation authority', () => {
+  it('distinguishes preparing workers from ended identities for worktree rebuilds', () => {
+    const sessions = index();
+    expect(sessions.isAlive(parent.sessionId)).toBe(false);
+    sessions.prepareParent(parent);
+    expect(sessions.isAlive(parent.sessionId)).toBe(true);
+    sessions.observe({ type: 'parent-ended', identity: parent, seq: 1, reason: 'released' });
+    expect(sessions.currentIdentity(parent.sessionId)).toEqual(parent);
+    expect(sessions.isAlive(parent.sessionId)).toBe(false);
+  });
+
   it('手动只读响应不进入生命周期索引', () => {
     const sessions = index();
     const response = {

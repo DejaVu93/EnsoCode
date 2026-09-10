@@ -3,6 +3,8 @@
 /** 一条会话与其隔离 worktree 的绑定记录（持久化在 main 的 worktrees.json） */
 export interface SessionWorktree {
   conversationId: string;
+  /** 显示名，不改变分支或目录；空值使用默认显示。 */
+  name?: string;
   projectId: string;
   /** 项目主工作树根（project.canonicalPath） */
   repoPath: string;
