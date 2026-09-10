@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { finished } from 'node:stream/promises';
 import type { EmbeddingModelFile } from './types';
 
 export type DownloadSource = 'huggingface' | 'modelscope';
@@ -23,6 +24,13 @@ export interface DownloadProgress {
   received: number;
   /** 服务端未给 Content-Length 时为 null */
   total: number | null;
+}
+
+export interface ModelDownloadEvent extends DownloadProgress {
+  modelId: string;
+  dir: string;
+  done?: true;
+  error?: string;
 }
 
 export interface DownloadModelOptions {
@@ -111,15 +119,118 @@ function safeJoin(dir: string, name: string): string {
   return resolved;
 }
 
-/**
- * 逐文件下载到 `<dir>/<name>.part`，支持 Range 断点续传，完成后校验 sha256 再原子改名；
- * 全部文件就位后写 `.ready`。任一来源失败换下一来源；全部失败抛 ModelDownloadError。
- */
+interface SharedDownload {
+  controller: AbortController;
+  progress: Set<(progress: DownloadProgress) => void>;
+  promise: Promise<void>;
+}
+
+const downloads = new Map<string, SharedDownload>();
+const downloadListeners = new Set<(event: ModelDownloadEvent) => void>();
+
+export function subscribeModelDownloads(listener: (event: ModelDownloadEvent) => void): () => void {
+  downloadListeners.add(listener);
+  return () => {
+    downloadListeners.delete(listener);
+  };
+}
+
+function notifyDownload(event: ModelDownloadEvent): void {
+  for (const listener of [...downloadListeners]) {
+    // 通知失败不能把已下载权重变成失败任务。
+    try {
+      listener(event);
+    } catch {}
+  }
+}
+
+export function isModelDownloading(dir: string): boolean {
+  return downloads.has(path.resolve(dir));
+}
+
+export function cancelModelDownload(dir: string): boolean {
+  const task = downloads.get(path.resolve(dir));
+  if (!task || task.controller.signal.aborted) return false;
+  task.controller.abort();
+  return true;
+}
+
+/** 自动/显式下载共用目录级任务及取消信号；旧任务完全退出后才允许后继接触文件。 */
 export async function downloadModel(
   spec: DownloadableModel,
   dir: string,
   opts: DownloadModelOptions = {}
 ): Promise<void> {
+  throwIfAborted(opts.signal);
+  const key = path.resolve(dir);
+  const previous = downloads.get(key);
+  let task = previous;
+  if (!task || task.controller.signal.aborted) {
+    const controller = new AbortController();
+    const progress = new Set<(progress: DownloadProgress) => void>();
+    let error: string | undefined;
+    const next: SharedDownload = {
+      controller,
+      progress,
+      promise: Promise.resolve()
+        .then(async () => {
+          await previous?.promise.catch(() => {});
+          throwIfAborted(controller.signal);
+          await downloadModelFiles(spec, key, {
+            ...opts,
+            signal: controller.signal,
+            onProgress: (p) => {
+              if (controller.signal.aborted) return;
+              notifyDownload({ modelId: spec.id, dir: key, ...p });
+              for (const listener of progress) {
+                if (controller.signal.aborted) break;
+                listener(p);
+              }
+            },
+          });
+        })
+        .catch((cause: unknown) => {
+          error = cause instanceof Error ? cause.message : String(cause);
+          throw cause;
+        })
+        .finally(() => {
+          if (downloads.get(key) !== next) return;
+          downloads.delete(key);
+          notifyDownload({
+            modelId: spec.id,
+            dir: key,
+            file: '',
+            fileIndex: 0,
+            fileCount: 0,
+            received: 0,
+            total: null,
+            done: true,
+            error,
+          });
+        }),
+    };
+    downloads.set(key, next);
+    task = next;
+  }
+  const current = task;
+  const abort = () => current.controller.abort();
+  opts.signal?.addEventListener('abort', abort, { once: true });
+  if (opts.onProgress) current.progress.add(opts.onProgress);
+  try {
+    await current.promise;
+  } finally {
+    opts.signal?.removeEventListener('abort', abort);
+    if (opts.onProgress) current.progress.delete(opts.onProgress);
+  }
+}
+
+/** 逐文件续传到 .part，校验后改名；全部就位才写 .ready。 */
+async function downloadModelFiles(
+  spec: DownloadableModel,
+  dir: string,
+  opts: DownloadModelOptions
+): Promise<void> {
+  throwIfAborted(opts.signal);
   if (!spec.sources)
     throw new ModelDownloadError('no_sources', `${spec.id} has no download sources`);
   const sources = (opts.sources ?? ['huggingface', 'modelscope']).filter((s) => spec.sources?.[s]);
@@ -131,11 +242,13 @@ export async function downloadModel(
   fs.rmSync(path.join(dir, READY_MARKER), { force: true });
 
   for (let i = 0; i < spec.files.length; i++) {
+    throwIfAborted(opts.signal);
     const file = spec.files[i];
     const final = safeJoin(dir, file.name);
     // 已存在的文件每次都重新校验 sha256：损坏/被替换的权重不能因为“文件在”就被当作就绪（3a 评审 Major 3）
     if (fs.existsSync(final) && file.sha256) {
       const actual = await sha256File(final);
+      throwIfAborted(opts.signal);
       if (actual !== file.sha256.toLowerCase()) fs.rmSync(final, { force: true });
     }
     if (fs.existsSync(final)) {
@@ -175,6 +288,7 @@ export async function downloadModel(
       );
     }
   }
+  throwIfAborted(opts.signal);
   fs.writeFileSync(
     path.join(dir, READY_MARKER),
     JSON.stringify({
@@ -207,9 +321,11 @@ async function downloadFile(
     throwIfAborted(opts.signal);
     try {
       await fetchToPart(url, part, file, opts);
+      throwIfAborted(opts.signal);
       // 校验在整文件上做：断点续传后前半段不在本次流里
       if (file.sha256) {
         const actual = await sha256File(part);
+        throwIfAborted(opts.signal);
         if (actual !== file.sha256.toLowerCase()) {
           fs.rmSync(part, { force: true });
           throw new ModelDownloadError(
@@ -246,11 +362,13 @@ async function fetchToPart(
   const headers: Record<string, string> = {};
   if (offset > 0) headers.Range = `bytes=${offset}-`;
   const res = await doFetch(url, { headers, signal: opts.signal, redirect: 'follow' });
+  throwIfAborted(opts.signal);
   let total: number | null = null;
   if (res.status === 416 && offset > 0) {
     // 部分网关对任何 Range 都回 416：必须拿到真实总长并与 .part 比对，否则半个 tokenizer.json
     // 会被当成完整文件（没有 sha256 的文件无从拦截；3a 评审 Major 1）
     const full = await remoteLength(doFetch, url, res, opts.signal);
+    throwIfAborted(opts.signal);
     if (full !== null && full === offset) return;
     fs.rmSync(part, { force: true });
     throw new Error(
@@ -273,10 +391,11 @@ async function fetchToPart(
 
   const fd = fs.openSync(part, offset > 0 ? 'a' : 'w');
   let received = offset;
+  const reader = res.body.getReader();
   try {
-    const reader = res.body.getReader();
     for (;;) {
       const { done, value } = await reader.read();
+      throwIfAborted(opts.signal);
       if (done) break;
       if (value) {
         fs.writeSync(fd, value);
@@ -291,6 +410,8 @@ async function fetchToPart(
       }
     }
   } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
     fs.closeSync(fd);
   }
   if (total !== null && received !== total) {
@@ -321,12 +442,11 @@ function isAbortError(error: unknown): boolean {
   return (error as { name?: unknown } | null)?.name === 'AbortError';
 }
 
-export function sha256File(p: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash('sha256');
-    fs.createReadStream(p)
-      .on('data', (chunk) => hash.update(chunk))
-      .on('end', () => resolve(hash.digest('hex')))
-      .on('error', reject);
-  });
+export async function sha256File(p: string): Promise<string> {
+  const hash = createHash('sha256');
+  const stream = fs.createReadStream(p);
+  stream.on('data', (chunk) => hash.update(chunk));
+  // end 只表示读完；close 后文件句柄才释放，后继任务才能安全删除/改名。
+  await finished(stream);
+  return hash.digest('hex');
 }

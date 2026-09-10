@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
+import fs, {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,7 +10,8 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PassThrough } from 'node:stream';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   type DownloadProgress,
   downloadedBytes,
@@ -26,6 +27,7 @@ beforeEach(() => {
   dir = mkdtempSync(path.join(tmpdir(), 'enso-model-dl-'));
 });
 afterEach(() => {
+  vi.restoreAllMocks();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -102,6 +104,136 @@ describe('downloadModel', () => {
     expect(last).toMatchObject({ file: 'sub/config.json', fileIndex: 1, fileCount: 2 });
     expect(last?.received).toBe(BODY.length);
     expect(readdirSync(dir).some((f) => f.endsWith('.part'))).toBe(false);
+  });
+
+  it('同一目录的自动与显式下载复用网络流及进度，不并发写 .part', async () => {
+    const streams: ReadableStreamDefaultController<Uint8Array>[] = [];
+    const network = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              streams.push(controller);
+            },
+          })
+        )
+    );
+    const sp = spec({ files: [{ name: 'model.safetensors' }] });
+    const automaticProgress = vi.fn();
+    const explicitProgress = vi.fn();
+    const automatic = downloadModel(sp, dir, {
+      ...base,
+      fetch: network,
+      onProgress: automaticProgress,
+    });
+    await vi.waitFor(() => expect(network).toHaveBeenCalledTimes(1));
+    const explicit = downloadModel(sp, path.join(dir, 'sub', '..'), {
+      ...base,
+      fetch: network,
+      onProgress: explicitProgress,
+    });
+    try {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(network).toHaveBeenCalledTimes(1);
+      streams[0].enqueue(BODY);
+      streams[0].close();
+      await Promise.all([automatic, explicit]);
+      expect(readFileSync(path.join(dir, 'model.safetensors'))).toEqual(BODY);
+      expect(automaticProgress).toHaveBeenCalled();
+      expect(explicitProgress).toHaveBeenCalled();
+    } finally {
+      // RED 时可能有两个独立流，统一让网络流结束再清理临时目录。
+      const settled = Promise.allSettled([automatic, explicit]);
+      for (const stream of streams) stream.error(new DOMException('Aborted', 'AbortError'));
+      await settled;
+    }
+  });
+
+  it.each(['part', 'existing-valid', 'existing-corrupt'] as const)(
+    '%s 校验期间取消：等读取退出才拒绝，不 rename、删权重或写 .ready',
+    async (stage) => {
+      const sp = spec({ files: [{ name: 'model.safetensors', sha256: SHA }] });
+      const final = path.join(dir, 'model.safetensors');
+      const bytes = stage === 'existing-corrupt' ? Buffer.from('bad') : BODY;
+      if (stage !== 'part') writeFileSync(final, bytes);
+      // 仅替代哈希读取用到的流事件，文件专有字段不参与本测试。
+      const hashStream = new PassThrough();
+      const reading = vi
+        .spyOn(fs, 'createReadStream')
+        .mockReturnValueOnce(hashStream as unknown as fs.ReadStream);
+      const ac = new AbortController();
+      const network = server();
+      const pending = downloadModel(sp, dir, { ...base, fetch: network.fetch, signal: ac.signal });
+      const result = pending.then(
+        () => 'ready',
+        (error: ModelDownloadError) => error.code
+      );
+      try {
+        await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+        ac.abort();
+        let settled = false;
+        void result.then(() => {
+          settled = true;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        hashStream.end(bytes);
+        expect(await result).toBe('aborted');
+        expect(existsSync(path.join(dir, '.ready'))).toBe(false);
+        if (stage === 'part') {
+          expect(existsSync(final)).toBe(false);
+          expect(readFileSync(`${final}.part`)).toEqual(BODY);
+        } else {
+          expect(existsSync(final)).toBe(true);
+          expect(readFileSync(final)).toEqual(bytes);
+          expect(network.calls).toHaveLength(0);
+        }
+      } finally {
+        if (!hashStream.writableEnded) hashStream.end(bytes);
+        await result;
+      }
+    }
+  );
+
+  it('校验取消后同目录重开必须等哈希流 close，不能只等 end', async () => {
+    const sp = spec({ files: [{ name: 'model.safetensors', sha256: SHA }] });
+    let releaseClose = () => {};
+    const hashStream = new PassThrough({
+      destroy(error, callback) {
+        releaseClose = () => callback(error);
+      },
+    });
+    const reading = vi
+      .spyOn(fs, 'createReadStream')
+      .mockReturnValueOnce(hashStream as unknown as fs.ReadStream);
+    const ac = new AbortController();
+    const network = server();
+    const first = downloadModel(sp, dir, { ...base, fetch: network.fetch, signal: ac.signal }).then(
+      () => 'ready',
+      (error: ModelDownloadError) => error.code
+    );
+    await vi.waitFor(() => expect(reading).toHaveBeenCalledTimes(1));
+    ac.abort();
+    const second = downloadModel(sp, dir, { ...base, fetch: network.fetch });
+    try {
+      hashStream.end(BODY);
+      let settled = false;
+      void first.then(() => {
+        settled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(network.calls).toHaveLength(1);
+      expect(existsSync(path.join(dir, 'model.safetensors.part'))).toBe(true);
+      expect(existsSync(path.join(dir, '.ready'))).toBe(false);
+    } finally {
+      releaseClose();
+      await second;
+    }
+    expect(await first).toBe('aborted');
+    expect(network.calls).toHaveLength(3); // 完整 part 的 Range 416 + HEAD 校验
+    expect(readFileSync(path.join(dir, 'model.safetensors'))).toEqual(BODY);
+    expect(isModelReady(dir, sp)).toBe(true);
   });
 
   it('falls back to ModelScope when HF fails', async () => {
